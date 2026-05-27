@@ -11,7 +11,7 @@
     "build": "next build",
     "preview": "next start",
     "typecheck": "tsc --noEmit",
-    "test": "node --experimental-strip-types --test src/types/*.node-test.ts",
+    "test": "node --experimental-strip-types --test src/types/*.node-test.ts src/lib/*.node-test.ts src/stores/*.node-test.ts",
     "static-check": "node scripts/static-check.mjs",
     "check": "npm run typecheck && npm test && npm run static-check && npm run build",
     "tauri": "tauri",
@@ -21,12 +21,16 @@
   },
   "dependencies": {
     "@tauri-apps/api": "^2.9.0",
+    "@tauri-apps/plugin-dialog": "^2.7.1",
+    "@tauri-apps/plugin-fs": "^2.5.1",
+    "@tauri-apps/plugin-store": "^2.4.3",
     "framer-motion": "^12.0.0",
     "lucide-react": "^0.468.0",
     "next": "^15.5.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "zod": "^3.25.0"
+    "zod": "^3.25.0",
+    "zustand": "^5.0.13"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.9.0",

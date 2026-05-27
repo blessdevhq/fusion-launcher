@@ -2,29 +2,33 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { Dashboard } from '@/components/Dashboard';
-import { WelcomeScreen } from '@/components/WelcomeScreen';
+import { OnboardingWizard } from '@/components/OnboardingWizard';
 import { api } from '@/lib/api';
-import type { CatalogGame, RepositorySummary } from '@/types/repository';
+import type { CatalogGame, OnboardingState, RepositorySummary } from '@/types/repository';
 
 export default function HomePage() {
   const [repositories, setRepositories] = useState<RepositorySummary[]>([]);
   const [catalog, setCatalog] = useState<CatalogGame[]>([]);
+  const [onboardingState, setOnboardingState] = useState<OnboardingState | null>(null);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
     setLoading(true);
     try {
-      const [nextRepositories, nextCatalog] = await Promise.all([
+      const [nextRepositories, nextCatalog, nextOnboardingState] = await Promise.all([
         api.listRepositories(),
-        api.getCatalog()
+        api.getCatalog(),
+        api.getOnboardingState()
       ]);
       setRepositories(nextRepositories);
       setCatalog(nextCatalog);
+      setOnboardingState(nextOnboardingState);
       setMessage(null);
     } catch (error) {
       setRepositories([]);
       setCatalog([]);
+      setOnboardingState(null);
       setMessage(error instanceof Error ? error.message : String(error));
     } finally {
       setLoading(false);
@@ -34,11 +38,6 @@ export default function HomePage() {
   useEffect(() => {
     reload();
   }, [reload]);
-
-  const connectRepository = async (url: string) => {
-    await api.connectRepository(url);
-    await reload();
-  };
 
   const disconnectRepository = async (repositoryId: string) => {
     await api.disconnectRepository(repositoryId);
@@ -55,9 +54,22 @@ export default function HomePage() {
 
   if (repositories.length === 0) {
     return (
-      <WelcomeScreen
+      <OnboardingWizard
+        state={onboardingState}
+        catalog={catalog}
         initialMessage={message}
-        onConnect={connectRepository}
+        onReload={reload}
+      />
+    );
+  }
+
+  if (onboardingState && onboardingState.step !== 'complete') {
+    return (
+      <OnboardingWizard
+        state={onboardingState}
+        catalog={catalog}
+        initialMessage={message}
+        onReload={reload}
       />
     );
   }

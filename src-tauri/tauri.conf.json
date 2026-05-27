@@ -2,7 +2,7 @@
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "RetroHydra",
   "version": "0.1.0",
-  "identifier": "app.retrohydra.desktop",
+  "identifier": "app.retrohydra.launcher",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:3000",
@@ -24,15 +24,22 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; img-src 'self' https: http://localhost http://127.0.0.1 data:; media-src 'self' https: http://localhost http://127.0.0.1; style-src 'self' 'unsafe-inline'; connect-src 'self' ipc: http://ipc.localhost"
+      "csp": "default-src 'self'; img-src 'self' asset: https: data: http://localhost:3000 http://127.0.0.1:3000; media-src 'self' https: http://localhost:3000 http://127.0.0.1:3000; style-src 'self' 'unsafe-inline'; connect-src 'self' ipc: http://ipc.localhost https://cdn.retrohydra.app http://localhost:3000 http://127.0.0.1:3000"
     }
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": ["nsis"],
     "category": "Utility",
     "icon": [
       "icons/icon.ico"
-    ]
+    ],
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "displayLanguageSelector": false,
+        "installerIcon": "icons/icon.ico"
+      }
+    }
   }
 }

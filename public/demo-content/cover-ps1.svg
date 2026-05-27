@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 800">
+  <rect width="600" height="800" fill="#101015"/>
+  <circle cx="300" cy="270" r="125" fill="#343449" stroke="#10b981" stroke-width="6"/>
+  <rect x="96" y="470" width="408" height="120" rx="16" fill="#1f1f2a" stroke="#ffffff" stroke-opacity=".16"/>
+  <text x="300" y="515" text-anchor="middle" fill="#f4f4ff" font-family="Arial, sans-serif" font-size="42" font-weight="700">PS1 Demo</text>
+  <text x="300" y="558" text-anchor="middle" fill="#89f5c8" font-family="Arial, sans-serif" font-size="24">Magnet workflow</text>
+</svg>

@@ -1,24 +1,86 @@
 {
   "metadata": {
     "id": "retrohydra-demo",
-    "name": "RetroHydra Demo Repository",
+    "name": "RetroHydra Official Demo Repository",
     "version": "1.0.0",
-    "schemaVersion": 1
+    "schemaVersion": 2,
+    "maintainer": "RetroHydra Team",
+    "homepageUrl": "https://retrohydra.app",
+    "license": "Repository metadata is MIT; included payloads are legal smoke-test or user-provided placeholders.",
+    "trustLevel": "official",
+    "updatedAt": "2026-05-27T00:00:00Z"
   },
-  "system_files": [],
+  "system_files": [
+    {
+      "id": "ps1_bios_scph1001",
+      "platform": "ps1",
+      "assetKind": "bios",
+      "displayName": "PlayStation BIOS (SCPH1001)",
+      "sources": [
+        {
+          "kind": "user_provided",
+          "instructions": "Place your legally dumped scph1001.bin in the shown RetroHydra system folder.",
+          "sha256": "924e392ed05558ffdb115408c263dccf704a11388dcb7ceb5a1253fc3d533b2a",
+          "sizeBytes": 524288
+        }
+      ],
+      "installHint": {
+        "target": "app_system",
+        "relativePath": "bios/scph1001.bin"
+      }
+    },
+    {
+      "id": "switch_prod_keys",
+      "platform": "switch",
+      "assetKind": "keys",
+      "displayName": "Nintendo Switch prod.keys",
+      "sources": [
+        {
+          "kind": "user_provided",
+          "instructions": "Place your legally dumped prod.keys beside the configured portable Ryujinx profile.",
+          "sizeBytes": 16384
+        }
+      ],
+      "installHint": {
+        "target": "emulator_dir",
+        "relativePath": "portable/system/prod.keys"
+      }
+    }
+  ],
   "catalog": [
     {
-      "id": "demo-homebrew",
+      "id": "nes_http_smoke",
       "platform": "nes",
-      "title": "Demo Homebrew Entry",
-      "description": "A harmless demo catalog item for checking repository connection flow.",
+      "title": "RetroHydra NES HTTP Smoke Demo",
+      "description": "Tiny legal payload for validating repository connection, HTTP download, SHA-256 verification, and launch preflight without commercial ROM content.",
+      "coverImageUrl": "http://localhost:3000/demo-content/cover-nes.svg",
+      "downloads": [
+        {
+          "kind": "http",
+          "url": "http://localhost:3000/demo-content/retrohydra-demo.nes",
+          "sha256": "d946639ac7b856c9b68294e9a60603111ecfdd7d51e32f08c83c53220fc25a13",
+          "sizeBytes": 168
+        }
+      ],
+      "expectedExtensions": [".nes"],
+      "requiredSystemFileIds": []
+    },
+    {
+      "id": "ps1_magnet_transport_smoke",
+      "platform": "ps1",
+      "title": "PS1 Magnet Transport Smoke",
+      "description": "Legal torrent transport scenario for pause, resume, retry, and completed-folder scanning. Requires user-provided PS1 BIOS before launch.",
+      "coverImageUrl": "http://localhost:3000/demo-content/cover-ps1.svg",
       "downloads": [
         {
           "kind": "magnet",
-          "uri": "magnet:?xt=urn:btih:abcdef1234567890abcdef1234567890abcdef12"
+          "uri": "magnet:?xt=urn:btih:9f9165d9a281a9b8e782cd5176bbcc8256fd1871&dn=ubuntu-24.04-desktop-amd64.iso",
+          "infoHash": "9f9165d9a281a9b8e782cd5176bbcc8256fd1871",
+          "sizeBytes": 6000000000
         }
       ],
-      "requiredSystemFileIds": []
+      "expectedExtensions": [".iso"],
+      "requiredSystemFileIds": ["ps1_bios_scph1001"]
     }
   ]
 }
