@@ -8,6 +8,7 @@ import type {
   LaunchReport,
   LibraryGameStatus,
   OnboardingState,
+  RecommendedEmulator,
   RepositoryPreview,
   RepositorySummary,
   RequirementsReport,
@@ -38,6 +39,14 @@ const repository: RepositorySummary = {
 };
 
 const catalog: CatalogGame[] = [
+  game(
+    'retrohydra_nes_smoke',
+    'nes',
+    'RetroHydra NES Smoke Demo',
+    'First-party NES smoke demo for the one-click setup path.',
+    ['.nes'],
+    [{ kind: 'bundled', path: 'demo-content/retrohydra-smoke.nes', sha256: '9'.repeat(64), sizeBytes: 24592 }]
+  ),
   game('crystal-caverns', 'gba', 'Crystal Caverns DX', 'A fast homebrew platformer tuned for short sessions.', ['.gba']),
   game('neon-rally', 'psp', 'Neon Rally Portable', 'Arcade racing with synthetic night tracks and drift challenges.', ['.iso']),
   game('star-orbit', 'switch', 'Star Orbit Prototype', 'A community tech demo for testing modern handheld workflows.', ['.nsp', '.xci']),
@@ -142,6 +151,28 @@ export const previewApi = {
   },
   async listEmulatorConfigs(): Promise<EmulatorConfig[]> {
     return emulatorConfigs;
+  },
+  async getRecommendedEmulators(): Promise<RecommendedEmulator[]> {
+    return ['switch', 'ps1', 'ps2', 'gba', 'nes'].map((platform) => {
+      const config = emulatorConfigs.find((item) => item.platform === platform);
+      const nes = platform === 'nes';
+      return {
+        platform: platform as RecommendedEmulator['platform'],
+        platformLabel: platform === 'nes' ? 'NES / Famicom' : platform.toUpperCase(),
+        emulatorName: nes ? 'Mesen2' : `${platform.toUpperCase()} emulator`,
+        version: nes ? '2.1.1' : null,
+        downloadUrl: nes ? 'https://github.com/SourMesen/Mesen2/releases/download/2.1.1/Mesen_2.1.1_Windows.zip' : null,
+        sha256: nes ? '23ccc2bc060b663c68dad3a8c5d6da7d23a50f872d04f135bafa2b04ff7d5cbe' : null,
+        executableName: nes ? 'Mesen.exe' : `${platform}.exe`,
+        status: config ? 'installed' : nes ? 'available' : 'manual',
+        installedPath: config?.exePath ?? null,
+        message: config ? 'Configured' : nes ? 'Available for automatic setup' : 'Manual setup required'
+      };
+    });
+  },
+  async installRecommendedEmulator(platform: string): Promise<EmulatorConfig> {
+    if (platform !== 'nes') throw new Error('Automatic setup is available only for NES / Mesen2.');
+    return previewApi.saveEmulatorConfig('nes', 'preview://emulators/Mesen2-2.1.1/Mesen.exe', '{game_path}');
   },
   async saveEmulatorConfig(
     platform: string,
@@ -328,7 +359,8 @@ function game(
   platform: CatalogGame['platform'],
   title: string,
   description: string,
-  expectedExtensions: string[]
+  expectedExtensions: string[],
+  downloads?: CatalogGame['downloads']
 ): CatalogGame {
   return {
     id,
@@ -338,7 +370,7 @@ function game(
     platform,
     title,
     description,
-    downloads: [{ kind: 'magnet', uri: `magnet:?xt=urn:btih:${id.replaceAll('-', '')}` }],
+    downloads: downloads ?? [{ kind: 'magnet', uri: `magnet:?xt=urn:btih:${id.replaceAll('-', '')}` }],
     expectedExtensions,
     requiredSystemFileIds: []
   };

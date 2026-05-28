@@ -138,15 +138,28 @@ pub fn list_repositories(state: State<'_, AppState>) -> Result<Vec<RepositorySum
 pub fn get_onboarding_state(state: State<'_, AppState>) -> Result<OnboardingState, String> {
     let store = lock_store(&state)?;
     let repositories = store.list_repositories()?;
-    let catalog_count = store.get_catalog()?.len();
-    let valid_emulator_count = store
+    let catalog = store.get_catalog()?;
+    let catalog_count = catalog.len();
+    let valid_emulator_platforms = store
         .list_emulator_configs()?
         .into_iter()
         .filter(|config| is_mvp_platform(&config.platform))
         .filter(|config| config.status == "valid")
-        .count();
+        .map(|config| config.platform)
+        .collect::<HashSet<_>>();
+    let valid_emulator_count = valid_emulator_platforms.len();
+    let catalog_platforms = catalog
+        .iter()
+        .map(|game| game.platform.clone())
+        .collect::<HashSet<_>>();
     let repositories_configured = !repositories.is_empty();
-    let emulators_configured = valid_emulator_count > 0;
+    let emulators_configured = if catalog_platforms.is_empty() {
+        valid_emulator_count > 0
+    } else {
+        catalog_platforms
+            .iter()
+            .any(|platform| valid_emulator_platforms.contains(platform))
+    };
     let step = if !repositories_configured {
         "addRepository"
     } else if !emulators_configured {

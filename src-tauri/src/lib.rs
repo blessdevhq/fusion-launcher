@@ -4,10 +4,11 @@ use std::sync::{Arc, Mutex};
 
 use tauri::Manager;
 
-mod builtin_demo;
 mod app_update;
+mod builtin_demo;
 mod commands;
 mod downloads;
+mod emulator_setup;
 mod launcher;
 mod logging;
 mod platform;
@@ -97,6 +98,8 @@ pub fn run() {
             torrent::pause_download,
             torrent::resume_download,
             torrent::cancel_download,
+            emulator_setup::get_recommended_emulators,
+            emulator_setup::install_recommended_emulator,
             app_update::check_app_update,
             app_update::install_app_update
         ])

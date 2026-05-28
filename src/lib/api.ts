@@ -11,6 +11,7 @@ import type {
   LibraryGameStatus,
   LaunchReport,
   OnboardingState,
+  RecommendedEmulator,
   RepositoryPreview,
   RepositorySummary,
   RequirementsReport,
@@ -37,6 +38,8 @@ const previewHandlers: Record<string, PreviewHandler> = {
   check_requirements: ({ gameId }) => previewApi.checkRequirements(String(gameId ?? '')),
   get_library_statuses: () => previewApi.getLibraryStatuses(),
   list_emulator_configs: () => previewApi.listEmulatorConfigs(),
+  get_recommended_emulators: () => previewApi.getRecommendedEmulators(),
+  install_recommended_emulator: ({ platform }) => previewApi.installRecommendedEmulator(String(platform ?? '')),
   save_emulator_config: ({ platform, exePath, launchArgsTemplate }) => previewApi.saveEmulatorConfig(
     String(platform ?? ''),
     String(exePath ?? ''),
@@ -126,6 +129,12 @@ export const api = {
   },
   listEmulatorConfigs() {
     return call<EmulatorConfig[]>('list_emulator_configs');
+  },
+  getRecommendedEmulators() {
+    return call<RecommendedEmulator[]>('get_recommended_emulators');
+  },
+  installRecommendedEmulator(platform: string) {
+    return call<EmulatorConfig>('install_recommended_emulator', { platform });
   },
   saveEmulatorConfig(platform: string, exePath: string, launchArgsTemplate?: string) {
     return call<EmulatorConfig>('save_emulator_config', { platform, exePath, launchArgsTemplate });

@@ -45,7 +45,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDE5NTAyRjVBMjgwMjRDNkQKUldSdFRBSW9XaTlRR2RJVGhmbUNBRWNteWZYMjNnMVE4N1M0d243Rlo2TzVkN3NhTk1iUktpNkYK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEFFMEVDNjgyMTRCOUQwQkQKUldTOTBMa1Vnc1lPcnVCbm14bFZjR3cya0RpS0Y1anZ4Wjhlek5PWWFTbFlJakR5eUJGMUprT3AK",
       "endpoints": [
         "https://github.com/MrBeastie/RetroHydra/releases/latest/download/latest.json"
       ]

@@ -13,6 +13,18 @@ The MVP focuses on:
   commercial content;
 - diagnostics, health checks, and GitHub Releases updater integration.
 
+## First User Path
+
+The public MVP supports a one-pass playable demo setup on Windows:
+
+1. Install RetroHydra.
+2. Click **Set up demo** on first launch.
+3. RetroHydra connects the built-in demo repository, installs pinned Mesen2
+   `2.1.1`, downloads the first-party NES smoke ROM, and enables **Play Demo**.
+
+Only the NES demo path is automatic in this MVP. Other emulator platforms still
+use manual executable selection.
+
 ## Legal content model
 
 RetroHydra does not ship commercial ROMs, BIOS files, firmware, keys, or
@@ -54,7 +66,8 @@ npm run tauri:build
 When updater artifacts are enabled, Tauri requires `TAURI_SIGNING_PRIVATE_KEY`
 and optionally `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` to sign updater packages.
 The GitHub Actions release workflow expects these secrets to be configured in
-the repository before publishing a tagged release.
+the repository before publishing a tagged release. The private key must never be
+committed.
 
 ## Release
 

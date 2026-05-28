@@ -205,6 +205,21 @@ export interface EmulatorConfig {
   launchArgsTemplate?: string;
 }
 
+export type RecommendedEmulatorInstallStatus = 'available' | 'installed' | 'manual';
+
+export interface RecommendedEmulator {
+  platform: Platform;
+  platformLabel: string;
+  emulatorName: string;
+  version?: string | null;
+  downloadUrl?: string | null;
+  sha256?: string | null;
+  executableName: string;
+  status: RecommendedEmulatorInstallStatus;
+  installedPath?: string | null;
+  message?: string | null;
+}
+
 export interface TorrentStartReport {
   gameId: string;
   state: string;
