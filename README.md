@@ -1,46 +1,71 @@
-# RetroHydra
+# Fusion Launcher
 
-RetroHydra is a Windows-first desktop MVP for managing emulator-ready game
-libraries from bring-your-own-repository metadata. It is built with Next.js,
-Tauri 2, Rust, and local-first storage.
+[Русская версия](README.ru.md)
 
-The MVP focuses on:
+Fusion Launcher is a Windows-first desktop launcher for emulator-ready game
+libraries. It connects bring-your-own repositories, validates catalog metadata,
+tracks installs, and launches games through user-configured or automatically
+prepared emulators.
 
-- repository preview, connection, refresh, and catalog validation;
-- schema v3 rich catalog metadata for artwork, genres, tags, and
-  user-provided game setup;
-- emulator path setup and launch preflight checks;
-- direct, bundled, and torrent-aware download state tracking;
-- user-provided game, BIOS, firmware, and key import paths for content users
-  legally provide themselves;
-- a built-in first-party NES smoke-test repository for validation without
-  commercial content;
-- diagnostics, health checks, and GitHub Releases updater integration.
+The project is built with Next.js, Tauri 2, Rust, and local-first storage.
 
-## First User Path
+## What It Does
 
-The public MVP supports a one-pass playable demo setup on Windows:
+- Connects source-library JSON catalogs from GitHub Pages, HTTPS URLs, or local
+  files.
+- Validates schema v3 catalogs with rich metadata, artwork, tags, genres, setup
+  profiles, and install requirements.
+- Supports a first-party built-in NES smoke-test repository for safe setup and
+  release validation.
+- Tracks direct, bundled, and torrent-aware download state.
+- Imports user-provided games, BIOS, firmware, and keys without bundling
+  commercial payloads.
+- Resolves metadata and artwork from source libraries, ScreenScraper, and
+  SteamGridDB when configured.
+- Runs launch preflight checks before starting emulator processes.
+- Provides diagnostics, health checks, GitHub Releases update checks, and
+  Windows package smoke tests.
 
-1. Install RetroHydra.
-2. Click **Set up demo** on first launch.
-3. RetroHydra connects the built-in demo repository, installs the latest
-   supported Mesen2 release, downloads the first-party NES smoke ROM, and
-   enables **Play Demo**.
+## First Run
 
-Automatic portable-emulator setup is available for NES, SNES, Nintendo 64,
-Game Boy Advance, PlayStation 2, and PSP. PlayStation 1 and Nintendo Switch use
-manual executable selection. Platform-owned BIOS, firmware, and keys always
+The fastest path on Windows is the built-in demo setup:
+
+1. Install Fusion Launcher.
+2. Open the app and choose **Set up demo**.
+3. Fusion Launcher connects the built-in demo source, prepares a supported NES
+   emulator, installs the first-party smoke ROM, and enables **Play Demo**.
+
+Automatic portable-emulator setup is available for NES, SNES, Nintendo 64, Game
+Boy Advance, PlayStation 2, and PSP. PlayStation 1 and Nintendo Switch currently
+use manual executable selection. Platform-owned BIOS, firmware, and keys always
 remain user-provided.
 
-## Legal content model
+## Content Model
 
-RetroHydra does not ship commercial ROMs, BIOS files, firmware, keys, or
-third-party game payloads. Users are expected to provide only content they are
-legally allowed to use.
+Fusion Launcher does not ship commercial ROMs, BIOS files, firmware, keys, or
+third-party game payloads. Users and source-library authors are responsible for
+using only content they are legally allowed to use.
 
-The bundled `public/demo-content/retrohydra-smoke.nes` asset is first-party
-RetroHydra smoke-test content and is documented in
+The bundled `public/demo-content/fusion-launcher-smoke.nes` file is first-party
+smoke-test content for launcher validation. Its terms are documented in
 `public/demo-content/LICENSE.txt`.
+
+## Source Libraries
+
+Source libraries are JSON catalogs that describe games, platforms, metadata,
+artwork, setup profiles, and install requirements.
+
+Useful entry points:
+
+- [Source library template](docs/source-library-template.md)
+- [Repository authoring guide](docs/repository-authoring.md)
+- [Rich metadata example](examples/repositories/showcase.metadata.json)
+
+The starter template is published at:
+
+```text
+https://mrbeastie.github.io/fusion-launcher/source-library-template/repository.json
+```
 
 ## Development
 
@@ -50,67 +75,27 @@ Prerequisites:
 - Rust stable
 - Windows build tools for Tauri desktop builds
 
-Install and check the project:
+Install dependencies:
 
 ```powershell
 npm ci
-npm run check
-cargo test --manifest-path src-tauri/Cargo.toml
 ```
 
-Run the full local hardening gate:
+Run the standard checks:
+
+```powershell
+npm test
+npm run typecheck
+npm run static-check
+npm run source:template:check
+npm run rust:test
+```
+
+Run the full local QA gate:
 
 ```powershell
 npm run qa
 ```
-
-Validate a community or private source library:
-
-```powershell
-npm run source:validate -- templates/source-library/repository.json
-```
-
-Build and check the public source-library starter URL artifact:
-
-```powershell
-npm run source:template:check
-npm run pages:build
-```
-
-After the GitHub Pages workflow deploys, the starter template is available at:
-
-```text
-https://mrbeastie.github.io/RetroHydra/source-library-template/repository.json
-```
-
-See `docs/source-library-template.md` for the starter source library template,
-hosting guidance, and content mode rules.
-
-Run the MVP release smoke gate:
-
-```powershell
-npm run mvp:release
-```
-
-`npm run mvp:smoke` validates the preview source/catalog/download/launch/health
-path, including user-provided game import. `npm run mvp:visual` captures Home,
-Library search, Game Setup, import flow, Collections, Downloads, and Settings
-Sources screenshots under `.tmp/mvp-visual`.
-
-Run the Windows RC package gate:
-
-```powershell
-npm run mvp:release:windows
-```
-
-Without `TAURI_SIGNING_PRIVATE_KEY`, this builds a local NSIS smoke package
-without updater artifacts, then runs the packaged binary harness against clean
-`.tmp/package-smoke` data. With `TAURI_SIGNING_PRIVATE_KEY`, it builds the normal
-updater-artifact package and runs the same packaged smoke.
-
-See `docs/repository-authoring.md` and
-`examples/repositories/showcase.metadata.json` for the schema v3 rich metadata
-and user-provided content model.
 
 Run the web shell:
 
@@ -124,30 +109,42 @@ Build the Windows desktop app:
 npm run tauri:build
 ```
 
-When updater artifacts are enabled, Tauri requires `TAURI_SIGNING_PRIVATE_KEY`
-and optionally `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` to sign updater packages.
-The GitHub Actions release workflow expects these secrets to be configured in
-the repository before publishing a tagged release. The private key must never be
-committed.
+Validate a source library:
+
+```powershell
+npm run source:validate -- templates/source-library/repository.json
+```
 
 ## Release
 
 The Windows release workflow runs on tags matching `vX.Y.Z` and uploads:
 
-- NSIS installer;
-- updater zip;
-- updater signature;
-- `latest.json` for the Tauri updater.
+- NSIS installer
+- updater zip
+- updater signature
+- `latest.json` for the Tauri updater
 
-Tagged Windows releases first run `npm run qa`, `npm run mvp:smoke`, Playwright
-Chromium install, `npm run mvp:visual`, signed Tauri build, and packaged smoke
-against `src-tauri/target/x86_64-pc-windows-msvc/release`. Updater signing is
-required for tagged releases through `TAURI_SIGNING_PRIVATE_KEY`; Windows
-Authenticode signing is deferred production hardening and is not part of the RC
-gate.
+Release builds require `TAURI_SIGNING_PRIVATE_KEY`; set
+`TAURI_SIGNING_PRIVATE_KEY_PASSWORD` when the private key is encrypted.
 
-See `docs/mvp-windows-install.md` for the internal MVP install checklist.
-See `docs/release-checklist.md` for the tagged Windows release handoff.
+Run the Windows release smoke gate locally:
+
+```powershell
+npm run mvp:release:windows
+```
+
+Related docs:
+
+- [MVP Windows install checklist](docs/mvp-windows-install.md)
+- [Release checklist](docs/release-checklist.md)
+- [Metadata and artwork notes](docs/metadata-artwork.md)
+
+## Compatibility Notes
+
+The project was previously named RetroHydra. New installs use Fusion Launcher
+names, identifiers, and files. Legacy `RETROHYDRA_*` environment variables,
+database names, and built-in demo identifiers are still supported as fallbacks
+for existing installs and CI setups.
 
 ## License
 
