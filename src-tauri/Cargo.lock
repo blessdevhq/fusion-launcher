@@ -1183,6 +1183,37 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e6d5a32815ae3f33302d95fdcb2ce17862f8c65363dcfd29360480ba1001fc9c"
 
 [[package]]
+name = "fusion-launcher"
+version = "0.2.0"
+dependencies = [
+ "chrono",
+ "crc32fast",
+ "fs2",
+ "glob",
+ "hex 0.4.3",
+ "librqbit",
+ "md-5",
+ "reqwest 0.12.28",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sevenz-rust",
+ "sha1",
+ "sha2",
+ "shlex",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-dialog",
+ "tauri-plugin-fs",
+ "tauri-plugin-store",
+ "tauri-plugin-updater",
+ "tempfile",
+ "tokio",
+ "url",
+ "zip 2.4.2",
+]
+
+[[package]]
 name = "futures"
 version = "0.3.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3667,37 +3698,6 @@ dependencies = [
  "wasm-bindgen-futures",
  "wasm-streams 0.5.0",
  "web-sys",
-]
-
-[[package]]
-name = "retrohydra"
-version = "0.2.0"
-dependencies = [
- "chrono",
- "crc32fast",
- "fs2",
- "glob",
- "hex 0.4.3",
- "librqbit",
- "md-5",
- "reqwest 0.12.28",
- "rusqlite",
- "serde",
- "serde_json",
- "sevenz-rust",
- "sha1",
- "sha2",
- "shlex",
- "tauri",
- "tauri-build",
- "tauri-plugin-dialog",
- "tauri-plugin-fs",
- "tauri-plugin-store",
- "tauri-plugin-updater",
- "tempfile",
- "tokio",
- "url",
- "zip 2.4.2",
 ]
 
 [[package]]

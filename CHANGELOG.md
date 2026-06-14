@@ -17,13 +17,13 @@ Automatic metadata and artwork scraping.
 
 ### Notes
 
-- Scraped metadata and artwork are fetched directly from the provider to the user's machine and cached locally; RetroHydra does not proxy or redistribute them.
+- Scraped metadata and artwork are fetched directly from the provider to the user's machine and cached locally; Fusion Launcher does not proxy or redistribute them.
 - ScreenScraper credentials and the optional SteamGridDB key are stored locally in app config; treat the machine profile as the trust boundary.
 - Official builds may bake a SteamGridDB key and ScreenScraper developer credentials at compile time via release secrets; when absent, scraping falls back to per-user credentials.
 
 ## v0.1.0
 
-RetroHydra MVP release candidate.
+Fusion Launcher MVP release candidate.
 
 ### Added
 

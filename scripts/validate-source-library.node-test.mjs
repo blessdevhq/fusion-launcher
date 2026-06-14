@@ -25,7 +25,7 @@ describe('source library validator', () => {
     const report = await validateSourceLibrary(templatePath);
 
     assert.deepEqual(report.errors, []);
-    assert.equal(report.repository.metadata.id, 'retrohydra-source-template');
+    assert.equal(report.repository.metadata.id, 'fusion-launcher-source-template');
   });
 
   it('fails on duplicate catalog ids', async () => {

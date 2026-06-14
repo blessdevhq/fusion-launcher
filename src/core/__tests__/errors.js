@@ -1,7 +1,7 @@
-export class RetroHydraError extends Error {
+export class FusionLauncherError extends Error {
   constructor(code, message, options = {}) {
     super(message);
-    this.name = 'RetroHydraError';
+    this.name = 'FusionLauncherError';
     this.code = code;
     this.friendlyMessage = options.friendlyMessage || message;
     this.meta = options.meta || {};
@@ -10,7 +10,7 @@ export class RetroHydraError extends Error {
 }
 
 export function toFriendlyError(error) {
-  if (error instanceof RetroHydraError) {
+  if (error instanceof FusionLauncherError) {
     return {
       code: error.code,
       message: error.friendlyMessage,

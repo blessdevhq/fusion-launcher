@@ -3,7 +3,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { repositorySchema } from '../src/types/repository.ts';
 
-const BUILT_IN_REPOSITORY_IDS = new Set(['retrohydra-demo']);
+const BUILT_IN_REPOSITORY_IDS = new Set(['fusion-launcher-demo', 'retrohydra-demo']);
 const BUILT_IN_SETUP_PROFILE_IDS = new Set([
   'nes-mesen',
   'snes-mesen',
@@ -136,7 +136,7 @@ export async function runCli(args = process.argv.slice(2)) {
 
 function validateSourcePolicy(source, sourcePath, allowBundled, errors) {
   if (source.kind === 'bundled' && !allowBundled) {
-    errors.push(`${sourcePath}: bundled sources are only allowed for the built-in RetroHydra demo repository.`);
+    errors.push(`${sourcePath}: bundled sources are only allowed for the built-in Fusion Launcher demo repository.`);
   }
 }
 

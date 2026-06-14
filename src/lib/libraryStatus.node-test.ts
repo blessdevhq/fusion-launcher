@@ -90,7 +90,7 @@ describe('library status derivation', () => {
         ...game,
         downloads: [{
           kind: 'bundled',
-          path: 'demo-content/retrohydra-smoke.nes',
+          path: 'demo-content/fusion-launcher-smoke.nes',
           sha256: 'a'.repeat(64),
           sizeBytes: 24592
         }]
@@ -98,7 +98,7 @@ describe('library status derivation', () => {
       status({
         download: download({
           magnetUri: 'direct:bundled',
-          saveDir: 'F:/Games/retrohydra-smoke.nes',
+          saveDir: 'F:/Games/fusion-launcher-smoke.nes',
           status: 'completed',
           progressPercent: 100,
           downloadedBytes: 24592,

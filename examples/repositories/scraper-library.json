@@ -1,11 +1,11 @@
 {
   "metadata": {
-    "id": "retrohydra-scraper-library",
-    "name": "RetroHydra Scraper Test Library",
+    "id": "fusion-launcher-scraper-library",
+    "name": "Fusion Launcher Scraper Test Library",
     "version": "1.0.0",
     "schemaVersion": 3,
-    "maintainer": "RetroHydra Team",
-    "homepageUrl": "https://retrohydra.local/scraper-library",
+    "maintainer": "Fusion Launcher Team",
+    "homepageUrl": "https://github.com/MrBeastie/fusion-launcher/tree/main/examples/repositories",
     "license": "Catalog metadata only. No ROMs, BIOS, firmware, or keys are distributed. Import your own legally obtained game files.",
     "trustLevel": "community",
     "updatedAt": "2026-06-09T00:00:00Z"
@@ -13,96 +13,96 @@
   "system_files": [],
   "catalog": [
     {
-      "id": "smb3",
+      "id": "nebula-quest-nes",
       "platform": "nes",
-      "title": "Super Mario Bros. 3",
-      "description": "User-provided NES title used to exercise CRC32 hash matching against ScreenScraper.",
+      "title": "Nebula Quest",
+      "description": "Fictional user-provided NES entry used to exercise CRC32 hash matching and fallback metadata flows.",
       "contentMode": "user_provided",
       "setupProfileId": "nes-mesen",
       "downloads": [
         {
           "kind": "user_provided",
-          "instructions": "Import your own legally obtained Super Mario Bros. 3 .nes ROM."
+          "instructions": "Import your own legally obtained Nebula Quest .nes cartridge image."
         }
       ],
       "expectedExtensions": [".nes"],
       "requiredSystemFileIds": []
     },
     {
-      "id": "chrono-trigger",
+      "id": "clockwork-ruins-snes",
       "platform": "snes",
-      "title": "Chrono Trigger",
-      "description": "User-provided SNES title for hash and name matching plus SteamGridDB artwork enrichment.",
+      "title": "Clockwork Ruins",
+      "description": "Fictional user-provided SNES entry for hash and name matching plus artwork enrichment UI checks.",
       "contentMode": "user_provided",
       "setupProfileId": "snes-mesen",
       "downloads": [
         {
           "kind": "user_provided",
-          "instructions": "Import your own legally obtained Chrono Trigger .sfc/.smc ROM."
+          "instructions": "Import your own legally obtained Clockwork Ruins .sfc/.smc cartridge image."
         }
       ],
       "expectedExtensions": [".sfc", ".smc"],
       "requiredSystemFileIds": []
     },
     {
-      "id": "ocarina-of-time",
+      "id": "sky-temple-n64",
       "platform": "n64",
-      "title": "The Legend of Zelda: Ocarina of Time",
-      "description": "User-provided Nintendo 64 title for verifying name fallback and hero/logo artwork.",
+      "title": "Sky Temple 64",
+      "description": "Fictional user-provided Nintendo 64 entry for verifying name fallback and hero/logo artwork UI.",
       "contentMode": "user_provided",
       "setupProfileId": "n64-rmg",
       "downloads": [
         {
           "kind": "user_provided",
-          "instructions": "Import your own legally obtained Ocarina of Time .z64/.n64 ROM."
+          "instructions": "Import your own legally obtained Sky Temple 64 .z64/.n64 cartridge image."
         }
       ],
       "expectedExtensions": [".z64", ".n64"],
       "requiredSystemFileIds": []
     },
     {
-      "id": "metroid-fusion",
+      "id": "metro-signal-gba",
       "platform": "gba",
-      "title": "Metroid Fusion",
-      "description": "User-provided Game Boy Advance title for CRC32 hash matching.",
+      "title": "Metro Signal Advance",
+      "description": "Fictional user-provided Game Boy Advance entry for CRC32 hash matching UI checks.",
       "contentMode": "user_provided",
       "setupProfileId": "gba-mgba",
       "downloads": [
         {
           "kind": "user_provided",
-          "instructions": "Import your own legally obtained Metroid Fusion .gba ROM."
+          "instructions": "Import your own legally obtained Metro Signal Advance .gba cartridge image."
         }
       ],
       "expectedExtensions": [".gba"],
       "requiredSystemFileIds": []
     },
     {
-      "id": "shadow-of-the-colossus",
+      "id": "silver-giant-ps2",
       "platform": "ps2",
-      "title": "Shadow of the Colossus",
-      "description": "User-provided PlayStation 2 title. Compressed .chd images fall back to name matching.",
+      "title": "Silver Giant",
+      "description": "Fictional user-provided PlayStation 2 entry. Compressed .chd images fall back to name matching.",
       "contentMode": "user_provided",
       "setupProfileId": "ps2-pcsx2",
       "downloads": [
         {
           "kind": "user_provided",
-          "instructions": "Import your own legally obtained Shadow of the Colossus .iso/.chd image."
+          "instructions": "Import your own legally obtained Silver Giant .iso/.chd disc image."
         }
       ],
       "expectedExtensions": [".iso", ".chd"],
       "requiredSystemFileIds": []
     },
     {
-      "id": "god-of-war-chains-of-olympus",
+      "id": "aurora-racer-psp",
       "platform": "psp",
-      "title": "God of War: Chains of Olympus",
-      "description": "User-provided PSP title for verifying ScreenScraper matching on handheld platforms.",
+      "title": "Aurora Racer Portable",
+      "description": "Fictional user-provided PSP entry for verifying metadata matching on handheld platforms.",
       "contentMode": "user_provided",
       "setupProfileId": "psp-ppsspp",
       "downloads": [
         {
           "kind": "user_provided",
-          "instructions": "Import your own legally obtained God of War: Chains of Olympus .iso/.cso image."
+          "instructions": "Import your own legally obtained Aurora Racer Portable .iso/.cso disc image."
         }
       ],
       "expectedExtensions": [".iso", ".cso"],

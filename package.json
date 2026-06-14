@@ -1,10 +1,18 @@
 {
-  "name": "retrohydra",
+  "name": "fusion-launcher",
   "version": "0.2.0",
-  "description": "RetroHydra BYOR desktop content aggregator.",
-  "author": "RetroHydra",
-  "license": "UNLICENSED",
+  "description": "Source-driven Windows launcher for retro and console game libraries.",
+  "author": "Fusion Launcher",
+  "license": "GPL-3.0-or-later",
   "private": true,
+  "homepage": "https://github.com/MrBeastie/fusion-launcher#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MrBeastie/fusion-launcher.git"
+  },
+  "bugs": {
+    "url": "https://github.com/MrBeastie/fusion-launcher/issues"
+  },
   "type": "module",
   "scripts": {
     "dev": "next dev",

@@ -7,14 +7,6 @@ export default {
         sans: ['Inter', 'ui-sans-serif', 'system-ui', 'Segoe UI', 'sans-serif']
       },
       colors: {
-        hydra: {
-          bg: '#0A0A0B',
-          panel: '#141416',
-          line: '#2A2A2E',
-          accent: '#5CE68C',
-          cyan: '#3BD6C6',
-          green: '#5CE68C'
-        },
         fusion: {
           bg: '#0A0A0B',
           surface: '#141416',
@@ -23,7 +15,9 @@ export default {
           accent: '#5CE68C',
           accentHover: '#4BD67C',
           accentActive: '#3FBF6E',
-          accentOn: '#06210F'
+          accentOn: '#06210F',
+          green: '#5CE68C',
+          cyan: '#3BD6C6'
         }
       },
       boxShadow: {

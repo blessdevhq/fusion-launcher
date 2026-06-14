@@ -17,7 +17,7 @@ pub fn log_dir(data_dir: &Path) -> PathBuf {
 }
 
 pub fn log_file_path(data_dir: &Path) -> PathBuf {
-    log_dir(data_dir).join("retrohydra.log")
+    log_dir(data_dir).join("fusion-launcher.log")
 }
 
 pub fn initialize(data_dir: &Path) {

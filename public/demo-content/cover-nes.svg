@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 800">
   <rect width="600" height="800" fill="#111116"/>
   <rect x="52" y="52" width="496" height="696" rx="18" fill="#202029" stroke="#7c5cfc" stroke-width="6"/>
-  <text x="300" y="325" text-anchor="middle" fill="#f4f4ff" font-family="Arial, sans-serif" font-size="54" font-weight="700">RetroHydra</text>
+  <text x="300" y="325" text-anchor="middle" fill="#f4f4ff" font-family="Arial, sans-serif" font-size="54" font-weight="700">Fusion Launcher</text>
   <text x="300" y="390" text-anchor="middle" fill="#a78bfa" font-family="Arial, sans-serif" font-size="38" font-weight="700">NES Demo</text>
   <text x="300" y="475" text-anchor="middle" fill="#8b8b9d" font-family="Arial, sans-serif" font-size="24">Legal smoke-test asset</text>
 </svg>

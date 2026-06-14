@@ -21,7 +21,7 @@ describe('generated game art', () => {
   });
 
   it('creates stable unsigned hashes', () => {
-    assert.equal(hashString('RetroHydra'), hashString('RetroHydra'));
-    assert.ok(hashString('RetroHydra') >= 0);
+    assert.equal(hashString('Fusion Launcher'), hashString('Fusion Launcher'));
+    assert.ok(hashString('Fusion Launcher') >= 0);
   });
 });

@@ -1,6 +1,7 @@
 import { api } from './api.ts';
 import type {
   LibraryScrapeStatus,
+  ManualGameMetadataInput,
   ScrapeCandidate,
   ScrapeState,
   ScreenScraperStatus,
@@ -21,6 +22,9 @@ export const scraperApi = {
   },
   applyScrapeOverride(gameId: string, providerGameId: string) {
     return api.applyScrapeOverride(gameId, providerGameId);
+  },
+  saveManualMetadata(gameId: string, metadata: ManualGameMetadataInput) {
+    return api.saveManualMetadata(gameId, metadata);
   },
   clearScrapeOverride(gameId: string) {
     return api.clearScrapeOverride(gameId);

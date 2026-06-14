@@ -3,8 +3,11 @@ fn main() {
 
     // Rebuild when compile-time built-in scraper credentials change so an
     // incremental build picks up new values instead of a cached option_env!.
+    println!("cargo:rerun-if-env-changed=FUSION_LAUNCHER_STEAMGRIDDB_KEY");
     println!("cargo:rerun-if-env-changed=RETROHYDRA_STEAMGRIDDB_KEY");
+    println!("cargo:rerun-if-env-changed=FUSION_LAUNCHER_SCREENSCRAPER_DEVID");
     println!("cargo:rerun-if-env-changed=RETROHYDRA_SCREENSCRAPER_DEVID");
+    println!("cargo:rerun-if-env-changed=FUSION_LAUNCHER_SCREENSCRAPER_DEVPASSWORD");
     println!("cargo:rerun-if-env-changed=RETROHYDRA_SCREENSCRAPER_DEVPASSWORD");
 
     // Tauri embeds the Windows app icon into the executable resource at build time.

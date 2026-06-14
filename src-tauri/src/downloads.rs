@@ -17,7 +17,7 @@ const DOWNLOAD_CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Some hosts (notably the GitHub API/redirect chain) reject requests without a
 /// User-Agent, so every download identifies itself.
-const DOWNLOAD_USER_AGENT: &str = concat!("Fusion/", env!("CARGO_PKG_VERSION"));
+const DOWNLOAD_USER_AGENT: &str = concat!("FusionLauncher/", env!("CARGO_PKG_VERSION"));
 
 /// Minimum gap between streaming progress callbacks, to avoid flooding the IPC
 /// channel and SQLite on fast connections.
@@ -436,19 +436,19 @@ mod tests {
     async fn resumed_hash_matches_full_file_digest() {
         let temp = tempfile::tempdir().unwrap();
         let part = temp.path().join("game.bin.part");
-        std::fs::write(&part, b"retro").unwrap();
+        std::fs::write(&part, b"fusion-").unwrap();
 
         // Continue the hash from the partial bytes, then feed the remainder.
         let (mut hasher, len) = hash_existing_part(&part, Sha256::new()).await.unwrap();
-        assert_eq!(len, 5);
-        hasher.update(b"hydra");
+        assert_eq!(len, 7);
+        hasher.update(b"launcher");
         let resumed = hex::encode(hasher.finalize());
 
-        // Must equal hashing "retrohydra" in one shot.
-        assert_eq!(resumed, hex::encode(Sha256::digest(b"retrohydra")));
+        // Must equal hashing "fusion-launcher" in one shot.
+        assert_eq!(resumed, hex::encode(Sha256::digest(b"fusion-launcher")));
         assert_eq!(
             resumed,
-            "21ac79b8aad84822f3677ad82121e77ca1dc1a2869e927e630fa4d6de807b5d7"
+            "120b3930657e4166c13a21e3ae527f8338cfeaaedbba0aac0c9d7e15e52bff16"
         );
     }
 
@@ -456,11 +456,11 @@ mod tests {
     fn hashes_files_in_chunks() {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("file.bin");
-        std::fs::write(&path, b"retrohydra").unwrap();
+        std::fs::write(&path, b"fusion-launcher").unwrap();
 
         assert_eq!(
             hash_file(&path).unwrap(),
-            "21ac79b8aad84822f3677ad82121e77ca1dc1a2869e927e630fa4d6de807b5d7"
+            "120b3930657e4166c13a21e3ae527f8338cfeaaedbba0aac0c9d7e15e52bff16"
         );
     }
 
@@ -470,7 +470,7 @@ mod tests {
         crate::builtin_demo::verify_embedded_assets(&repo).unwrap();
         let source = repo.catalog[0].downloads[0].clone();
         let temp = tempfile::tempdir().unwrap();
-        let destination = temp.path().join("retrohydra-smoke.nes");
+        let destination = temp.path().join("fusion-launcher-smoke.nes");
 
         let file = download_source_to_file(&source, &destination)
             .await
@@ -479,7 +479,7 @@ mod tests {
         assert!(file.path.exists());
         assert_eq!(
             file.sha256,
-            "904918a63180b96e6ffd7f98ef775e2b59fa92faf6802b7df450623ba07891df"
+            "566722254227d93e49751a866cf51ff7728917c9f04e970130d24850dce0a7f4"
         );
     }
 }

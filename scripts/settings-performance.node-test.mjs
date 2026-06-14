@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 const settingsModalPath = new URL('../src/components/SettingsModal.tsx', import.meta.url);
-const commandsPath = new URL('../src-tauri/src/commands.rs', import.meta.url);
+const commandsPath = new URL('../src-tauri/src/commands/diagnostics.rs', import.meta.url);
 
 test('settings modal opening stays lightweight', async () => {
   const source = await readFile(settingsModalPath, 'utf8');

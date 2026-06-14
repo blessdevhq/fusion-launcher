@@ -7,9 +7,11 @@ on:
     paths:
       - '.github/workflows/pages.yml'
       - 'README.md'
+      - 'README.ru.md'
       - 'docs/source-library-template.md'
       - 'package-lock.json'
       - 'package.json'
+      - 'public/fusion/**'
       - 'scripts/build-source-template-pages.mjs'
       - 'scripts/validate-source-library.mjs'
       - 'src/types/repository.ts'

@@ -1,11 +1,13 @@
 fn main() {
-    if std::env::var("RETROHYDRA_PACKAGE_SMOKE").as_deref() == Ok("1") {
-        if let Err(error) = retrohydra_lib::run_package_smoke() {
-            eprintln!("RetroHydra package smoke failed: {error}");
+    let package_smoke = std::env::var("FUSION_LAUNCHER_PACKAGE_SMOKE")
+        .or_else(|_| std::env::var("RETROHYDRA_PACKAGE_SMOKE"));
+    if package_smoke.as_deref() == Ok("1") {
+        if let Err(error) = fusion_launcher_lib::run_package_smoke() {
+            eprintln!("Fusion Launcher package smoke failed: {error}");
             std::process::exit(1);
         }
         return;
     }
 
-    retrohydra_lib::run()
+    fusion_launcher_lib::run()
 }

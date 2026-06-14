@@ -70,7 +70,7 @@ export function GamePoster({
         <button
           onClick={() => onAction(item)}
           aria-label={displayActionLabel(item.primaryActionLabel, t)}
-          className="rh-card-action absolute right-2 grid h-7 w-7 place-items-center rounded-md bg-black/72 text-white opacity-0 backdrop-blur transition hover:bg-hydra-accent group-hover:opacity-100"
+          className="rh-card-action absolute right-2 grid h-7 w-7 place-items-center rounded-md bg-black/72 text-white opacity-0 backdrop-blur transition hover:bg-fusion-accent group-hover:opacity-100"
           title={displayActionLabel(item.primaryActionLabel, t)}
         >
           <ActionIcon className="h-3.5 w-3.5" />

@@ -92,7 +92,7 @@ describe('repository schema', () => {
           },
           metadata: {
             releaseYear: 2026,
-            developer: 'RetroHydra Labs',
+            developer: 'Fusion Launcher Labs',
             publisher: 'Community Preview',
             genres: ['Adventure'],
             tags: ['user-provided'],
@@ -180,7 +180,7 @@ describe('repository schema', () => {
 
     const repo = validateRepositorySchema(template);
 
-    assert.equal(repo.metadata.id, 'retrohydra-source-template');
+    assert.equal(repo.metadata.id, 'fusion-launcher-source-template');
     assert.equal(repo.catalog.length, 4);
     assert.equal(repo.catalog[2].contentMode, 'user_provided');
     assert.equal(repo.catalog[3].contentMode, 'metadata_only');
@@ -189,8 +189,8 @@ describe('repository schema', () => {
   it('accepts bundled sources for local built-in repository validation', () => {
     const repo = validateRepositorySchema({
       metadata: {
-        id: 'retrohydra-demo',
-        name: 'RetroHydra Built-in Demo Repository',
+        id: 'fusion-launcher-demo',
+        name: 'Fusion Launcher Built-in Demo Repository',
         version: '1.0.0',
         schemaVersion: 2,
         trustLevel: 'official'
@@ -198,12 +198,12 @@ describe('repository schema', () => {
       system_files: [],
       catalog: [
         {
-          id: 'retrohydra_nes_smoke',
+          id: 'fusion_launcher_nes_smoke',
           platform: 'nes',
-          title: 'RetroHydra NES Smoke Demo',
+          title: 'Fusion Launcher NES Smoke Demo',
           downloads: [{
             kind: 'bundled',
-            path: 'demo-content/retrohydra-smoke.nes',
+            path: 'demo-content/fusion-launcher-smoke.nes',
             sha256: hash,
             sizeBytes: 24592
           }],
@@ -299,7 +299,7 @@ describe('repository schema', () => {
   it('models import reports and requirement checksums', () => {
     const report: ImportAssetFileReport = {
       status: 'already_installed',
-      installedPath: 'C:\\RetroHydra\\System\\nes\\bios.bin'
+      installedPath: 'C:\\Fusion Launcher\\System\\nes\\bios.bin'
     };
     const requirement = {
       checksum: hash,
@@ -308,7 +308,7 @@ describe('repository schema', () => {
     const gameReport: ImportGameFileReport = {
       status: 'installed',
       gameId: 'repo::game',
-      installedPath: 'C:\\RetroHydra\\Games\\game.xci',
+      installedPath: 'C:\\Fusion Launcher\\Games\\game.xci',
       sha256: hash
     };
 

@@ -57,17 +57,17 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           # Compile-time built-in SteamGridDB key (read via option_env!). Optional:
           # when the secret is unset the binary falls back to the per-user key.
-          RETROHYDRA_STEAMGRIDDB_KEY: ${{ secrets.RETROHYDRA_STEAMGRIDDB_KEY }}
+          FUSION_LAUNCHER_STEAMGRIDDB_KEY: ${{ secrets.FUSION_LAUNCHER_STEAMGRIDDB_KEY || secrets.RETROHYDRA_STEAMGRIDDB_KEY }}
           # Compile-time ScreenScraper developer credentials (read via option_env!).
           # Optional: lift anonymous rate limits in official builds. Without them
           # scraping still works per-user but under stricter anonymous throttling.
-          RETROHYDRA_SCREENSCRAPER_DEVID: ${{ secrets.RETROHYDRA_SCREENSCRAPER_DEVID }}
-          RETROHYDRA_SCREENSCRAPER_DEVPASSWORD: ${{ secrets.RETROHYDRA_SCREENSCRAPER_DEVPASSWORD }}
+          FUSION_LAUNCHER_SCREENSCRAPER_DEVID: ${{ secrets.FUSION_LAUNCHER_SCREENSCRAPER_DEVID || secrets.RETROHYDRA_SCREENSCRAPER_DEVID }}
+          FUSION_LAUNCHER_SCREENSCRAPER_DEVPASSWORD: ${{ secrets.FUSION_LAUNCHER_SCREENSCRAPER_DEVPASSWORD || secrets.RETROHYDRA_SCREENSCRAPER_DEVPASSWORD }}
         run: npm run tauri:build -- --target x86_64-pc-windows-msvc
 
       - name: Run packaged smoke
         env:
-          RETROHYDRA_RELEASE_DIR: src-tauri/target/x86_64-pc-windows-msvc/release
+          FUSION_LAUNCHER_RELEASE_DIR: src-tauri/target/x86_64-pc-windows-msvc/release
         run: npm run mvp:package-smoke
 
       - name: Prepare updater release assets
@@ -97,9 +97,9 @@ jobs:
           if (-not $zip) { throw "Updater NSIS zip was not found in $bundleRoot" }
           if (-not $sig) { throw "Updater signature was not found in $bundleRoot" }
 
-          $exeOut = Join-Path $assetRoot "RetroHydra_${version}_x64-setup.exe"
-          $zipOut = Join-Path $assetRoot "RetroHydra_${version}_x64-setup.nsis.zip"
-          $sigOut = Join-Path $assetRoot "RetroHydra_${version}_x64-setup.nsis.zip.sig"
+          $exeOut = Join-Path $assetRoot "FusionLauncher_${version}_x64-setup.exe"
+          $zipOut = Join-Path $assetRoot "FusionLauncher_${version}_x64-setup.nsis.zip"
+          $sigOut = Join-Path $assetRoot "FusionLauncher_${version}_x64-setup.nsis.zip.sig"
 
           Copy-Item -LiteralPath $exe.FullName -Destination $exeOut -Force
           Copy-Item -LiteralPath $zip.FullName -Destination $zipOut -Force
@@ -120,7 +120,7 @@ jobs:
             $notes = (Get-Content -LiteralPath "CHANGELOG.md" -Raw).Trim()
           }
           if ([string]::IsNullOrWhiteSpace($notes)) {
-            $notes = "RetroHydra $tag"
+            $notes = "Fusion Launcher $tag"
           }
 
           $signature = (Get-Content -LiteralPath $sigOut -Raw).Trim()
@@ -131,7 +131,7 @@ jobs:
             platforms = [ordered]@{
               "windows-x86_64" = [ordered]@{
                 signature = $signature
-                url = "https://github.com/MrBeastie/RetroHydra/releases/download/$tag/RetroHydra_${version}_x64-setup.nsis.zip"
+                url = "https://github.com/MrBeastie/fusion-launcher/releases/download/$tag/FusionLauncher_${version}_x64-setup.nsis.zip"
               }
             }
           }
@@ -146,26 +146,26 @@ jobs:
           $ErrorActionPreference = "Stop"
           $tag = "${{ github.ref_name }}"
           $version = $tag.TrimStart("v")
-          $notes = "RetroHydra $tag"
+          $notes = "Fusion Launcher $tag"
           $tagNotes = (git for-each-ref "refs/tags/$tag" --format="%(contents)" | Out-String).Trim()
           if (-not [string]::IsNullOrWhiteSpace($tagNotes)) {
             $notes = $tagNotes
           }
           if (Test-Path -LiteralPath "CHANGELOG.md") {
             $changelog = (Get-Content -LiteralPath "CHANGELOG.md" -Raw).Trim()
-            if ([string]::IsNullOrWhiteSpace($notes) -or $notes -eq "RetroHydra $tag") {
+            if ([string]::IsNullOrWhiteSpace($notes) -or $notes -eq "Fusion Launcher $tag") {
               $notes = $changelog
             }
           }
 
           gh release view $tag *> $null
           if ($LASTEXITCODE -ne 0) {
-            gh release create $tag --draft --title "RetroHydra $tag" --notes $notes
+            gh release create $tag --draft --title "Fusion Launcher $tag" --notes $notes
           }
 
           gh release upload $tag `
-            "release-assets/RetroHydra_${version}_x64-setup.exe" `
-            "release-assets/RetroHydra_${version}_x64-setup.nsis.zip" `
-            "release-assets/RetroHydra_${version}_x64-setup.nsis.zip.sig" `
+            "release-assets/FusionLauncher_${version}_x64-setup.exe" `
+            "release-assets/FusionLauncher_${version}_x64-setup.nsis.zip" `
+            "release-assets/FusionLauncher_${version}_x64-setup.nsis.zip.sig" `
             "release-assets/latest.json" `
             --clobber

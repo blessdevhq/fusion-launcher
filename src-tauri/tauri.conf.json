@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Fusion",
+  "productName": "Fusion Launcher",
   "version": "0.2.0",
-  "identifier": "app.retrohydra.launcher",
+  "identifier": "app.fusion.launcher",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:3000",
@@ -14,7 +14,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Fusion",
+        "title": "Fusion Launcher",
         "width": 1360,
         "height": 840,
         "minWidth": 960,
@@ -48,7 +48,7 @@
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDM5RTQyODEwMDUxQ0Q3MDUKUldRRjF4d0ZFQ2prT2VhdG82OFBkbW5Ic05XSnFVVnd0Zm8xcHR5ZHl1aWtSSDJibFRIOERnZ1UK",
       "endpoints": [
-        "https://github.com/MrBeastie/RetroHydra/releases/latest/download/latest.json"
+        "https://github.com/MrBeastie/fusion-launcher/releases/latest/download/latest.json"
       ]
     }
   }

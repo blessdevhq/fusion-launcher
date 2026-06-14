@@ -17,7 +17,7 @@ async function check(label, action) {
 }
 
 await check('repository preview and connect', async () => {
-  const url = 'https://community.example/retrohydra-repository.json';
+  const url = 'https://community.example/fusion-launcher-repository.json';
   const preview = await previewApi.previewRepository(url);
   assert.equal(preview.url, url);
   assert.ok(preview.catalogCount > 0, 'preview must expose catalog items');
@@ -30,7 +30,7 @@ await check('repository preview and connect', async () => {
 
   const catalog = await previewApi.getCatalog();
   assert.ok(catalog.length >= preview.catalogCount);
-  assert.ok(catalog.some((game) => game.id === 'retrohydra_nes_smoke'));
+  assert.ok(catalog.some((game) => game.id === 'fusion_launcher_nes_smoke'));
   const profiles = await previewApi.listPlatformSetupProfiles();
   assert.ok(profiles.some((profile) => profile.id === 'nes-mesen'));
   assert.ok(profiles.some((profile) => profile.id === 'switch-manual'));
@@ -40,7 +40,7 @@ await check('repository preview and connect', async () => {
 
 await check('one-click NES demo setup path', async () => {
   await previewApi.deleteEmulatorConfig('nes');
-  await previewApi.removeGame('retrohydra_nes_smoke', true);
+  await previewApi.removeGame('fusion_launcher_nes_smoke', true);
 
   const before = await previewApi.getEmulatorStatus('nes');
   assert.equal(before.installed, false);
@@ -48,19 +48,19 @@ await check('one-click NES demo setup path', async () => {
   const emulator = await previewApi.installEmulator('nes');
   assert.equal(emulator.profileId, 'nes-mesen');
 
-  const download = await previewApi.startGameDownload('retrohydra_nes_smoke');
+  const download = await previewApi.startGameDownload('fusion_launcher_nes_smoke');
   assert.equal(download.sourceKind, 'bundled');
   assert.equal(download.torrent?.status, 'completed');
 
-  const requirements = await previewApi.checkRequirements('retrohydra_nes_smoke');
+  const requirements = await previewApi.checkRequirements('fusion_launcher_nes_smoke');
   assert.equal(requirements.ready, true);
-  const setup = await previewApi.getGameSetupState('retrohydra_nes_smoke');
+  const setup = await previewApi.getGameSetupState('fusion_launcher_nes_smoke');
   assert.equal(setup.profileId, 'nes-mesen');
   assert.equal(setup.launch.status, 'ready');
 
-  const launch = await previewApi.launchGame('retrohydra_nes_smoke');
+  const launch = await previewApi.launchGame('fusion_launcher_nes_smoke');
   assert.equal(launch.executable, 'preview://emulators/nes/Mesen.exe');
-  assert.ok(launch.resolvedGamePath.includes('retrohydra_nes_smoke'));
+  assert.ok(launch.resolvedGamePath.includes('fusion_launcher_nes_smoke'));
 
   return `${download.sourceKind} download -> ${launch.executable}`;
 });
@@ -69,10 +69,10 @@ await check('user-provided showcase game import', async () => {
   const gameId = 'star-orbit';
   await previewApi.removeGame(gameId, true);
   await previewApi.saveEmulatorConfig('switch', 'preview://emulators/switch.exe', '{game_path}');
-  const keys = await previewApi.importProfileSystemFile(gameId, 'switch-prod-keys', 'F:\\RetroHydra\\Fixtures\\prod.keys');
+  const keys = await previewApi.importProfileSystemFile(gameId, 'switch-prod-keys', 'F:\\Fusion Launcher\\Fixtures\\prod.keys');
   assert.equal(keys.status, 'installed');
 
-  const report = await previewApi.importGameFile(gameId, 'F:\\RetroHydra\\Fixtures\\star-orbit.xci');
+  const report = await previewApi.importGameFile(gameId, 'F:\\Fusion Launcher\\Fixtures\\star-orbit.xci');
   assert.equal(report.status, 'installed');
   assert.equal(report.gameId, gameId);
   assert.ok(report.installedPath.endsWith('star-orbit.xci'));
@@ -120,7 +120,7 @@ await check('health and diagnostics coverage', async () => {
   assert.equal(health.downloader.status, 'ready');
   assert.ok(health.platformSetup.some((item) => item.id === 'profile:nes-mesen' && item.status === 'ready'));
   assert.ok(health.emulators.some((item) => item.id === 'emulator:nes' && item.status === 'ready'));
-  assert.ok(health.gameFiles.some((item) => item.id === 'game:retrohydra_nes_smoke'));
+  assert.ok(health.gameFiles.some((item) => item.id === 'game:fusion_launcher_nes_smoke'));
 
   const diagnostics = await previewApi.getDiagnosticsBundle();
   assert.ok(diagnostics.downloads.length > 0, 'diagnostics must include downloads');

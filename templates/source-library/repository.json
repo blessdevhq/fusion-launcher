@@ -1,11 +1,11 @@
 {
   "metadata": {
-    "id": "retrohydra-source-template",
-    "name": "RetroHydra Source Library Template",
+    "id": "fusion-launcher-source-template",
+    "name": "Fusion Launcher Source Library Template",
     "version": "1.0.0",
     "schemaVersion": 3,
     "maintainer": "Replace with your name or community",
-    "homepageUrl": "https://example.com/retrohydra-source-library",
+    "homepageUrl": "https://example.com/fusion-launcher-source-library",
     "license": "Template metadata only. Replace with your source library license.",
     "trustLevel": "community",
     "updatedAt": "2026-06-03T00:00:00Z"

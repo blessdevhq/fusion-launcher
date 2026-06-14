@@ -55,8 +55,8 @@ export const en = {
     peers: 'peers'
   },
   brand: {
-    tagline: 'Your games. All in one place.',
-    demoCopy: 'Fusion includes first-party demo content and loads community sources only after you connect them.'
+    tagline: 'Retro and console games. One Windows launcher.',
+    demoCopy: 'Connect sources to install and launch allowed content. Fusion Launcher ships only first-party demo content.'
   },
   actions: {
     Play: 'Play',
@@ -93,7 +93,7 @@ export const en = {
     community: 'Community source',
     unknown: 'User source',
     confirmTitle: 'Connect user source?',
-    confirmBody: 'Fusion has not verified this source. Connect it only if you trust the author and have the right to use the listed files.',
+    confirmBody: 'Fusion Launcher has not verified this source. Connect it only if you trust the author and have the right to use the listed files.',
     unknownPrompt: (name: string, url: string, catalogCount: number, systemFileCount: number) => [
       'Connect user source?',
       '',
@@ -101,7 +101,7 @@ export const en = {
       url,
       `${catalogCount} games, ${systemFileCount} system files.`,
       '',
-      'Fusion has not verified this source. Connect it only if you trust the author and have the right to use the listed files.'
+      'Fusion Launcher has not verified this source. Connect it only if you trust the author and have the right to use the listed files.'
     ].join('\n')
   },
   settings: {
@@ -115,7 +115,7 @@ export const en = {
     sections: {
       general: 'General',
       emulators: 'Emulators',
-      metadata: 'Metadata',
+      metadata: 'Метаданные',
       sources: 'Sources',
       storage: 'Storage',
       diagnostics: 'Diagnostics',
@@ -242,7 +242,7 @@ export const en = {
       checkIdle: 'Check for updates when convenient.',
       checking: 'Checking GitHub Releases...',
       installing: 'Downloading and installing the update...',
-      upToDate: (version?: string | null) => `Fusion is up to date${version ? ` (${version})` : ''}.`,
+      upToDate: (version?: string | null) => `Fusion Launcher is up to date${version ? ` (${version})` : ''}.`,
       available: (version?: string | null) => `Version ${version ?? 'unknown'} is available`,
       installNow: 'Update now',
       retry: 'Retry',
@@ -307,7 +307,7 @@ export const en = {
       sourceChecked: 'Source checked',
       sourceConnected: 'Source connected',
       localJsonDesktopOnly: 'Local JSON import is available in the desktop build.',
-      selectSourceJson: 'Select Fusion source JSON',
+      selectSourceJson: 'Select Fusion Launcher source JSON',
       repositoryJson: 'Repository JSON',
       diagnosticsCopied: 'Diagnostics copied',
       downloadCompleted: 'Download completed',
@@ -419,25 +419,27 @@ export const en = {
       browseError: (error: unknown) => `Failed to browse for emulator: ${error}`
     },
     firstRun: 'First run',
-    title: 'Set up Fusion before you play',
+    title: 'Set up Fusion Launcher before you play',
     copy: 'Connect a source and set up one matching emulator. Commercial ROMs, BIOS, firmware, and keys are not bundled.',
     stepperLabel: 'First run setup steps',
     continue: 'Continue',
     steps: {
       welcome: 'Welcome',
       source: 'Source',
+      metadata: 'Metadata',
       emulator: 'Emulator',
       ready: 'Ready'
     },
     stepDetails: {
       welcome: 'Language and setup overview',
       source: 'Connect demo, community, or local JSON',
+      metadata: 'Choose how game metadata is filled',
       emulator: 'Install or select one matching emulator',
       ready: 'Check readiness and open launcher'
     },
     welcome: {
       title: 'Start with the basics',
-      copy: 'Fusion needs a game source and at least one emulator that matches that source. You can finish optional storage, metadata, and diagnostics later in Settings.'
+      copy: 'Fusion Launcher first connects a game source, then chooses how metadata fills game cards, then sets up a matching emulator for launch.'
     },
     sourceStep: {
       title: 'Choose where games come from',
@@ -447,10 +449,66 @@ export const en = {
       connected: (count: number) => `Source connected / ${count} games found`,
       notConnected: 'Connect a source before configuring emulators.'
     },
+    metadataStep: {
+      title: 'Choose metadata strategy',
+      copy: 'Metadata controls titles, descriptions, covers, genres, and artwork. Pick the default now; you can still change details later.',
+      sourcesTitle: 'Where metadata can come from',
+      sources: [
+        {
+          title: 'Source JSON',
+          copy: 'The connected catalog can include titles, descriptions, images, genres, and launch hints.'
+        },
+        {
+          title: 'ScreenScraper',
+          copy: 'Optional account lookup for game metadata and covers after imports.'
+        },
+        {
+          title: 'SteamGridDB',
+          copy: 'Optional artwork provider for heroes, logos, and grid images.'
+        },
+        {
+          title: 'Manual edits',
+          copy: 'Each library entry can be adjusted later from its details screen.'
+        }
+      ],
+      strategyTitle: 'What should Fusion Launcher use first?',
+      strategies: {
+        source: {
+          title: 'Use source metadata',
+          copy: 'Recommended for the first run. Use the connected catalog now and improve games later if needed.',
+          badge: 'Recommended'
+        },
+        screenscraper: {
+          title: 'Connect metadata services',
+          copy: 'Save ScreenScraper or SteamGridDB credentials now. Empty fields are allowed and can be filled later.',
+          badge: 'Optional'
+        },
+        manual: {
+          title: 'I will edit metadata manually',
+          copy: 'Continue without services and fill missing metadata from each game details screen.',
+          badge: null
+        }
+      },
+      credentialsTitle: 'Optional service credentials',
+      credentialsCopy: 'ScreenScraper improves game metadata. SteamGridDB improves artwork. Credentials stay local.',
+      optional: 'Optional',
+      ssid: 'ScreenScraper SSID',
+      password: 'ScreenScraper password',
+      region: 'Region',
+      regions: {
+        auto: 'Auto',
+        eu: 'Europe',
+        us: 'United States',
+        jp: 'Japan'
+      },
+      steamgriddbKey: 'SteamGridDB API key',
+      steamgriddbPlaceholder: 'Leave blank to use later',
+      save: 'Save metadata choice'
+    },
     emulatorStep: {
       title: 'Set up a matching emulator',
       copy: 'Only one ready emulator is required to enter the launcher. Other platforms can be configured later from Settings.',
-      needsSource: 'Connect a source first so Fusion can show only the emulator profiles your library needs.',
+      needsSource: 'Connect a source first so Fusion Launcher can show only the emulator profiles your library needs.',
       noCatalog: 'The source is connected, but the catalog is empty.',
       noProfiles: 'No supported setup profile was found for this catalog.',
       autoDetail: (name: string) => `${name} can be installed automatically for this platform.`,
@@ -459,15 +517,18 @@ export const en = {
     },
     readyStep: {
       title: 'Launcher is ready',
-      copy: 'The required setup is complete. Optional metadata, storage, diagnostics, and extra emulators stay available in Settings.',
+      copy: 'The required setup is complete. Storage, diagnostics, metadata services, and extra emulators stay available in Settings.',
       catalog: 'Catalog',
       sourceReady: 'A source is connected.',
       catalogReady: 'Games are available in the catalog.',
       catalogMissing: 'The connected source has no catalog entries.',
+      metadataReady: 'Metadata strategy is selected.',
+      metadataMissing: 'Choose how Fusion Launcher should fill metadata.',
       emulatorReady: 'At least one matching emulator is ready.',
       emulatorMissing: 'Set up one emulator for a platform in the catalog.',
-      demoOptional: 'Optional: download the demo ROM to test launch immediately.',
+      demoOptional: 'Optional: install the demo cartridge image to test launch immediately.',
       fixSource: 'Fix source',
+      fixMetadata: 'Fix metadata',
       fixEmulator: 'Fix emulator',
       openLauncher: 'Open launcher'
     },
@@ -478,10 +539,12 @@ export const en = {
     setup: {
       source: 'Source',
       sourceDetail: 'Built-in demo library connected',
+      metadata: 'Metadata',
+      metadataDetail: 'Metadata and artwork strategy selected',
       emulator: 'Emulator',
       emulatorDetail: 'Mesen2 auto setup',
-      demoRom: 'Demo ROM',
-      demoRomDetail: 'Built-in smoke ROM',
+      demoRom: 'Demo image',
+      demoRomDetail: 'Built-in demo cartridge image',
       ready: 'Ready',
       readyDetail: 'After setup, launch should complete without errors'
     },
@@ -588,7 +651,7 @@ export const en = {
     fallbackMessage: 'Could not start the emulator.',
     emulatorNotConfigured: {
       title: 'Emulator is not configured',
-      message: 'Set the emulator path in Fusion before launching this platform.',
+      message: 'Set the emulator path in Fusion Launcher before launching this platform.',
       action: 'Open settings'
     },
     emulatorFileMissing: {
@@ -620,7 +683,7 @@ export const en = {
     },
     alreadyRunning: {
       title: 'Game is already running',
-      message: 'Fusion has already started an emulator process for this game.',
+      message: 'Fusion Launcher has already started an emulator process for this game.',
       action: 'Close'
     },
     spawnFailed: {
@@ -691,8 +754,8 @@ export const ru: UiText = {
     peers: 'peers'
   },
   brand: {
-    tagline: 'Твои игры. Все в одном месте.',
-    demoCopy: 'Fusion включает first-party demo и загружает community-источники только после твоего подключения.'
+    tagline: 'Ретро и консольные игры. Один Windows-лаунчер.',
+    demoCopy: 'Подключай источники, чтобы устанавливать и запускать разрешённый контент. Fusion Launcher поставляет только first-party demo.'
   },
   actions: {
     Play: 'Играть',
@@ -729,7 +792,7 @@ export const ru: UiText = {
     community: 'Источник сообщества',
     unknown: 'Пользовательский источник',
     confirmTitle: 'Подключить пользовательский источник?',
-    confirmBody: 'Fusion не проверял этот источник. Подключай его только если доверяешь автору и имеешь право использовать указанные файлы.',
+    confirmBody: 'Fusion Launcher не проверял этот источник. Подключай его только если доверяешь автору и имеешь право использовать указанные файлы.',
     unknownPrompt: (name: string, url: string, catalogCount: number, systemFileCount: number) => [
       'Подключить пользовательский источник?',
       '',
@@ -737,7 +800,7 @@ export const ru: UiText = {
       url,
       `${catalogCount} игр, ${systemFileCount} системных файлов.`,
       '',
-      'Fusion не проверял этот источник. Подключай его только если доверяешь автору и имеешь право использовать указанные файлы.'
+      'Fusion Launcher не проверял этот источник. Подключай его только если доверяешь автору и имеешь право использовать указанные файлы.'
     ].join('\n')
   },
   settings: {
@@ -878,7 +941,7 @@ export const ru: UiText = {
       checkIdle: 'Проверь обновления, когда будет удобно.',
       checking: 'Проверяем GitHub Releases...',
       installing: 'Скачиваем и устанавливаем обновление...',
-      upToDate: (version?: string | null) => `Fusion обновлен${version ? ` (${version})` : ''}.`,
+      upToDate: (version?: string | null) => `Fusion Launcher обновлен${version ? ` (${version})` : ''}.`,
       available: (version?: string | null) => `Доступна версия ${version ?? 'unknown'}`,
       installNow: 'Обновить сейчас',
       retry: 'Повторить',
@@ -943,7 +1006,7 @@ export const ru: UiText = {
       sourceChecked: 'Источник проверен',
       sourceConnected: 'Источник подключен',
       localJsonDesktopOnly: 'Импорт локального JSON доступен в desktop-сборке.',
-      selectSourceJson: 'Select Fusion source JSON',
+      selectSourceJson: 'Select Fusion Launcher source JSON',
       repositoryJson: 'Repository JSON',
       diagnosticsCopied: 'Диагностика скопирована',
       downloadCompleted: 'Загрузка завершена',
@@ -1055,25 +1118,27 @@ export const ru: UiText = {
       browseError: (error: unknown) => `Не удалось выбрать эмулятор: ${error}`
     },
     firstRun: 'Первый запуск',
-    title: 'Настрой Fusion перед запуском',
+    title: 'Настрой Fusion Launcher перед запуском',
     copy: 'Подключи источник и настрой один подходящий эмулятор. Коммерческие ROM, BIOS, firmware и keys не входят в поставку.',
     stepperLabel: 'Шаги первого запуска',
     continue: 'Продолжить',
     steps: {
       welcome: 'Старт',
       source: 'Источник',
+      metadata: 'Метаданные',
       emulator: 'Эмулятор',
       ready: 'Готово'
     },
     stepDetails: {
       welcome: 'Язык и общий план настройки',
       source: 'Demo, URL сообщества или локальный JSON',
+      metadata: 'Выбор источников метаданных',
       emulator: 'Установка или выбор подходящего эмулятора',
       ready: 'Проверка готовности и вход в лаунчер'
     },
     welcome: {
       title: 'Начнем с базовой настройки',
-      copy: 'Fusion нужен источник игр и хотя бы один эмулятор под этот источник. Storage, metadata и diagnostics можно настроить позже в Settings.'
+      copy: 'Fusion Launcher сначала подключает источник игр, затем выбирает как заполнять карточки метаданными, а после настраивает подходящий эмулятор для запуска.'
     },
     sourceStep: {
       title: 'Выбери источник игр',
@@ -1083,10 +1148,66 @@ export const ru: UiText = {
       connected: (count: number) => `Источник подключен / игр: ${count}`,
       notConnected: 'Сначала подключи источник, потом настраивай эмуляторы.'
     },
+    metadataStep: {
+      title: 'Выбери стратегию метаданных',
+      copy: 'Метаданные отвечают за названия, описания, обложки, жанры и artwork. Выбери базовый режим сейчас; детали можно менять позже.',
+      sourcesTitle: 'Откуда берутся метаданные',
+      sources: [
+        {
+          title: 'Source JSON',
+          copy: 'Подключенный каталог может уже содержать названия, описания, изображения, жанры и подсказки запуска.'
+        },
+        {
+          title: 'ScreenScraper',
+          copy: 'Опциональный поиск по аккаунту для игровых метаданных и обложек после импорта.'
+        },
+        {
+          title: 'SteamGridDB',
+          copy: 'Опциональный источник hero, logo и grid artwork.'
+        },
+        {
+          title: 'Ручные правки',
+          copy: 'Любую игру можно поправить позже из экрана деталей.'
+        }
+      ],
+      strategyTitle: 'Что Fusion Launcher использует первым?',
+      strategies: {
+        source: {
+          title: 'Использовать метаданные источника',
+          copy: 'Рекомендуется для первого запуска. Используй подключенный каталог сейчас и улучшай игры позже при необходимости.',
+          badge: 'Рекомендуется'
+        },
+        screenscraper: {
+          title: 'Подключить metadata-сервисы',
+          copy: 'Сохрани ScreenScraper или SteamGridDB credentials сейчас. Пустые поля допустимы, их можно заполнить позже.',
+          badge: 'Опционально'
+        },
+        manual: {
+          title: 'Буду редактировать вручную',
+          copy: 'Продолжить без сервисов и заполнять недостающие метаданные из деталей игры.',
+          badge: null
+        }
+      },
+      credentialsTitle: 'Опциональные credentials сервисов',
+      credentialsCopy: 'ScreenScraper улучшает игровые метаданные. SteamGridDB улучшает artwork. Credentials хранятся локально.',
+      optional: 'Опционально',
+      ssid: 'ScreenScraper SSID',
+      password: 'Пароль ScreenScraper',
+      region: 'Регион',
+      regions: {
+        auto: 'Авто',
+        eu: 'Европа',
+        us: 'США',
+        jp: 'Япония'
+      },
+      steamgriddbKey: 'SteamGridDB API key',
+      steamgriddbPlaceholder: 'Можно оставить пустым',
+      save: 'Сохранить выбор метаданных'
+    },
     emulatorStep: {
       title: 'Настрой подходящий эмулятор',
       copy: 'Для входа в лаунчер достаточно одного готового эмулятора. Остальные платформы можно настроить позже в Settings.',
-      needsSource: 'Сначала подключи источник, чтобы Fusion показал только нужные профили эмуляторов.',
+      needsSource: 'Сначала подключи источник, чтобы Fusion Launcher показал только нужные профили эмуляторов.',
       noCatalog: 'Источник подключен, но каталог пуст.',
       noProfiles: 'Для этого каталога не найден поддерживаемый профиль настройки.',
       autoDetail: (name: string) => `${name} можно установить автоматически для этой платформы.`,
@@ -1095,15 +1216,18 @@ export const ru: UiText = {
     },
     readyStep: {
       title: 'Лаунчер готов',
-      copy: 'Обязательная настройка завершена. Metadata, storage, diagnostics и дополнительные эмуляторы останутся в Settings.',
+      copy: 'Обязательная настройка завершена. Storage, diagnostics, metadata-сервисы и дополнительные эмуляторы останутся в Settings.',
       catalog: 'Каталог',
       sourceReady: 'Источник подключен.',
       catalogReady: 'Игры доступны в каталоге.',
       catalogMissing: 'В подключенном источнике нет игр.',
+      metadataReady: 'Стратегия метаданных выбрана.',
+      metadataMissing: 'Выбери, как Fusion Launcher будет заполнять метаданные.',
       emulatorReady: 'Хотя бы один подходящий эмулятор готов.',
       emulatorMissing: 'Настрой один эмулятор для платформы из каталога.',
-      demoOptional: 'Опционально: скачай demo ROM, чтобы сразу проверить запуск.',
+      demoOptional: 'Опционально: установи demo cartridge image, чтобы сразу проверить запуск.',
       fixSource: 'Исправить источник',
+      fixMetadata: 'Исправить метаданные',
       fixEmulator: 'Исправить эмулятор',
       openLauncher: 'Открыть лаунчер'
     },
@@ -1114,10 +1238,12 @@ export const ru: UiText = {
     setup: {
       source: 'Источник',
       sourceDetail: 'Встроенная demo-библиотека подключена',
+      metadata: 'Метаданные',
+      metadataDetail: 'Стратегия метаданных и artwork выбрана',
       emulator: 'Эмулятор',
       emulatorDetail: 'Автонастройка Mesen2',
-      demoRom: 'Demo ROM',
-      demoRomDetail: 'Встроенный smoke ROM',
+      demoRom: 'Demo image',
+      demoRomDetail: 'Встроенный demo cartridge image',
       ready: 'Готово',
       readyDetail: 'После настройки запуск должен пройти без ошибок'
     },
@@ -1224,7 +1350,7 @@ export const ru: UiText = {
     fallbackMessage: 'Не удалось запустить эмулятор.',
     emulatorNotConfigured: {
       title: 'Эмулятор не настроен',
-      message: 'Укажи Fusion путь к эмулятору перед запуском этой платформы.',
+      message: 'Укажи Fusion Launcher путь к эмулятору перед запуском этой платформы.',
       action: 'Открыть настройки'
     },
     emulatorFileMissing: {
@@ -1256,7 +1382,7 @@ export const ru: UiText = {
     },
     alreadyRunning: {
       title: 'Игра уже запущена',
-      message: 'Fusion уже запустил процесс эмулятора для этой игры.',
+      message: 'Fusion Launcher уже запустил процесс эмулятора для этой игры.',
       action: 'Закрыть'
     },
     spawnFailed: {

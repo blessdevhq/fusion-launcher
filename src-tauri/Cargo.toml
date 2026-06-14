@@ -1,12 +1,15 @@
 [package]
-name = "retrohydra"
+name = "fusion-launcher"
 version = "0.2.0"
-description = "RetroHydra BYOR desktop content aggregator"
-authors = ["RetroHydra"]
+description = "Source-driven Windows launcher for retro and console games"
+authors = ["Fusion Launcher"]
+license = "GPL-3.0-or-later"
+repository = "https://github.com/MrBeastie/fusion-launcher"
+homepage = "https://github.com/MrBeastie/fusion-launcher#readme"
 edition = "2021"
 
 [lib]
-name = "retrohydra_lib"
+name = "fusion_launcher_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

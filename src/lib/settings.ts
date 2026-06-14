@@ -8,22 +8,35 @@ import { isPreviewRuntime, isTauriRuntime, requireDesktopBridge } from './runtim
 const SETTINGS_FILE = 'settings.json';
 const EMULATORS_KEY = 'emulators';
 const LANGUAGE_KEY = 'language';
+const METADATA_ONBOARDING_KEY = 'metadataOnboarding';
 const LEGACY_DEFAULT_EMULATOR_PATH_KEY = 'defaultEmulatorPath';
-const PREVIEW_SETTINGS_KEY = 'retrohydra.preview.settings';
+const PREVIEW_SETTINGS_KEY = 'fusion-launcher.preview.settings';
+const LEGACY_PREVIEW_SETTINGS_KEY = `${['retro', 'hydra'].join('')}.preview.settings`;
 
 export type EmulatorPaths = Partial<Record<Platform, string>>;
 export type EmulatorConfigs = Partial<Record<Platform, EmulatorConfig>>;
+export type MetadataOnboardingStrategy = 'source' | 'screenscraper' | 'manual';
+
+export interface MetadataOnboardingSettings {
+  complete: boolean;
+  strategy: MetadataOnboardingStrategy;
+}
 
 export interface AppSettings {
   emulators: EmulatorPaths;
   emulatorConfigs: EmulatorConfigs;
   language: Locale;
+  metadataOnboarding: MetadataOnboardingSettings;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
   emulators: {},
   emulatorConfigs: {},
-  language: DEFAULT_LOCALE
+  language: DEFAULT_LOCALE,
+  metadataOnboarding: {
+    complete: false,
+    strategy: 'source'
+  }
 };
 
 let settingsStore: Promise<Store> | null = null;
@@ -33,7 +46,8 @@ function getSettingsStore() {
   settingsStore ??= Store.load(SETTINGS_FILE, {
     defaults: {
       [EMULATORS_KEY]: DEFAULT_SETTINGS.emulators,
-      [LANGUAGE_KEY]: DEFAULT_SETTINGS.language
+      [LANGUAGE_KEY]: DEFAULT_SETTINGS.language,
+      [METADATA_ONBOARDING_KEY]: DEFAULT_SETTINGS.metadataOnboarding
     },
     autoSave: true
   });
@@ -46,7 +60,9 @@ export async function loadSettings(): Promise<AppSettings> {
     if (isPreviewRuntime()) {
       const previewSettings = loadPreviewSettings();
       const configs = await api.listEmulatorConfigs();
-      if (configs.length > 0) return settingsFromEmulatorConfigs(configs, previewSettings.language);
+      if (configs.length > 0) {
+        return settingsFromEmulatorConfigs(configs, previewSettings.language, previewSettings.metadataOnboarding);
+      }
       return previewSettings;
     }
     return requireDesktopBridge('Loading settings');
@@ -54,7 +70,7 @@ export async function loadSettings(): Promise<AppSettings> {
 
   await migrateLegacyEmulatorSettings();
   const configs = await api.listEmulatorConfigs();
-  return settingsFromEmulatorConfigs(configs, await loadStoredLanguage());
+  return settingsFromEmulatorConfigs(configs, await loadStoredLanguage(), await loadStoredMetadataOnboarding());
 }
 
 export async function saveSettings(settings: AppSettings): Promise<AppSettings> {
@@ -76,7 +92,8 @@ export async function saveSettings(settings: AppSettings): Promise<AppSettings> 
       }));
       return savePreviewSettings(settingsFromEmulatorConfigs(
         await api.listEmulatorConfigs(),
-        normalizedSettings.language
+        normalizedSettings.language,
+        normalizedSettings.metadataOnboarding
       ));
     }
     return requireDesktopBridge('Saving settings');
@@ -96,8 +113,13 @@ export async function saveSettings(settings: AppSettings): Promise<AppSettings> 
   }));
 
   await saveStoredLanguage(normalizedSettings.language);
+  await saveStoredMetadataOnboarding(normalizedSettings.metadataOnboarding);
 
-  return settingsFromEmulatorConfigs(await api.listEmulatorConfigs(), normalizedSettings.language);
+  return settingsFromEmulatorConfigs(
+    await api.listEmulatorConfigs(),
+    normalizedSettings.language,
+    normalizedSettings.metadataOnboarding
+  );
 }
 
 async function migrateLegacyEmulatorSettings(): Promise<void> {
@@ -141,6 +163,17 @@ async function saveStoredLanguage(language: Locale): Promise<void> {
   await store.save();
 }
 
+async function loadStoredMetadataOnboarding(): Promise<MetadataOnboardingSettings> {
+  const store = await getSettingsStore();
+  return normalizeMetadataOnboarding(await store.get<unknown>(METADATA_ONBOARDING_KEY));
+}
+
+async function saveStoredMetadataOnboarding(metadataOnboarding: MetadataOnboardingSettings): Promise<void> {
+  const store = await getSettingsStore();
+  await store.set(METADATA_ONBOARDING_KEY, metadataOnboarding);
+  await store.save();
+}
+
 export function getEmulatorPath(settings: AppSettings, platform: Platform): string {
   return settings.emulatorConfigs[platform]?.exePath?.trim() ?? settings.emulators[platform]?.trim() ?? '';
 }
@@ -172,7 +205,11 @@ export function setEmulatorPath(
   };
 }
 
-function settingsFromEmulatorConfigs(configs: EmulatorConfig[], language: Locale = DEFAULT_SETTINGS.language): AppSettings {
+function settingsFromEmulatorConfigs(
+  configs: EmulatorConfig[],
+  language: Locale = DEFAULT_SETTINGS.language,
+  metadataOnboarding: unknown = DEFAULT_SETTINGS.metadataOnboarding
+): AppSettings {
   const emulatorConfigs: EmulatorConfigs = {};
   const emulators: EmulatorPaths = {};
 
@@ -184,7 +221,7 @@ function settingsFromEmulatorConfigs(configs: EmulatorConfig[], language: Locale
     }
   }
 
-  return { emulators, emulatorConfigs, language };
+  return { emulators, emulatorConfigs, language, metadataOnboarding: normalizeMetadataOnboarding(metadataOnboarding) };
 }
 
 export function normalizeSettings(settings: Partial<AppSettings>): AppSettings {
@@ -204,7 +241,8 @@ export function normalizeSettings(settings: Partial<AppSettings>): AppSettings {
   return {
     emulators,
     emulatorConfigs,
-    language: normalizeLocale(settings.language)
+    language: normalizeLocale(settings.language),
+    metadataOnboarding: normalizeMetadataOnboarding(settings.metadataOnboarding)
   };
 }
 
@@ -230,14 +268,15 @@ function loadPreviewSettings(): AppSettings {
   if (typeof window === 'undefined') return previewSettings;
 
   try {
-    const raw = window.localStorage.getItem(PREVIEW_SETTINGS_KEY);
+    const raw = window.localStorage.getItem(PREVIEW_SETTINGS_KEY) ?? window.localStorage.getItem(LEGACY_PREVIEW_SETTINGS_KEY);
     if (!raw) return previewSettings;
 
     const parsed = JSON.parse(raw) as Partial<AppSettings>;
     previewSettings = normalizeSettings({
       emulators: parsed.emulators,
       emulatorConfigs: normalizeEmulatorConfigs(parsed.emulatorConfigs),
-      language: parsed.language
+      language: parsed.language,
+      metadataOnboarding: parsed.metadataOnboarding
     });
   } catch {
     previewSettings = DEFAULT_SETTINGS;
@@ -251,9 +290,26 @@ function savePreviewSettings(settings: AppSettings): AppSettings {
 
   if (typeof window !== 'undefined') {
     window.localStorage.setItem(PREVIEW_SETTINGS_KEY, JSON.stringify(previewSettings));
+    window.localStorage.removeItem(LEGACY_PREVIEW_SETTINGS_KEY);
   }
 
   return previewSettings;
+}
+
+function normalizeMetadataOnboarding(value: unknown): MetadataOnboardingSettings {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return DEFAULT_SETTINGS.metadataOnboarding;
+  }
+
+  const input = value as Partial<MetadataOnboardingSettings>;
+  const strategy = input.strategy === 'screenscraper' || input.strategy === 'manual'
+    ? input.strategy
+    : DEFAULT_SETTINGS.metadataOnboarding.strategy;
+
+  return {
+    complete: input.complete === true,
+    strategy
+  };
 }
 
 function normalizeEmulatorConfigs(value: unknown): EmulatorConfigs {

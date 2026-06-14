@@ -1,0 +1,37 @@
+# Normalize text files in the repository. Developers on Windows can still use
+# their preferred editor settings; committed sources stay stable and diffable.
+* text=auto eol=lf
+
+# Binary assets and build artifacts
+*.avif binary
+*.bmp binary
+*.gif binary
+*.icns binary
+*.ico binary
+*.jpg binary
+*.jpeg binary
+*.nes binary
+*.png binary
+*.webp binary
+*.7z binary
+*.zip binary
+*.gz binary
+*.tar binary
+*.tgz binary
+*.exe binary
+*.msi binary
+*.msix binary
+*.dmg binary
+*.appimage binary
+*.dll binary
+*.dylib binary
+*.so binary
+*.ttf binary
+*.otf binary
+*.woff binary
+*.woff2 binary
+
+# Keep Windows scripts CRLF if added later.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf

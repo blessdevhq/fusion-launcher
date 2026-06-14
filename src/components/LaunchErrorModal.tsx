@@ -67,7 +67,7 @@ export function LaunchErrorModal({
           </button>
           <button
             onClick={runAction}
-            className="h-10 rounded-lg bg-hydra-accent px-4 text-sm font-bold text-fusion-accentOn shadow-glow transition hover:bg-fusion-accentHover"
+            className="h-10 rounded-lg bg-fusion-accent px-4 text-sm font-bold text-fusion-accentOn shadow-glow transition hover:bg-fusion-accentHover"
           >
             {view.actionLabel}
           </button>

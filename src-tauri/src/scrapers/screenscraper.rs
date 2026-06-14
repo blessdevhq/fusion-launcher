@@ -27,7 +27,7 @@ pub struct ScreenScraperClient {
 impl ScreenScraperClient {
     pub fn new(credentials: Credentials, options: RequestOptions) -> Result<Self, String> {
         let client = reqwest::Client::builder()
-            .user_agent("RetroHydra/0.1")
+            .user_agent("Fusion Launcher/0.1")
             .build()
             .map_err(|error| format!("Failed to create ScreenScraper client: {error}"))?;
         Ok(Self {
@@ -107,7 +107,7 @@ impl ScreenScraperClient {
     ) -> Result<Option<Value>, String> {
         let mut query = vec![
             ("output".to_string(), "json".to_string()),
-            ("softname".to_string(), "RetroHydra".to_string()),
+            ("softname".to_string(), "Fusion Launcher".to_string()),
             ("ssid".to_string(), self.credentials.ssid.clone()),
             (
                 "sspassword".to_string(),
@@ -166,27 +166,27 @@ impl ScreenScraperClient {
 /// value baked at compile time via `option_env!` is used (official builds).
 /// Both id and password must be present and non-empty, or no devid is sent.
 fn dev_credentials() -> Option<(String, String)> {
-    let devid = resolve_dev_value(
-        std::env::var("RETROHYDRA_SCREENSCRAPER_DEVID")
-            .ok()
-            .as_deref(),
-        option_env!("RETROHYDRA_SCREENSCRAPER_DEVID"),
-    )?;
-    let devpassword = resolve_dev_value(
-        std::env::var("RETROHYDRA_SCREENSCRAPER_DEVPASSWORD")
-            .ok()
-            .as_deref(),
-        option_env!("RETROHYDRA_SCREENSCRAPER_DEVPASSWORD"),
-    )?;
+    let devid = resolve_dev_value(&[
+        std::env::var("FUSION_LAUNCHER_SCREENSCRAPER_DEVID").ok(),
+        std::env::var("RETROHYDRA_SCREENSCRAPER_DEVID").ok(),
+        option_env!("FUSION_LAUNCHER_SCREENSCRAPER_DEVID").map(str::to_string),
+        option_env!("RETROHYDRA_SCREENSCRAPER_DEVID").map(str::to_string),
+    ])?;
+    let devpassword = resolve_dev_value(&[
+        std::env::var("FUSION_LAUNCHER_SCREENSCRAPER_DEVPASSWORD").ok(),
+        std::env::var("RETROHYDRA_SCREENSCRAPER_DEVPASSWORD").ok(),
+        option_env!("FUSION_LAUNCHER_SCREENSCRAPER_DEVPASSWORD").map(str::to_string),
+        option_env!("RETROHYDRA_SCREENSCRAPER_DEVPASSWORD").map(str::to_string),
+    ])?;
     Some((devid, devpassword))
 }
 
-fn resolve_dev_value(runtime: Option<&str>, built_in: Option<&str>) -> Option<String> {
+fn resolve_dev_value(candidates: &[Option<String>]) -> Option<String> {
     // Take the first non-empty candidate so an empty runtime override does not
     // suppress a baked-in value.
-    [runtime, built_in]
-        .into_iter()
-        .flatten()
+    candidates
+        .iter()
+        .filter_map(|value| value.as_deref())
         .map(str::trim)
         .find(|value| !value.is_empty())
         .map(|value| value.to_string())
@@ -507,7 +507,8 @@ mod tests {
     #[test]
     fn runtime_dev_value_wins_over_builtin() {
         assert_eq!(
-            resolve_dev_value(Some(" runtime "), Some("built-in")).as_deref(),
+            resolve_dev_value(&[Some(" runtime ".to_string()), Some("built-in".to_string())])
+                .as_deref(),
             Some("runtime")
         );
     }
@@ -515,14 +516,14 @@ mod tests {
     #[test]
     fn empty_runtime_falls_back_to_builtin() {
         assert_eq!(
-            resolve_dev_value(Some("  "), Some(" built-in ")).as_deref(),
+            resolve_dev_value(&[Some("  ".to_string()), Some(" built-in ".to_string())]).as_deref(),
             Some("built-in")
         );
     }
 
     #[test]
     fn no_dev_value_when_all_sources_blank() {
-        assert!(resolve_dev_value(Some(""), None).is_none());
-        assert!(resolve_dev_value(None, None).is_none());
+        assert!(resolve_dev_value(&[Some(String::new()), None]).is_none());
+        assert!(resolve_dev_value(&[None, None]).is_none());
     }
 }

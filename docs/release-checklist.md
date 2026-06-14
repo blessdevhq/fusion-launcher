@@ -1,4 +1,4 @@
-# RetroHydra Release Checklist
+# Fusion Launcher Release Checklist
 
 Use this checklist for the `v0.1.0` Windows release candidate.
 
@@ -35,7 +35,7 @@ The tagged Windows workflow must complete these gates before upload:
 - `npm run mvp:visual`
 - updater signing secret validation
 - signed `tauri build --target x86_64-pc-windows-msvc`
-- `npm run mvp:package-smoke` with `RETROHYDRA_RELEASE_DIR=src-tauri/target/x86_64-pc-windows-msvc/release`
+- `npm run mvp:package-smoke` with `FUSION_LAUNCHER_RELEASE_DIR=src-tauri/target/x86_64-pc-windows-msvc/release`
 
 The workflow publishes a draft GitHub Release with:
 
@@ -50,12 +50,12 @@ After the draft release is created, download the NSIS installer from the draft
 release and verify on a clean Windows profile:
 
 - Install the NSIS package.
-- Launch RetroHydra from the installed shortcut/start menu entry.
+- Launch Fusion Launcher from the installed shortcut/start menu entry.
 - Run the built-in demo setup.
 - Confirm the NES demo reaches Play readiness.
 - Open Settings and verify app data, downloads, logs, health, and platform setup state.
 - Confirm no commercial ROM, BIOS, firmware, or key payloads are bundled or downloaded.
-- Uninstall RetroHydra.
+- Uninstall Fusion Launcher.
 
 ## Release Boundaries
 

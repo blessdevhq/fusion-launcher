@@ -19,6 +19,7 @@ import type {
   ImportGameFileReport,
   LibraryScrapeStatus,
   LibraryGameStatus,
+  ManualGameMetadataInput,
   LaunchReport,
   OnboardingState,
   PlatformSetupProfile,
@@ -41,10 +42,10 @@ import type {
 type PreviewHandler = (args: Record<string, unknown>) => Promise<unknown>;
 
 const previewHandlers: Record<string, PreviewHandler> = {
-  preview_repository: ({ url }) => previewApi.previewRepository(String(url ?? 'preview://retrohydra')),
+  preview_repository: ({ url }) => previewApi.previewRepository(String(url ?? 'preview://fusion-launcher')),
   preview_repository_file: ({ path }) => previewApi.previewRepositoryFile(String(path ?? '')),
   preview_builtin_demo_repository: () => previewApi.previewBuiltInDemoRepository(),
-  connect_repository: ({ url }) => previewApi.connectRepository(String(url ?? 'preview://retrohydra')),
+  connect_repository: ({ url }) => previewApi.connectRepository(String(url ?? 'preview://fusion-launcher')),
   connect_repository_file: ({ path }) => previewApi.connectRepositoryFile(String(path ?? '')),
   connect_builtin_demo_repository: () => previewApi.connectBuiltInDemoRepository(),
   repair_library: () => previewApi.repairLibrary(),
@@ -60,6 +61,10 @@ const previewHandlers: Record<string, PreviewHandler> = {
   apply_scrape_override: ({ gameId, providerGameId }) => previewApi.applyScrapeOverride(
     String(gameId ?? ''),
     String(providerGameId ?? '')
+  ),
+  save_manual_metadata: ({ gameId, metadata }) => previewApi.saveManualMetadata(
+    String(gameId ?? ''),
+    metadata as ManualGameMetadataInput
   ),
   clear_scrape_override: ({ gameId }) => previewApi.clearScrapeOverride(String(gameId ?? '')),
   save_screenscraper_credentials: ({ ssid, sspassword, region }) => previewApi.saveScreenscraperCredentials(
@@ -144,7 +149,7 @@ async function call<T>(command: string, args?: Record<string, unknown>): Promise
       return handler(args ?? {}) as Promise<T>;
     }
 
-    return requireDesktopBridge('Fusion API');
+    return requireDesktopBridge('Fusion Launcher API');
   }
 
   return invoke<T>(command, args);
@@ -201,6 +206,9 @@ export const api = {
   },
   applyScrapeOverride(gameId: string, providerGameId: string) {
     return call<void>('apply_scrape_override', { gameId, providerGameId });
+  },
+  saveManualMetadata(gameId: string, metadata: ManualGameMetadataInput) {
+    return call<void>('save_manual_metadata', { gameId, metadata });
   },
   clearScrapeOverride(gameId: string) {
     return call<boolean>('clear_scrape_override', { gameId });

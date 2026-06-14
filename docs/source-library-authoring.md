@@ -49,7 +49,7 @@ npm run source:add -- \
 ```jsonc
 {
   "metadata": {
-    "id": "my-library",          // уникальный, НЕ "retrohydra-demo"
+    "id": "my-library",          // уникальный, НЕ "fusion-launcher-demo"
     "name": "My Library",
     "version": "1.0.0",
     "schemaVersion": 3,

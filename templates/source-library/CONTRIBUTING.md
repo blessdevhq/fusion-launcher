@@ -7,7 +7,7 @@ Every `downloadable` entry must include:
 - a clear title and platform;
 - a valid `http` or `magnet` source;
 - expected file extensions;
-- checksums where the RetroHydra schema requires them;
+- checksums where the Fusion Launcher schema requires them;
 - evidence that the content can be redistributed, such as an author page,
   license, release page, or explicit permission.
 

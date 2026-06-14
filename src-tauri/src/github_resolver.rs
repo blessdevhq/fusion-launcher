@@ -30,7 +30,7 @@ pub async fn resolve_github_latest(
     let client = reqwest::Client::new();
     let release = client
         .get(api_url)
-        .header("User-Agent", "RetroHydra/0.1")
+        .header("User-Agent", "Fusion Launcher/0.1")
         .send()
         .await
         .map_err(|error| format!("GitHub API error: {error}"))?

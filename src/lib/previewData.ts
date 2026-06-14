@@ -12,6 +12,7 @@ import type {
   LibraryScrapeStatus,
   LaunchReport,
   LibraryGameStatus,
+  ManualGameMetadataInput,
   OnboardingState,
   PlatformSetupProfile,
   ProfileEmulatorConfig,
@@ -44,14 +45,14 @@ import {
 const now = '2026-05-26T08:00:00.000Z';
 
 const repository: RepositorySummary = {
-  id: 'retrohydra-preview',
-  name: 'Fusion Preview Repository',
+  id: 'fusion-launcher-preview',
+  name: 'Fusion Launcher Preview Repository',
   version: '1.0.0',
-  url: 'preview://fusion',
+  url: 'preview://fusion-launcher',
   connectedAt: now,
   catalogCount: 13,
   systemFileCount: 3,
-  maintainer: 'Fusion Team',
+  maintainer: 'Fusion Launcher Team',
   homepageUrl: 'https://fusion.local',
   license: 'Legal homebrew/demo content',
   trustLevel: 'official',
@@ -62,22 +63,22 @@ const repository: RepositorySummary = {
 
 const catalog: CatalogGame[] = [
   game(
-    'retrohydra_nes_smoke',
+    'fusion_launcher_nes_smoke',
     'nes',
-    'Fusion NES Smoke Demo',
+    'Fusion Launcher NES Smoke Demo',
     'Встроенная NES demo для быстрого первого запуска.',
     ['.nes'],
-    [{ kind: 'bundled', path: 'demo-content/retrohydra-smoke.nes', sha256: '9'.repeat(64), sizeBytes: 24592 }],
+    [{ kind: 'bundled', path: 'demo-content/fusion-launcher-smoke.nes', sha256: '9'.repeat(64), sizeBytes: 24592 }],
     { setupProfileId: 'nes-mesen' }
   ),
   game('crystal-caverns', 'gba', 'Crystal Caverns DX', 'A fast homebrew platformer tuned for short sessions.', ['.gba'], undefined, {
     artwork: {
-      cover: 'https://example.com/retrohydra/showcase/crystal-caverns-cover.jpg',
-      hero: 'https://example.com/retrohydra/showcase/crystal-caverns-hero.jpg'
+      cover: 'https://example.com/fusion-launcher/showcase/crystal-caverns-cover.jpg',
+      hero: 'https://example.com/fusion-launcher/showcase/crystal-caverns-hero.jpg'
     },
     metadata: {
       releaseYear: 2026,
-      developer: 'Fusion Labs',
+      developer: 'Fusion Launcher Labs',
       genres: ['Platformer', 'Homebrew'],
       players: '1 player'
     }
@@ -89,9 +90,9 @@ const catalog: CatalogGame[] = [
     contentMode: 'user_provided',
     setupProfileId: 'switch-manual',
     artwork: {
-      cover: 'https://example.com/retrohydra/showcase/star-orbit-cover.jpg',
-      hero: 'https://example.com/retrohydra/showcase/star-orbit-hero.jpg',
-      logo: 'https://example.com/retrohydra/showcase/star-orbit-logo.png'
+      cover: 'https://example.com/fusion-launcher/showcase/star-orbit-cover.jpg',
+      hero: 'https://example.com/fusion-launcher/showcase/star-orbit-hero.jpg',
+      logo: 'https://example.com/fusion-launcher/showcase/star-orbit-logo.png'
     },
     metadata: {
       releaseYear: 2026,
@@ -220,7 +221,7 @@ export const previewApi = {
       Object.assign(game, {
         artwork: {
           ...(game.artwork ?? {}),
-          cover: `https://example.com/retrohydra/screenscraper/${game.id}.jpg`
+          cover: `https://example.com/fusion-launcher/screenscraper/${game.id}.jpg`
         },
         metadata: {
           ...(game.metadata ?? {}),
@@ -240,6 +241,12 @@ export const previewApi = {
     const game = catalog.find((item) => item.id === gameId);
     if (!game) throw new Error(`Unknown preview game: ${gameId}`);
     scrapeStates[gameId] = scrapeState(gameId, 'ready', 'override', [], `Manual override ${providerGameId} applied.`);
+  },
+  async saveManualMetadata(gameId: string, metadata: ManualGameMetadataInput): Promise<void> {
+    const game = catalog.find((item) => item.id === gameId);
+    if (!game) throw new Error(`Unknown preview game: ${gameId}`);
+    applyManualMetadata(game, metadata);
+    scrapeStates[gameId] = scrapeState(gameId, 'ready', 'override', [], 'Manual metadata override saved.');
   },
   async clearScrapeOverride(gameId: string): Promise<boolean> {
     const existed = Boolean(scrapeStates[gameId]);
@@ -726,6 +733,51 @@ function game(
     requiredSystemFileIds: [],
     ...extras
   };
+}
+
+function applyManualMetadata(game: CatalogGame, input: ManualGameMetadataInput) {
+  const title = cleanString(input.title);
+  const description = cleanString(input.description);
+  const cover = cleanString(input.cover);
+  const hero = cleanString(input.hero);
+  const logo = cleanString(input.logo);
+  const screenshots = cleanList(input.screenshots ?? []);
+
+  if (title) game.title = title;
+  if (description) game.description = description;
+  if (cover) game.coverImageUrl = cover;
+  if (cover || hero || logo || screenshots.length > 0) {
+    game.artwork = {
+      ...(game.artwork ?? {}),
+      ...(cover ? { cover } : {}),
+      ...(hero ? { hero } : {}),
+      ...(logo ? { logo } : {}),
+      ...(screenshots.length > 0 ? { screenshots } : {})
+    };
+  }
+
+  const metadata = input.metadata ?? {};
+  const genres = cleanList(metadata.genres ?? []);
+  const tags = cleanList(metadata.tags ?? []);
+  game.metadata = {
+    ...(game.metadata ?? {}),
+    ...(Number.isFinite(metadata.releaseYear) ? { releaseYear: metadata.releaseYear } : {}),
+    ...(cleanString(metadata.developer) ? { developer: cleanString(metadata.developer) } : {}),
+    ...(cleanString(metadata.publisher) ? { publisher: cleanString(metadata.publisher) } : {}),
+    ...(genres.length > 0 ? { genres } : {}),
+    ...(tags.length > 0 ? { tags } : {}),
+    ...(cleanString(metadata.players) ? { players: cleanString(metadata.players) } : {}),
+    ...(cleanString(metadata.series) ? { series: cleanString(metadata.series) } : {})
+  };
+}
+
+function cleanString(value?: string | null) {
+  const trimmed = value?.trim();
+  return trimmed || undefined;
+}
+
+function cleanList(values: string[]) {
+  return values.map((value) => value.trim()).filter(Boolean);
 }
 
 function scrapeState(

@@ -53,6 +53,7 @@ export default function HomePage() {
     await api.disconnectRepository(repositoryId);
     await reload();
   };
+  const metadataOnboardingReady = settings.metadataOnboarding.complete;
 
   if (loading) {
     return (
@@ -81,7 +82,7 @@ export default function HomePage() {
     );
   }
 
-  if (onboardingState && onboardingState.step !== 'complete') {
+  if ((onboardingState && onboardingState.step !== 'complete') || !metadataOnboardingReady) {
     return (
       <I18nProvider locale={settings.language}>
         <OnboardingWizard

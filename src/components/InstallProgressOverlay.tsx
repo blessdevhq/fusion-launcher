@@ -11,7 +11,7 @@ export function InstallProgressOverlay({ progress }: { progress: InstallProgress
       <p className="mt-2 max-w-sm text-xs text-white/44">{progress.message}</p>
       <div className="mt-5 h-1 w-64 max-w-full overflow-hidden rounded-full bg-white/10">
         <div
-          className="h-full rounded-full bg-hydra-green transition-[width] duration-500"
+          className="h-full rounded-full bg-fusion-green transition-[width] duration-500"
           style={{ width: `${percent}%` }}
         />
       </div>

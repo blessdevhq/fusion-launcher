@@ -63,6 +63,16 @@ export interface GameMetadata {
   externalIds?: Record<string, string>;
 }
 
+export interface ManualGameMetadataInput {
+  title?: string;
+  description?: string;
+  cover?: string;
+  hero?: string;
+  logo?: string;
+  screenshots?: string[];
+  metadata?: GameMetadata;
+}
+
 export type ScrapeStatus = 'pending' | 'hashing' | 'fetching' | 'ready' | 'ambiguous' | 'failed' | 'skipped';
 export type ScrapeMatchKind = 'hash' | 'name' | 'override' | string;
 

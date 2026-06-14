@@ -565,7 +565,7 @@ mod tests {
     #[test]
     fn completed_torrent_record_resolves_as_launch_path() {
         let temp = tempfile::tempdir().unwrap();
-        let store = RepositoryStore::open(&temp.path().join("retrohydra.db")).unwrap();
+        let store = RepositoryStore::open(&temp.path().join("fusion-launcher.db")).unwrap();
         let game_dir = temp.path().join("downloaded-game");
         std::fs::create_dir_all(&game_dir).unwrap();
         let game_dir_string = game_dir.to_string_lossy().to_string();

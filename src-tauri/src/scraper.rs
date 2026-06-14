@@ -10,8 +10,8 @@ use tauri::{AppHandle, Emitter};
 
 use crate::game_files;
 use crate::schema::{
-    CatalogGameView, LibraryScrapeStatus, ScrapeCandidate, ScrapeStateView, ScrapedGamePayload,
-    ScreenScraperStatus, SteamGridDbStatus,
+    CatalogGameView, GameMetadata, LibraryScrapeStatus, ManualGameMetadataInput, ScrapeCandidate,
+    ScrapeStateView, ScrapedGamePayload, ScreenScraperStatus, SteamGridDbStatus,
 };
 use crate::scrapers::screenscraper::{
     system_id_for_platform, Credentials, RequestOptions, ScreenScraperClient, PROVIDER,
@@ -210,6 +210,34 @@ pub async fn apply_override(
     Ok(())
 }
 
+pub fn save_manual_metadata(
+    app: &AppHandle,
+    state: &AppState,
+    game_id: &str,
+    input: ManualGameMetadataInput,
+) -> Result<(), String> {
+    let payload = build_manual_payload(input);
+    {
+        let store = state
+            .store
+            .lock()
+            .map_err(|_| "Store lock poisoned.".to_string())?;
+        store
+            .get_game(game_id)?
+            .ok_or_else(|| format!("Unknown game: {game_id}"))?;
+        store.put_override(game_id, "manual", &payload)?;
+        store.set_scrape_state(
+            game_id,
+            "ready",
+            Some("override"),
+            &[],
+            Some("Manual metadata override saved."),
+        )?;
+    }
+    emit_metadata(app, "metadata:ready", game_id, "ready");
+    Ok(())
+}
+
 pub fn clear_override(app: &AppHandle, state: &AppState, game_id: &str) -> Result<bool, String> {
     let changed = {
         let store = state
@@ -228,6 +256,78 @@ pub fn clear_override(app: &AppHandle, state: &AppState, game_id: &str) -> Resul
     };
     emit_metadata(app, "metadata:ready", game_id, "pending");
     Ok(changed)
+}
+
+fn build_manual_payload(input: ManualGameMetadataInput) -> ScrapedGamePayload {
+    ScrapedGamePayload {
+        provider: "manual".to_string(),
+        provider_game_id: Some("manual".to_string()),
+        title: trim_optional(input.title),
+        description: trim_optional(input.description),
+        cover: trim_optional(input.cover),
+        hero: trim_optional(input.hero),
+        logo: trim_optional(input.logo),
+        screenshots: input
+            .screenshots
+            .into_iter()
+            .filter_map(|value| trim_optional(Some(value)))
+            .collect(),
+        metadata: sanitize_manual_metadata(input.metadata),
+    }
+}
+
+fn sanitize_manual_metadata(metadata: Option<GameMetadata>) -> GameMetadata {
+    let Some(metadata) = metadata else {
+        return empty_metadata();
+    };
+    GameMetadata {
+        release_year: metadata.release_year,
+        developer: trim_optional(metadata.developer),
+        publisher: trim_optional(metadata.publisher),
+        genres: trim_string_list(metadata.genres),
+        tags: trim_string_list(metadata.tags),
+        players: trim_optional(metadata.players),
+        series: trim_optional(metadata.series),
+        external_ids: metadata
+            .external_ids
+            .into_iter()
+            .filter_map(|(key, value)| {
+                let key = key.trim();
+                let value = value.trim();
+                if key.is_empty() || value.is_empty() {
+                    None
+                } else {
+                    Some((key.to_string(), value.to_string()))
+                }
+            })
+            .collect(),
+    }
+}
+
+fn empty_metadata() -> GameMetadata {
+    GameMetadata {
+        release_year: None,
+        developer: None,
+        publisher: None,
+        genres: Vec::new(),
+        tags: Vec::new(),
+        players: None,
+        series: None,
+        external_ids: std::collections::BTreeMap::new(),
+    }
+}
+
+fn trim_optional(value: Option<String>) -> Option<String> {
+    value
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn trim_string_list(values: Vec<String>) -> Vec<String> {
+    values
+        .into_iter()
+        .filter_map(|value| trim_optional(Some(value)))
+        .collect()
 }
 
 pub fn default_state(game_id: &str) -> ScrapeStateView {

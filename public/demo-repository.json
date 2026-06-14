@@ -1,28 +1,28 @@
 {
   "metadata": {
-    "id": "retrohydra-demo",
-    "name": "RetroHydra Built-in Demo Repository",
+    "id": "fusion-launcher-demo",
+    "name": "Fusion Launcher Built-in Demo Repository",
     "version": "1.0.0",
     "schemaVersion": 2,
-    "maintainer": "RetroHydra Team",
-    "homepageUrl": "https://retrohydra.app",
-    "license": "Repository metadata and included demo payloads are RetroHydra first-party CC0-1.0 smoke-test content.",
+    "maintainer": "Fusion Launcher Team",
+    "homepageUrl": "https://github.com/MrBeastie/fusion-launcher",
+    "license": "Repository metadata and included demo payloads are Fusion Launcher first-party CC0-1.0 smoke-test content.",
     "trustLevel": "official",
     "updatedAt": "2026-05-27T00:00:00Z"
   },
   "system_files": [],
   "catalog": [
     {
-      "id": "retrohydra_nes_smoke",
+      "id": "fusion_launcher_nes_smoke",
       "platform": "nes",
-      "title": "RetroHydra NES Smoke Demo",
-      "description": "First-party NES ROM for validating built-in repository connection, bundled download, SHA-256 verification, health check, and launch preflight without commercial content.",
+      "title": "Fusion Launcher NES Smoke Demo",
+      "description": "First-party NES demo cartridge image for validating built-in repository connection, bundled install flow, SHA-256 verification, health check, and launch preflight without commercial content.",
       "setupProfileId": "nes-mesen",
       "downloads": [
         {
           "kind": "bundled",
-          "path": "demo-content/retrohydra-smoke.nes",
-          "sha256": "904918a63180b96e6ffd7f98ef775e2b59fa92faf6802b7df450623ba07891df",
+          "path": "demo-content/fusion-launcher-smoke.nes",
+          "sha256": "566722254227d93e49751a866cf51ff7728917c9f04e970130d24850dce0a7f4",
           "sizeBytes": 24592
         }
       ],

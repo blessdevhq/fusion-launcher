@@ -21,8 +21,8 @@ describe('preview one-click setup support', () => {
   it('can prepare the preview demo download for launch', async () => {
     await previewApi.installEmulator('nes');
 
-    const report = await previewApi.startGameDownload('retrohydra_nes_smoke');
-    const launch = await previewApi.launchGame('retrohydra_nes_smoke');
+    const report = await previewApi.startGameDownload('fusion_launcher_nes_smoke');
+    const launch = await previewApi.launchGame('fusion_launcher_nes_smoke');
 
     assert.equal(report.sourceKind, 'bundled');
     assert.equal(report.torrent?.status, 'completed');
@@ -31,11 +31,11 @@ describe('preview one-click setup support', () => {
 
   it('runs the full zero-friction install flow', async () => {
     await previewApi.deleteEmulatorConfig('nes');
-    await previewApi.removeGame('retrohydra_nes_smoke', true);
+    await previewApi.removeGame('fusion_launcher_nes_smoke', true);
 
-    const result = await previewApi.installGame('retrohydra_nes_smoke');
+    const result = await previewApi.installGame('fusion_launcher_nes_smoke');
     const emulator = await previewApi.getEmulatorStatus('nes');
-    const setup = await previewApi.getGameSetupState('retrohydra_nes_smoke');
+    const setup = await previewApi.getGameSetupState('fusion_launcher_nes_smoke');
 
     assert.equal(result.status, 'ready');
     assert.equal(emulator.installed, true);
@@ -49,5 +49,31 @@ describe('preview one-click setup support', () => {
 
     assert.equal(result.status, 'error');
     assert.equal(result.errorCode, 'switch_emulator_not_configured');
+  });
+
+  it('saves manual metadata into the preview catalog', async () => {
+    await previewApi.saveManualMetadata('terra-pico', {
+      title: 'Terra Pico Deluxe',
+      description: 'Manual description from the user.',
+      cover: 'https://example.com/manual/terra-pico.jpg',
+      metadata: {
+        releaseYear: 2025,
+        developer: 'Manual Studio',
+        genres: ['Puzzle', 'Homebrew'],
+        tags: ['curated'],
+        players: '1 player'
+      }
+    });
+
+    const game = await previewApi.getGame('terra-pico');
+    const state = await previewApi.getScrapeState('terra-pico');
+
+    assert.equal(game?.title, 'Terra Pico Deluxe');
+    assert.equal(game?.description, 'Manual description from the user.');
+    assert.equal(game?.coverImageUrl, 'https://example.com/manual/terra-pico.jpg');
+    assert.equal(game?.metadata?.developer, 'Manual Studio');
+    assert.deepEqual(game?.metadata?.genres, ['Puzzle', 'Homebrew']);
+    assert.equal(state.status, 'ready');
+    assert.equal(state.matchKind, 'override');
   });
 });

@@ -152,6 +152,19 @@ pub struct GameMetadata {
     pub external_ids: std::collections::BTreeMap<String, String>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManualGameMetadataInput {
+    pub title: Option<String>,
+    pub description: Option<String>,
+    pub cover: Option<String>,
+    pub hero: Option<String>,
+    pub logo: Option<String>,
+    #[serde(default)]
+    pub screenshots: Vec<String>,
+    pub metadata: Option<GameMetadata>,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ScrapedGamePayload {

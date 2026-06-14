@@ -1,11 +1,11 @@
 {
   "metadata": {
-    "id": "retrohydra-showcase",
-    "name": "RetroHydra Showcase Metadata",
+    "id": "fusion-launcher-showcase",
+    "name": "Fusion Launcher Showcase Metadata",
     "version": "1.0.0",
     "schemaVersion": 3,
-    "maintainer": "RetroHydra Team",
-    "homepageUrl": "https://retrohydra.local/showcase",
+    "maintainer": "Fusion Launcher Team",
+    "homepageUrl": "https://github.com/MrBeastie/fusion-launcher/tree/main/examples/repositories",
     "license": "Metadata-only fictional showcase entries",
     "trustLevel": "official"
   },
@@ -34,11 +34,11 @@
       "title": "Star Orbit Prototype",
       "description": "A fictional modern-console showcase entry for testing user-provided package import.",
       "artwork": {
-        "cover": "https://example.com/retrohydra/showcase/star-orbit-cover.jpg",
-        "hero": "https://example.com/retrohydra/showcase/star-orbit-hero.jpg",
-        "logo": "https://example.com/retrohydra/showcase/star-orbit-logo.png",
+        "cover": "https://example.com/fusion-launcher/showcase/star-orbit-cover.jpg",
+        "hero": "https://example.com/fusion-launcher/showcase/star-orbit-hero.jpg",
+        "logo": "https://example.com/fusion-launcher/showcase/star-orbit-logo.png",
         "screenshots": [
-          "https://example.com/retrohydra/showcase/star-orbit-screen-1.jpg"
+          "https://example.com/fusion-launcher/showcase/star-orbit-screen-1.jpg"
         ]
       },
       "metadata": {
@@ -73,12 +73,12 @@
       "title": "Crystal Caverns DX",
       "description": "A fictional handheld platformer entry for validating rich catalog artwork and import setup.",
       "artwork": {
-        "cover": "https://example.com/retrohydra/showcase/crystal-caverns-cover.jpg",
-        "hero": "https://example.com/retrohydra/showcase/crystal-caverns-hero.jpg"
+        "cover": "https://example.com/fusion-launcher/showcase/crystal-caverns-cover.jpg",
+        "hero": "https://example.com/fusion-launcher/showcase/crystal-caverns-hero.jpg"
       },
       "metadata": {
         "releaseYear": 2026,
-        "developer": "RetroHydra Labs",
+        "developer": "Fusion Launcher Labs",
         "genres": ["Platformer", "Homebrew"],
         "tags": ["showcase"],
         "players": "1 player"

@@ -18,4 +18,39 @@ describe('settings normalization', () => {
       language: 'fr' as never
     }).language, 'en');
   });
+
+  it('defaults metadata onboarding to incomplete source strategy', () => {
+    assert.deepEqual(normalizeSettings({ emulators: {}, emulatorConfigs: {} }).metadataOnboarding, {
+      complete: false,
+      strategy: 'source'
+    });
+  });
+
+  it('preserves completed metadata onboarding strategy', () => {
+    assert.deepEqual(normalizeSettings({
+      emulators: {},
+      emulatorConfigs: {},
+      metadataOnboarding: {
+        complete: true,
+        strategy: 'screenscraper'
+      }
+    }).metadataOnboarding, {
+      complete: true,
+      strategy: 'screenscraper'
+    });
+  });
+
+  it('normalizes invalid metadata onboarding strategy to source', () => {
+    assert.deepEqual(normalizeSettings({
+      emulators: {},
+      emulatorConfigs: {},
+      metadataOnboarding: {
+        complete: true,
+        strategy: 'steam' as never
+      }
+    }).metadataOnboarding, {
+      complete: true,
+      strategy: 'source'
+    });
+  });
 });

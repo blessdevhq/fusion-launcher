@@ -20,5 +20,5 @@ export function isPreviewRuntime() {
 }
 
 export function requireDesktopBridge(feature: string): never {
-  throw new Error(`${feature} requires the Fusion desktop bridge. Start the app through Tauri.`);
+  throw new Error(`${feature} requires the Fusion Launcher desktop bridge. Start the app through Tauri.`);
 }

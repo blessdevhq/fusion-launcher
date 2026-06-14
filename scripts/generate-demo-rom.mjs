@@ -3,7 +3,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const outputPath = resolve(root, 'public/demo-content/retrohydra-smoke.nes');
+const outputPath = resolve(root, 'public/demo-content/fusion-launcher-smoke.nes');
 
 const prg = new Uint8Array(16 * 1024).fill(0xea);
 const chr = new Uint8Array(8 * 1024);
@@ -44,7 +44,7 @@ const palette = [
   0x0f, 0x06, 0x16, 0x26,
   0x0f, 0x00, 0x10, 0x20
 ];
-const message = 'RETROHYDRA DEMO';
+const message = 'FUSION LAUNCHER DEMO';
 const messageTiles = [...message].map(tileForChar);
 
 label('reset');

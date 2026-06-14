@@ -1,6 +1,6 @@
-# RetroHydra Repository Authoring
+# Fusion Launcher Repository Authoring
 
-RetroHydra repositories describe catalogs, setup requirements, and safe source
+Fusion Launcher repositories describe catalogs, setup requirements, and safe source
 metadata. Official examples must not include commercial ROM, ISO, NSP, XCI,
 BIOS, firmware, key, or magnet payload links.
 

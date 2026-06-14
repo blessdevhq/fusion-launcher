@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use tauri::Manager;
@@ -48,9 +48,10 @@ pub fn run() {
                 .app_data_dir()
                 .map_err(|error| setup_error(error.to_string()))?;
             std::fs::create_dir_all(&data_dir).map_err(|error| setup_error(error.to_string()))?;
+            let database_path = prepare_database_path(&data_dir).map_err(setup_error)?;
             logging::initialize(&data_dir);
             let mut repository_store =
-                RepositoryStore::open(&data_dir.join("retrohydra.db")).map_err(setup_error)?;
+                RepositoryStore::open(&database_path).map_err(setup_error)?;
             match commands::repair_library_state(&mut repository_store, &data_dir) {
                 Ok(report) if report.repaired => {
                     logging::log_event(
@@ -108,6 +109,7 @@ pub fn run() {
             commands::get_scrape_state,
             commands::list_scrape_candidates,
             commands::apply_scrape_override,
+            commands::save_manual_metadata,
             commands::clear_scrape_override,
             commands::save_screenscraper_credentials,
             commands::get_screenscraper_status,
@@ -158,16 +160,76 @@ pub fn run() {
             app_update::install_app_update
         ])
         .run(tauri::generate_context!())
-        .expect("failed to run RetroHydra");
+        .expect("failed to run Fusion Launcher");
 }
 
 pub fn run_package_smoke() -> Result<(), String> {
-    let data_dir = std::env::var_os("RETROHYDRA_PACKAGE_SMOKE_DATA_DIR")
+    let data_dir = std::env::var_os("FUSION_LAUNCHER_PACKAGE_SMOKE_DATA_DIR")
+        .or_else(|| std::env::var_os("RETROHYDRA_PACKAGE_SMOKE_DATA_DIR"))
         .map(PathBuf::from)
-        .unwrap_or_else(|| std::env::temp_dir().join("retrohydra-package-smoke"));
+        .unwrap_or_else(|| std::env::temp_dir().join("fusion-launcher-package-smoke"));
     commands::run_package_smoke(&data_dir)
+}
+
+fn prepare_database_path(data_dir: &Path) -> Result<PathBuf, String> {
+    let current = data_dir.join("fusion-launcher.db");
+    if current.exists() {
+        return Ok(current);
+    }
+
+    for legacy in legacy_database_candidates(data_dir) {
+        if legacy.exists() {
+            std::fs::copy(&legacy, &current).map_err(|error| {
+                format!(
+                    "Failed to migrate legacy database from {} to {}: {error}",
+                    legacy.display(),
+                    current.display()
+                )
+            })?;
+            return Ok(current);
+        }
+    }
+
+    Ok(current)
+}
+
+fn legacy_database_candidates(data_dir: &Path) -> Vec<PathBuf> {
+    let mut candidates = vec![data_dir.join("retrohydra.db")];
+    if let Some(parent) = data_dir.parent() {
+        candidates.push(parent.join("app.retrohydra.launcher").join("retrohydra.db"));
+        candidates.push(parent.join("RetroHydra").join("retrohydra.db"));
+    }
+    candidates
 }
 
 fn setup_error(message: String) -> std::io::Error {
     std::io::Error::other(message)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::prepare_database_path;
+
+    #[test]
+    fn migrates_legacy_database_in_current_data_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("retrohydra.db"), b"legacy").unwrap();
+
+        let path = prepare_database_path(dir.path()).unwrap();
+
+        assert_eq!(path, dir.path().join("fusion-launcher.db"));
+        assert_eq!(std::fs::read(path).unwrap(), b"legacy");
+    }
+
+    #[test]
+    fn keeps_existing_fusion_launcher_database() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("fusion-launcher.db"), b"current").unwrap();
+        std::fs::write(dir.path().join("retrohydra.db"), b"legacy").unwrap();
+
+        let path = prepare_database_path(dir.path()).unwrap();
+
+        assert_eq!(path, dir.path().join("fusion-launcher.db"));
+        assert_eq!(std::fs::read(path).unwrap(), b"current");
+    }
 }

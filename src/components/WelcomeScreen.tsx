@@ -42,9 +42,9 @@ export function WelcomeScreen({ initialMessage, onConnect }: WelcomeScreenProps)
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src="/fusion/app-icon.png" alt="" className="h-12 w-12 rounded-2xl object-cover shadow-glow" />
           <div>
-            <h1 className="text-3xl font-bold tracking-normal">Fusion</h1>
+            <h1 className="text-3xl font-bold tracking-normal">Fusion Launcher</h1>
             <div className="mt-1 flex items-center gap-2 text-sm text-white/50">
-              <ShieldCheck className="h-4 w-4 text-hydra-green" />
+              <ShieldCheck className="h-4 w-4 text-fusion-green" />
               {t.brand.tagline}
             </div>
           </div>
@@ -54,7 +54,7 @@ export function WelcomeScreen({ initialMessage, onConnect }: WelcomeScreenProps)
           <label className="block text-sm font-semibold text-white/72" htmlFor="repository-url">
             {t.onboarding.sourceCard.sourceUrl}
           </label>
-          <div className="flex min-h-14 items-center gap-3 rounded-lg border border-white/12 bg-white/[0.05] px-4 focus-within:border-hydra-accent/70">
+          <div className="flex min-h-14 items-center gap-3 rounded-lg border border-white/12 bg-white/[0.05] px-4 focus-within:border-fusion-accent/70">
             <Link2 className="h-5 w-5 text-white/36" />
             <input
               id="repository-url"
@@ -69,7 +69,7 @@ export function WelcomeScreen({ initialMessage, onConnect }: WelcomeScreenProps)
             <button
               type="submit"
               disabled={busy || !url.trim()}
-              className="inline-flex h-10 items-center gap-2 rounded-lg bg-hydra-accent px-4 text-sm font-bold text-fusion-accentOn transition hover:bg-fusion-accentHover disabled:cursor-not-allowed disabled:bg-white/12 disabled:text-white/40"
+              className="inline-flex h-10 items-center gap-2 rounded-lg bg-fusion-accent px-4 text-sm font-bold text-fusion-accentOn transition hover:bg-fusion-accentHover disabled:cursor-not-allowed disabled:bg-white/12 disabled:text-white/40"
             >
               {busy && <Loader2 className="h-4 w-4 animate-spin" />}
               {t.common.connect}

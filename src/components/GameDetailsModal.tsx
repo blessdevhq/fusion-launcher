@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { listen } from '@tauri-apps/api/event';
 import {
@@ -33,6 +33,7 @@ import type {
   GameSetupState,
   GameSetupSystemFileState,
   LaunchFailure,
+  ManualGameMetadataInput,
   RequirementItem,
   RequirementsReport,
   ScrapeCandidate,
@@ -249,7 +250,7 @@ export function GameDetailsModal({
         multiple: false,
         directory: false
       })
-      : `F:\\Fusion\\Fixtures\\${game.id}${game.expectedExtensions[0] ?? '.rom'}`;
+      : `F:\\FusionLauncher\\Fixtures\\${game.id}${game.expectedExtensions[0] ?? '.rom'}`;
     if (typeof importPath !== 'string') return;
 
     await runDownloadAction('import-game', async () => {
@@ -312,7 +313,7 @@ export function GameDetailsModal({
         directory: false,
         filters: [{ name: t.gameDetails.selectExecutable, extensions: ['exe'] }]
       })
-      : `F:\\Fusion\\Emulators\\${setupState.profileId}.exe`;
+      : `F:\\FusionLauncher\\Emulators\\${setupState.profileId}.exe`;
     if (typeof selected !== 'string') return;
     await run('profile-emulator', () => api.selectProfileEmulator(setupState.profileId ?? '', selected));
   };
@@ -328,7 +329,7 @@ export function GameDetailsModal({
           ? [{ name: item.label, extensions: item.expectedExtensions.map((extension) => extension.replace(/^\./, '')) }]
           : undefined
       })
-      : `F:\\Fusion\\System\\${item.id}${item.expectedExtensions[0] ?? '.bin'}`;
+      : `F:\\FusionLauncher\\System\\${item.id}${item.expectedExtensions[0] ?? '.bin'}`;
     if (typeof selected !== 'string') return;
     await run(`profile-file:${item.id}`, async () => {
       const report = await api.importProfileSystemFile(game.id, item.id, selected);
@@ -381,6 +382,22 @@ export function GameDetailsModal({
     }
   };
 
+  const handleSaveManualMetadata = async (metadata: ManualGameMetadataInput) => {
+    setBusy('metadata-save');
+    setMessage(null);
+    try {
+      await api.saveManualMetadata(game.id, metadata);
+      await loadScrapeState();
+      await onRefresh();
+      setMessage('Metadata saved.');
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error));
+      throw error;
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const handlePlay = async () => {
     const saveDir = download.saveDir ?? defaultSaveDir;
     if (!saveDir) {
@@ -426,7 +443,7 @@ export function GameDetailsModal({
           </div>
           <button
             onClick={onClose}
-            className="grid h-9 w-9 place-items-center rounded-lg border border-white/10 text-white/60 transition hover:border-hydra-accent/40 hover:bg-hydra-accent/10 hover:text-white"
+            className="grid h-9 w-9 place-items-center rounded-lg border border-white/10 text-white/60 transition hover:border-fusion-accent/40 hover:bg-fusion-accent/10 hover:text-white"
             title={t.gameDetails.closeTitle}
           >
             <X className="h-4 w-4" />
@@ -456,10 +473,12 @@ export function GameDetailsModal({
             )}
 
             <MetadataScrapePanel
+              game={game}
               state={scrapeState}
               busy={busy}
               onRescrape={handleRescrape}
               onApplyCandidate={handleApplyCandidate}
+              onSaveManualMetadata={handleSaveManualMetadata}
               onClearOverride={handleClearMetadataOverride}
             />
 
@@ -524,7 +543,7 @@ export function GameDetailsModal({
                   </div>
                   <div className="flex items-center gap-2">
                     {item.status === 'ready' ? (
-                      <ShieldCheck className="h-4 w-4 text-hydra-green" />
+                      <ShieldCheck className="h-4 w-4 text-fusion-green" />
                     ) : (
                       <ShieldAlert className="h-4 w-4 text-amber-200" />
                     )}
@@ -548,7 +567,7 @@ export function GameDetailsModal({
                   </div>
                   <div className="flex items-center gap-2">
                     {item.status === 'ready' ? (
-                      <ShieldCheck className="h-4 w-4 text-hydra-green" />
+                      <ShieldCheck className="h-4 w-4 text-fusion-green" />
                     ) : (
                       <ShieldAlert className="h-4 w-4 text-amber-200" />
                     )}
@@ -575,7 +594,7 @@ export function GameDetailsModal({
                       <button
                         onClick={() => run(`trust:${item.asset.id}`, () => api.trustExecutable(item.asset.id))}
                         disabled={busy !== null}
-                        className="h-8 rounded-lg bg-hydra-accent px-3 text-xs font-bold text-fusion-accentOn transition hover:bg-fusion-accentHover disabled:opacity-40"
+                        className="h-8 rounded-lg bg-fusion-accent px-3 text-xs font-bold text-fusion-accentOn transition hover:bg-fusion-accentHover disabled:opacity-40"
                       >
                         {t.gameDetails.setup.trust}
                       </button>
@@ -602,7 +621,7 @@ export function GameDetailsModal({
                   </div>
                   <div className="mt-3 h-2 overflow-hidden rounded bg-black/35">
                     <div
-                      className={`h-full rounded transition-[width] duration-500 ${download.hasError ? 'bg-red-400' : 'bg-hydra-green'}`}
+                      className={`h-full rounded transition-[width] duration-500 ${download.hasError ? 'bg-red-400' : 'bg-fusion-green'}`}
                       style={{ width: `${progressPercent}%` }}
                     />
                   </div>
@@ -684,7 +703,7 @@ export function GameDetailsModal({
               <button
                 onClick={handlePlay}
                 disabled={!canPlay}
-                className="inline-flex h-10 items-center gap-2 rounded-lg bg-hydra-accent px-4 text-sm font-bold text-fusion-accentOn shadow-glow transition hover:bg-fusion-accentHover disabled:opacity-40"
+                className="inline-flex h-10 items-center gap-2 rounded-lg bg-fusion-accent px-4 text-sm font-bold text-fusion-accentOn shadow-glow transition hover:bg-fusion-accentHover disabled:opacity-40"
               >
                 {busy === 'launch' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
                 {t.gameDetails.setup.play}
@@ -777,54 +796,131 @@ function isUserProvidedGame(game: CatalogGame) {
 }
 
 function MetadataScrapePanel({
+  game,
   state,
   busy,
   onRescrape,
   onApplyCandidate,
+  onSaveManualMetadata,
   onClearOverride
 }: {
+  game: CatalogGame;
   state: ScrapeState | null;
   busy: string | null;
   onRescrape: () => Promise<void>;
   onApplyCandidate: (candidate: ScrapeCandidate) => Promise<void>;
+  onSaveManualMetadata: (metadata: ManualGameMetadataInput) => Promise<void>;
   onClearOverride: () => Promise<void>;
 }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(() => metadataDraftFromGame(game));
   const status = state?.status ?? 'pending';
-  const active = busy === 'metadata' || busy === 'metadata-clear' || busy?.startsWith('metadata:');
+  const active = busy === 'metadata' || busy === 'metadata-save' || busy === 'metadata-clear' || busy?.startsWith('metadata:');
+
+  useEffect(() => {
+    if (!editing) setDraft(metadataDraftFromGame(game));
+  }, [editing, game]);
+
+  const updateDraft = (field: keyof MetadataDraft, value: string) => {
+    setDraft((current) => ({ ...current, [field]: value }));
+  };
+
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    try {
+      await onSaveManualMetadata(metadataInputFromDraft(draft));
+      setEditing(false);
+    } catch {
+      // The parent renders the error message; keep the form open for correction.
+    }
+  };
 
   return (
     <div className="mb-5 rounded-md border border-white/10 bg-white/[0.045] px-3 py-3">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2 text-sm font-bold text-white/82">
-            <DatabaseZap className="h-4 w-4 text-hydra-accent" />
+            <DatabaseZap className="h-4 w-4 text-fusion-accent" />
             Metadata
           </div>
           <div className="mt-1 text-xs text-white/42">
             {scrapeStatusLabel(status, state?.matchKind, state?.message)}
           </div>
         </div>
-        <button
-          type="button"
-          onClick={() => void onRescrape()}
-          disabled={active}
-          className="inline-flex h-8 items-center gap-2 rounded-md border border-white/10 px-3 text-xs font-semibold text-white/72 transition hover:bg-white/10 disabled:opacity-40"
-        >
-          {busy === 'metadata' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <DatabaseZap className="h-3.5 w-3.5" />}
-          Re-scrape
-        </button>
-        {state?.matchKind === 'override' && (
+        <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
-            onClick={() => void onClearOverride()}
+            onClick={() => setEditing((value) => !value)}
             disabled={active}
             className="inline-flex h-8 items-center gap-2 rounded-md border border-white/10 px-3 text-xs font-semibold text-white/72 transition hover:bg-white/10 disabled:opacity-40"
           >
-            {busy === 'metadata-clear' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
-            Clear override
+            {editing ? 'Cancel edit' : 'Edit metadata'}
           </button>
-        )}
+          <button
+            type="button"
+            onClick={() => void onRescrape()}
+            disabled={active}
+            className="inline-flex h-8 items-center gap-2 rounded-md border border-white/10 px-3 text-xs font-semibold text-white/72 transition hover:bg-white/10 disabled:opacity-40"
+          >
+            {busy === 'metadata' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <DatabaseZap className="h-3.5 w-3.5" />}
+            Re-scrape
+          </button>
+          {state?.matchKind === 'override' && (
+            <button
+              type="button"
+              onClick={() => void onClearOverride()}
+              disabled={active}
+              className="inline-flex h-8 items-center gap-2 rounded-md border border-white/10 px-3 text-xs font-semibold text-white/72 transition hover:bg-white/10 disabled:opacity-40"
+            >
+              {busy === 'metadata-clear' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+              Clear override
+            </button>
+          )}
+        </div>
       </div>
+
+      {editing && (
+        <form onSubmit={(event) => void handleSubmit(event)} className="mt-3 grid gap-3 rounded-md bg-black/18 p-3" data-testid="manual-metadata-form">
+          <div className="grid gap-3 md:grid-cols-2">
+            <MetadataField label="Title" value={draft.title} onChange={(value) => updateDraft('title', value)} />
+            <MetadataField label="Release year" value={draft.releaseYear} onChange={(value) => updateDraft('releaseYear', value)} inputMode="numeric" />
+            <MetadataField label="Developer" value={draft.developer} onChange={(value) => updateDraft('developer', value)} />
+            <MetadataField label="Publisher" value={draft.publisher} onChange={(value) => updateDraft('publisher', value)} />
+            <MetadataField label="Players" value={draft.players} onChange={(value) => updateDraft('players', value)} placeholder="1-2 players" />
+            <MetadataField label="Series" value={draft.series} onChange={(value) => updateDraft('series', value)} />
+          </div>
+          <MetadataField label="Description" value={draft.description} onChange={(value) => updateDraft('description', value)} multiline />
+          <div className="grid gap-3 md:grid-cols-2">
+            <MetadataField label="Genres" value={draft.genres} onChange={(value) => updateDraft('genres', value)} placeholder="Platformer, Homebrew" />
+            <MetadataField label="Tags" value={draft.tags} onChange={(value) => updateDraft('tags', value)} placeholder="demo, multiplayer" />
+            <MetadataField label="Cover URL" value={draft.cover} onChange={(value) => updateDraft('cover', value)} />
+            <MetadataField label="Hero URL" value={draft.hero} onChange={(value) => updateDraft('hero', value)} />
+            <MetadataField label="Logo URL" value={draft.logo} onChange={(value) => updateDraft('logo', value)} />
+            <MetadataField label="Screenshots" value={draft.screenshots} onChange={(value) => updateDraft('screenshots', value)} placeholder="One URL per line or comma-separated" />
+          </div>
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                setDraft(metadataDraftFromGame(game));
+                setEditing(false);
+              }}
+              disabled={active}
+              className="h-8 rounded-md border border-white/10 px-3 text-xs font-semibold text-white/64 transition hover:bg-white/10 disabled:opacity-40"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={active}
+              className="inline-flex h-8 items-center gap-2 rounded-md bg-fusion-accent px-3 text-xs font-bold text-black transition hover:brightness-110 disabled:opacity-40"
+            >
+              {busy === 'metadata-save' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+              Save metadata
+            </button>
+          </div>
+        </form>
+      )}
 
       {state?.status === 'ambiguous' && state.candidates.length > 0 && (
         <div className="mt-3 grid gap-2">
@@ -850,6 +946,115 @@ function MetadataScrapePanel({
       )}
     </div>
   );
+}
+
+interface MetadataDraft {
+  title: string;
+  description: string;
+  releaseYear: string;
+  developer: string;
+  publisher: string;
+  genres: string;
+  tags: string;
+  players: string;
+  series: string;
+  cover: string;
+  hero: string;
+  logo: string;
+  screenshots: string;
+}
+
+function MetadataField({
+  label,
+  value,
+  onChange,
+  placeholder,
+  multiline,
+  inputMode
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  placeholder?: string;
+  multiline?: boolean;
+  inputMode?: 'numeric' | 'text';
+}) {
+  const inputClass = 'mt-1 w-full rounded-md border border-white/10 bg-black/24 px-3 py-2 text-sm text-white/82 outline-none transition placeholder:text-white/24 focus:border-fusion-accent/70';
+  return (
+    <label className="block text-xs font-semibold text-white/58">
+      {label}
+      {multiline ? (
+        <textarea
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          placeholder={placeholder}
+          rows={3}
+          className={`${inputClass} resize-y`}
+        />
+      ) : (
+        <input
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          placeholder={placeholder}
+          inputMode={inputMode}
+          className={inputClass}
+        />
+      )}
+    </label>
+  );
+}
+
+function metadataDraftFromGame(game: CatalogGame): MetadataDraft {
+  const metadata = game.metadata ?? {};
+  const artwork = game.artwork ?? {};
+  return {
+    title: game.title,
+    description: game.description ?? '',
+    releaseYear: metadata.releaseYear ? String(metadata.releaseYear) : '',
+    developer: metadata.developer ?? '',
+    publisher: metadata.publisher ?? '',
+    genres: metadata.genres?.join(', ') ?? '',
+    tags: metadata.tags?.join(', ') ?? '',
+    players: metadata.players ?? '',
+    series: metadata.series ?? '',
+    cover: artwork.cover ?? game.coverImageUrl ?? '',
+    hero: artwork.hero ?? '',
+    logo: artwork.logo ?? '',
+    screenshots: artwork.screenshots?.join('\n') ?? ''
+  };
+}
+
+function metadataInputFromDraft(draft: MetadataDraft): ManualGameMetadataInput {
+  const releaseYear = Number.parseInt(draft.releaseYear.trim(), 10);
+  return {
+    title: cleanMetadataString(draft.title),
+    description: cleanMetadataString(draft.description),
+    cover: cleanMetadataString(draft.cover),
+    hero: cleanMetadataString(draft.hero),
+    logo: cleanMetadataString(draft.logo),
+    screenshots: splitMetadataList(draft.screenshots),
+    metadata: {
+      ...(Number.isFinite(releaseYear) ? { releaseYear } : {}),
+      developer: cleanMetadataString(draft.developer),
+      publisher: cleanMetadataString(draft.publisher),
+      genres: splitMetadataList(draft.genres),
+      tags: splitMetadataList(draft.tags),
+      players: cleanMetadataString(draft.players),
+      series: cleanMetadataString(draft.series)
+    }
+  };
+}
+
+function cleanMetadataString(value: string) {
+  const trimmed = value.trim();
+  return trimmed || undefined;
+}
+
+function splitMetadataList(value: string) {
+  return value
+    .split(/[\n,]/)
+    .map((item) => item.trim())
+    .filter(Boolean);
 }
 
 function scrapeStatusLabel(status: ScrapeState['status'], matchKind?: string | null, message?: string | null) {
@@ -897,7 +1102,7 @@ function SetupRow({
             {actionLabel}
           </button>
         )}
-        {ready ? <ShieldCheck className="h-4 w-4 text-hydra-green" /> : <ShieldAlert className="h-4 w-4 text-amber-200" />}
+        {ready ? <ShieldCheck className="h-4 w-4 text-fusion-green" /> : <ShieldAlert className="h-4 w-4 text-amber-200" />}
       </div>
     </div>
   );

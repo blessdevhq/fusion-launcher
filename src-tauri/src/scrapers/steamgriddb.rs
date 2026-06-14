@@ -35,7 +35,7 @@ pub struct SteamGridDbClient {
 impl SteamGridDbClient {
     pub fn new(api_key: String) -> Result<Self, String> {
         let client = reqwest::Client::builder()
-            .user_agent("RetroHydra/0.1")
+            .user_agent("Fusion Launcher/0.1")
             .build()
             .map_err(|error| format!("Failed to create SteamGridDB client: {error}"))?;
         Ok(Self { client, api_key })
@@ -94,7 +94,13 @@ impl SteamGridDbClient {
 }
 
 pub fn resolve_api_key(user_key: Option<&str>) -> Option<ResolvedApiKey> {
-    resolve_api_key_values(user_key, option_env!("RETROHYDRA_STEAMGRIDDB_KEY"))
+    resolve_api_key_values(
+        user_key,
+        first_non_empty(&[
+            option_env!("FUSION_LAUNCHER_STEAMGRIDDB_KEY"),
+            option_env!("RETROHYDRA_STEAMGRIDDB_KEY"),
+        ]),
+    )
 }
 
 pub fn resolve_api_key_values(
@@ -117,6 +123,14 @@ pub fn resolve_api_key_values(
                     source: ApiKeySource::BuiltIn,
                 })
         })
+}
+
+fn first_non_empty(candidates: &[Option<&'static str>]) -> Option<&'static str> {
+    candidates
+        .iter()
+        .flatten()
+        .copied()
+        .find(|value| !value.trim().is_empty())
 }
 
 pub fn best_game_for_query(games: &[SteamGridDbGame], query: &str) -> Option<SteamGridDbGame> {

@@ -1,4 +1,4 @@
-name: Validate RetroHydra source library
+name: Validate Fusion Launcher source library
 
 on:
   push:
@@ -13,23 +13,23 @@ jobs:
         with:
           path: source-library
 
-      - name: Checkout RetroHydra validator
+      - name: Checkout Fusion Launcher validator
         uses: actions/checkout@v4
         with:
-          repository: YOUR_ORG_OR_USER/RetroHydra
-          path: retrohydra-validator
+          repository: YOUR_ORG_OR_USER/fusion-launcher
+          path: fusion-launcher-validator
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: retrohydra-validator/package-lock.json
+          cache-dependency-path: fusion-launcher-validator/package-lock.json
 
       - name: Install validator dependencies
-        working-directory: retrohydra-validator
+        working-directory: fusion-launcher-validator
         run: npm ci
 
       - name: Validate repository JSON
-        working-directory: retrohydra-validator
+        working-directory: fusion-launcher-validator
         run: npm run source:validate -- ../source-library/repository.json
