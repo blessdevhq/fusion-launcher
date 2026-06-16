@@ -96,44 +96,23 @@ pub(crate) async fn install_game_from_manifest_inner(
         store.store_repository(source_url, &schema)?;
     }
 
-    // If the manifest provides an explicit emulator URL, install it over HTTP
-    // first so the main install flow finds it cached. This applies to every
-    // platform, Switch included: under the "Empty Shell" model the manifest is
-    // the source of truth and there is no built-in gate.
+    // Persist the manifest's emulator bundle (if any) with the game. The actual
+    // download/extraction and the keys check happen inside install_game_inner,
+    // so the bundle's own keys/BIOS are fetched before they are validated and a
+    // missing local copy never blocks the install up front.
     if let Some(game) = manifest.games.iter().find(|game| game.title_id == title_id) {
         if let Some(url) = game.assets.core_bundle_url.as_deref() {
             let url = url.trim();
             if !url.is_empty() {
-                install_emulator_internal(
-                    app,
+                persist_manifest_emulator_bundle(
                     state,
-                    &game.platform,
-                    Some(EmulatorSourceOverride {
+                    &stored_game_id,
+                    &PersistedEmulatorBundle {
                         url: url.to_string(),
                         sha256: game.assets.core_bundle_sha256.clone(),
                         executable: non_empty_executable(&game.launch_config.executable),
-                    }),
-                )
-                .await
-                .map_err(|error| format!("emulator_install_failed:{error}"))?;
-
-                // Keys/BIOS may ship inside the emulator archive (e.g. Switch
-                // prod.keys). Register any required system files found in the
-                // freshly-extracted emulator folder so the system-files check
-                // runs against what the bundle actually delivered, rather than
-                // blocking the install up front.
-                if let Some(profile) =
-                    crate::setup_profiles::get_default_platform_setup_profile(&game.platform)
-                {
-                    let install_dir = state.data_dir.join("Emulators").join(&game.platform);
-                    let store = lock_store(state)?;
-                    let _ = crate::commands::adopt_bundled_profile_system_files(
-                        &store,
-                        &state.data_dir,
-                        &profile,
-                        &install_dir,
-                    );
-                }
+                    },
+                )?;
             }
         }
     }
@@ -150,6 +129,67 @@ pub(crate) struct EmulatorSourceOverride {
     /// Executable to locate after extraction. Required for platforms without a
     /// bundled profile (Switch), ignored when a profile defines the executable.
     pub executable: Option<String>,
+}
+
+/// Emulator bundle persisted alongside a manifest game so the regular install
+/// path can fetch it — and the keys/BIOS it carries — at install time instead
+/// of requiring the keys to already be on disk.
+#[derive(Serialize, Deserialize)]
+struct PersistedEmulatorBundle {
+    url: String,
+    #[serde(default)]
+    sha256: Option<String>,
+    #[serde(default)]
+    executable: Option<String>,
+}
+
+fn manifest_emulator_config_key(game_id: &str) -> String {
+    format!("manifest_emulator:{game_id}")
+}
+
+fn persist_manifest_emulator_bundle(
+    state: &AppState,
+    game_id: &str,
+    bundle: &PersistedEmulatorBundle,
+) -> Result<(), String> {
+    let json = serde_json::to_string(bundle).map_err(|error| error.to_string())?;
+    lock_store(state)?
+        .set_config(&manifest_emulator_config_key(game_id), &json)
+        .map(|_| ())
+}
+
+/// Read the persisted emulator bundle for a game, if any, as an install override.
+fn manifest_emulator_override(
+    state: &AppState,
+    game_id: &str,
+) -> Result<Option<EmulatorSourceOverride>, String> {
+    let Some(raw) = lock_store(state)?.get_config(&manifest_emulator_config_key(game_id))? else {
+        return Ok(None);
+    };
+    let bundle: PersistedEmulatorBundle =
+        serde_json::from_str(&raw).map_err(|error| error.to_string())?;
+    Ok(Some(EmulatorSourceOverride {
+        url: bundle.url,
+        sha256: bundle.sha256,
+        executable: bundle.executable,
+    }))
+}
+
+/// Register any required system files (Switch `prod.keys`, BIOS, …) that shipped
+/// inside a freshly-installed emulator archive, so the keys check runs against
+/// what the bundle delivered. No-op when the platform has no default profile.
+fn adopt_bundled_system_files(state: &AppState, platform: &str) -> Result<(), String> {
+    if let Some(profile) = crate::setup_profiles::get_default_platform_setup_profile(platform) {
+        let install_dir = state.data_dir.join("Emulators").join(platform);
+        let store = lock_store(state)?;
+        let _ = crate::commands::adopt_bundled_profile_system_files(
+            &store,
+            &state.data_dir,
+            &profile,
+            &install_dir,
+        );
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -438,8 +478,17 @@ async fn install_game_inner(
         .ok_or_else(|| format!("unknown_game:{game_id}"))?;
 
     emit_progress(app, game_id, "emulator", "Checking emulator...", 5);
+    // A manifest can ship the emulator (and its keys/BIOS) via core_bundle_url.
+    // When present we install that bundle here — so the keys check below runs
+    // only AFTER the archive is downloaded and extracted, and a missing local
+    // copy of the keys never blocks the install.
+    let emulator_bundle = manifest_emulator_override(state, game_id)?;
     if game.platform == "switch" {
-        if !get_emulator_status_internal(state, "switch")?.installed {
+        if let Some(bundle) = emulator_bundle.clone() {
+            install_emulator_internal(app, state, &game.platform, Some(bundle))
+                .await
+                .map_err(|error| format!("emulator_install_failed:{error}"))?;
+        } else if !get_emulator_status_internal(state, "switch")?.installed {
             return Ok(InstallResult {
                 game_id: game_id.to_string(),
                 status: "error".to_string(),
@@ -450,10 +499,12 @@ async fn install_game_inner(
             });
         }
     } else {
-        install_emulator_internal(app, state, &game.platform, None)
+        install_emulator_internal(app, state, &game.platform, emulator_bundle)
             .await
             .map_err(|error| format!("emulator_install_failed:{error}"))?;
     }
+    // Register keys/BIOS that came inside the emulator archive before validating.
+    adopt_bundled_system_files(state, &game.platform)?;
     emit_progress(app, game_id, "emulator", "Emulator ready", 25);
 
     emit_progress(app, game_id, "system_files", "Checking system files...", 30);
@@ -721,4 +772,39 @@ fn lock_store(state: &AppState) -> Result<std::sync::MutexGuard<'_, RepositorySt
         .store
         .lock()
         .map_err(|_| "Repository store lock is poisoned.".to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn manifest_emulator_config_key_is_namespaced_per_game() {
+        assert_eq!(
+            manifest_emulator_config_key("repo::game"),
+            "manifest_emulator:repo::game"
+        );
+    }
+
+    #[test]
+    fn persisted_emulator_bundle_round_trips_through_json() {
+        // This is exactly what persist/override store and read back via the
+        // app_config table. Optional fields survive a round-trip and absent
+        // ones default to None.
+        let json = serde_json::to_string(&PersistedEmulatorBundle {
+            url: "https://example.com/eden.zip".to_string(),
+            sha256: Some("deadbeef".to_string()),
+            executable: Some("eden.exe".to_string()),
+        })
+        .unwrap();
+        let back: PersistedEmulatorBundle = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.url, "https://example.com/eden.zip");
+        assert_eq!(back.sha256.as_deref(), Some("deadbeef"));
+        assert_eq!(back.executable.as_deref(), Some("eden.exe"));
+
+        let minimal: PersistedEmulatorBundle =
+            serde_json::from_str(r#"{"url":"https://example.com/x.zip"}"#).unwrap();
+        assert!(minimal.sha256.is_none());
+        assert!(minimal.executable.is_none());
+    }
 }
