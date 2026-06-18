@@ -3,6 +3,7 @@
 import { useCallback, useState } from 'react';
 import { listen } from '@tauri-apps/api/event';
 import { api } from './api.ts';
+import type { InstallGameOptions } from './api.ts';
 import { isTauriRuntime } from './runtime.ts';
 import type { Platform } from '../types/platform.ts';
 import type {
@@ -12,7 +13,8 @@ import type {
   InstallResult
 } from '../types/emulatorProfile.ts';
 
-export const installGame = (gameId: string): Promise<InstallResult> => api.installGame(gameId);
+export const installGame = (gameId: string, options?: InstallGameOptions): Promise<InstallResult> =>
+  api.installGame(gameId, options);
 
 export const installEmulator = (platform: Platform): Promise<EmulatorInstallResult> =>
   api.installEmulator(platform);
@@ -36,7 +38,7 @@ export function useInstallGame(gameId: string) {
   const [result, setResult] = useState<InstallResult | null>(null);
   const [running, setRunning] = useState(false);
 
-  const install = useCallback(async () => {
+  const install = useCallback(async (options?: InstallGameOptions) => {
     setRunning(true);
     setResult(null);
     setProgress({
@@ -47,7 +49,7 @@ export function useInstallGame(gameId: string) {
     });
     const unlisten = await listenInstallProgress(gameId, setProgress);
     try {
-      const nextResult = await installGame(gameId);
+      const nextResult = await installGame(gameId, options);
       setResult(nextResult);
       if (nextResult.status === 'ready') {
         setProgress({

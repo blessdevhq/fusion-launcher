@@ -381,6 +381,11 @@ export const en = {
       retry: 'Retry',
       play: 'Play',
       cancel: 'Cancel',
+      path: 'Path',
+      copyPath: 'Copy path',
+      openFolder: 'Open folder',
+      deleteFiles: 'Delete files',
+      deleteConfirm: (title: string) => `Delete downloaded files for ${title}?`,
       statusHints: {
         interrupted: 'Restored after restart. Resume to continue.',
         paused: 'Paused state is persisted.',
@@ -1105,6 +1110,11 @@ export const ru: UiText = {
       retry: 'Повторить',
       play: 'Играть',
       cancel: 'Отменить',
+      path: 'Путь',
+      copyPath: 'Копировать путь',
+      openFolder: 'Открыть папку',
+      deleteFiles: 'Удалить файлы',
+      deleteConfirm: (title: string) => `Удалить скачанные файлы для ${title}?`,
       statusHints: {
         interrupted: 'Восстановлено после перезапуска. Продолжи, чтобы скачать дальше.',
         paused: 'Пауза сохранена.',

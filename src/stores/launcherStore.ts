@@ -54,7 +54,9 @@ export const useLauncherStore = create<LauncherState>((set) => ({
   setCatalog: (catalog) => set({ catalog }),
   setRepositories: (repositories) => set({ repositories }),
   setLibraryStatuses: (libraryStatuses) => set({ libraryStatuses }),
-  setDownloads: (downloads) => set({ downloads }),
+  setDownloads: (downloads) => set((state) => ({
+    downloads: mergeDownloadSnapshotIntoList(state.downloads, downloads)
+  })),
   setSettings: (settings) => set({ settings }),
   setActiveView: (activeView) => set({ activeView }),
   setFocusedItemId: (focusedItemId) => set({ focusedItemId }),
@@ -93,10 +95,28 @@ export function mergeDownloadEventIntoList(
   downloads: TorrentDownloadRecord[],
   event: DownloadProgressEvent
 ): TorrentDownloadRecord[] {
-  const existing = downloads.find((download) => download.gameId === event.gameId);
+  const existingIndex = downloads.findIndex((download) => download.gameId === event.gameId);
+  const existing = existingIndex >= 0 ? downloads[existingIndex] : null;
   const merged = mergeDownloadRecord(existing ?? null, event);
-  const rest = downloads.filter((download) => download.gameId !== event.gameId);
-  return [merged, ...rest];
+  if (existingIndex < 0) return [merged, ...downloads];
+  return downloads.map((download, index) => index === existingIndex ? merged : download);
+}
+
+export function mergeDownloadSnapshotIntoList(
+  current: TorrentDownloadRecord[],
+  incoming: TorrentDownloadRecord[]
+): TorrentDownloadRecord[] {
+  if (current.length === 0) return incoming;
+
+  const currentIds = new Set(current.map((download) => download.gameId));
+  const incomingById = new Map(incoming.map((download) => [download.gameId, download]));
+  const updatedCurrent = current.flatMap((download) => {
+    const next = incomingById.get(download.gameId);
+    return next ? [mergeDownloadSnapshotRecord(download, next)] : [];
+  });
+  const newDownloads = incoming.filter((download) => !currentIds.has(download.gameId));
+
+  return [...newDownloads, ...updatedCurrent];
 }
 
 export function mergeDownloadRecord(
@@ -104,6 +124,11 @@ export function mergeDownloadRecord(
   event: DownloadProgressEvent
 ): TorrentDownloadRecord {
   const now = new Date().toISOString();
+  const progress = stableProgressValues(record, {
+    progressPercent: event.progressPercent,
+    downloadedBytes: event.downloadedBytes,
+    totalBytes: event.totalBytes
+  });
 
   return {
     gameId: event.gameId,
@@ -112,9 +137,9 @@ export function mergeDownloadRecord(
     magnetUri: record?.magnetUri ?? '',
     saveDir: event.saveDir || record?.saveDir || '',
     status: event.status,
-    progressPercent: event.progressPercent,
-    downloadedBytes: event.downloadedBytes,
-    totalBytes: event.totalBytes,
+    progressPercent: progress.progressPercent,
+    downloadedBytes: progress.downloadedBytes,
+    totalBytes: progress.totalBytes,
     downloadSpeedBytesPerSec: event.downloadSpeedBytesPerSec,
     uploadSpeedBytesPerSec: event.uploadSpeedBytesPerSec,
     peersCount: event.peersCount,
@@ -123,6 +148,35 @@ export function mergeDownloadRecord(
     createdAt: record?.createdAt ?? now,
     updatedAt: now,
     completedAt: event.finished ? now : record?.completedAt ?? null
+  };
+}
+
+function mergeDownloadSnapshotRecord(
+  current: TorrentDownloadRecord,
+  incoming: TorrentDownloadRecord
+): TorrentDownloadRecord {
+  const progress = stableProgressValues(current, incoming);
+
+  return {
+    ...incoming,
+    progressPercent: progress.progressPercent,
+    downloadedBytes: progress.downloadedBytes,
+    totalBytes: progress.totalBytes
+  };
+}
+
+function stableProgressValues(
+  current: Pick<TorrentDownloadRecord, 'status' | 'magnetUri' | 'progressPercent' | 'downloadedBytes' | 'totalBytes'> | null,
+  next: Pick<TorrentDownloadRecord, 'progressPercent' | 'downloadedBytes' | 'totalBytes'>
+) {
+  if (!current || current.status === 'completed' || current.magnetUri.startsWith('direct:')) {
+    return next;
+  }
+
+  return {
+    progressPercent: Math.max(next.progressPercent, current.progressPercent),
+    downloadedBytes: Math.max(next.downloadedBytes, current.downloadedBytes),
+    totalBytes: Math.max(next.totalBytes, current.totalBytes)
   };
 }
 

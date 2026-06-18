@@ -1,5 +1,6 @@
+use std::fs;
 use std::io::ErrorKind;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::Arc;
 use std::thread;
@@ -192,16 +193,16 @@ pub fn launch_game(
             .filter(|path| !path.is_empty())
             .ok_or_else(|| LaunchFailure::emulator_not_configured(&game.platform))?
             .to_string();
-
-        if !Path::new(&emulator_path).exists() {
-            return Err(LaunchFailure::emulator_file_missing(
-                &game.platform,
-                &emulator_path,
-            ));
-        }
-        if let Err(message) = validate_emulator_path(Path::new(&emulator_path)) {
-            return Err(LaunchFailure::spawn_failed(message));
-        }
+        let emulator_path = match canonical_emulator_path(&emulator_path) {
+            Ok(path) => path.to_string_lossy().to_string(),
+            Err(message) if message.starts_with("Emulator executable not found:") => {
+                return Err(LaunchFailure::emulator_file_missing(
+                    &game.platform,
+                    &emulator_path,
+                ));
+            }
+            Err(message) => return Err(LaunchFailure::spawn_failed(message)),
+        };
 
         let game_path = resolve_downloaded_game_path(&store, &game.id)?;
 
@@ -399,6 +400,12 @@ fn resolve_downloaded_game_path(
 }
 
 fn validate_emulator_path(emulator_path: &Path) -> Result<(), String> {
+    if !emulator_path.is_absolute() {
+        return Err(format!(
+            "Emulator executable path must be absolute: {}",
+            emulator_path.display()
+        ));
+    }
     if !emulator_path.exists() {
         return Err(format!(
             "Emulator executable not found: {}",
@@ -413,6 +420,13 @@ fn validate_emulator_path(emulator_path: &Path) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+fn canonical_emulator_path(emulator_path: &str) -> Result<PathBuf, String> {
+    let path = Path::new(emulator_path.trim());
+    validate_emulator_path(path)?;
+    fs::canonicalize(path)
+        .map_err(|error| format!("Failed to resolve emulator executable path: {error}"))
 }
 
 fn parse_launch_args(
@@ -488,7 +502,10 @@ fn launch_error(emulator_path: &str, error: std::io::Error) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_launch_args, resolve_downloaded_game_path, validate_emulator_path};
+    use super::{
+        canonical_emulator_path, parse_launch_args, resolve_downloaded_game_path,
+        validate_emulator_path,
+    };
     use crate::storage::RepositoryStore;
 
     #[test]
@@ -562,6 +579,26 @@ mod tests {
             error,
             format!("Emulator executable not found: {}", emulator_path.display())
         );
+    }
+
+    #[test]
+    fn relative_emulator_path_is_rejected() {
+        let error = validate_emulator_path(std::path::Path::new("eden.exe")).unwrap_err();
+
+        assert!(error.contains("must be absolute"));
+    }
+
+    #[test]
+    fn canonical_emulator_path_resolves_absolute_executable() {
+        let temp = tempfile::tempdir().unwrap();
+        let emulator_path = temp.path().join("eden.exe");
+        std::fs::write(&emulator_path, b"exe").unwrap();
+        let path_with_component = temp.path().join(".").join("eden.exe");
+
+        let resolved = canonical_emulator_path(&path_with_component.to_string_lossy()).unwrap();
+
+        assert!(resolved.is_absolute());
+        assert_eq!(resolved, std::fs::canonicalize(emulator_path).unwrap());
     }
 
     #[test]

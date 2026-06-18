@@ -40,7 +40,16 @@ describe('preview one-click setup support', () => {
 
     assert.equal(report.sourceKind, 'bundled');
     assert.equal(report.torrent?.status, 'completed');
-    assert.equal(launch.executable, 'preview://emulators/nes/Mesen.exe');
+    assert.equal(launch.executable, 'preview://Emulators/nes/nes-mesen/Mesen.exe');
+  });
+
+  it('uses preview override roots for selected download destinations', async () => {
+    await previewApi.deleteEmulatorConfig('nes');
+    const emulator = await previewApi.installProfileEmulator('nes-mesen', 'preview://CustomEmulators');
+    const report = await previewApi.startGameDownload('fusion_launcher_nes_smoke', 'preview://CustomGames');
+
+    assert.equal(emulator.exePath, 'preview://CustomEmulators/nes/nes-mesen/Mesen.exe');
+    assert.equal(report.saveDir, 'preview://CustomGames/fusion_launcher_nes_smoke.zip');
   });
 
   it('runs the full zero-friction install flow', async () => {

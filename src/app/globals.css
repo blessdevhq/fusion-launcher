@@ -1851,6 +1851,33 @@ button {
   background: rgba(255, 255, 255, 0.08);
 }
 
+.rh-download-path {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  color: rgba(255, 255, 255, 0.34);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.rh-download-path span {
+  color: rgba(255, 255, 255, 0.42);
+  font-weight: 700;
+}
+
+.rh-download-path code {
+  min-width: 0;
+  overflow-x: auto;
+  white-space: nowrap;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.24);
+  padding: 5px 7px;
+  color: rgba(255, 255, 255, 0.58);
+  scrollbar-width: thin;
+}
+
 .rh-update-status {
   min-height: 54px;
   border: 1px solid var(--rh-border-soft);

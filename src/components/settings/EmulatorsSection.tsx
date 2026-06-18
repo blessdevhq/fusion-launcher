@@ -28,6 +28,7 @@ export function EmulatorsSection({
   progressByProfileId,
   onFocusProfile,
   onInstall,
+  onInstallTo,
   onSelect,
   onRemove,
   onOpenFolder
@@ -39,6 +40,7 @@ export function EmulatorsSection({
   progressByProfileId: Record<string, InstallProgressEvent | undefined>;
   onFocusProfile: (profileId: string) => void;
   onInstall: (profile: PlatformSetupProfile) => Promise<void>;
+  onInstallTo: (profile: PlatformSetupProfile) => Promise<void>;
   onSelect: (profile: PlatformSetupProfile) => Promise<void>;
   onRemove: (profile: PlatformSetupProfile) => Promise<void>;
   onOpenFolder: (profile: PlatformSetupProfile) => Promise<void>;
@@ -165,16 +167,27 @@ export function EmulatorsSection({
                       </button>
                     </>
                   ) : downloadable ? (
-                    <button
-                      type="button"
-                      onClick={() => onInstall(profile)}
-                      disabled={busy !== null}
-                      className="rh-mini-action h-10"
-                      data-testid={`settings-install-${profile.platform}`}
-                    >
-                      {rowBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
-                      {t.common.download}
-                    </button>
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => onInstall(profile)}
+                        disabled={busy !== null}
+                        className="rh-mini-action h-10"
+                        data-testid={`settings-install-${profile.platform}`}
+                      >
+                        {rowBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+                        {t.common.download}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onInstallTo(profile)}
+                        disabled={busy !== null}
+                        title="Download to..."
+                        className="grid h-10 w-10 place-items-center rounded-sm border border-white/10 text-white/70 transition hover:bg-white/10 disabled:opacity-40"
+                      >
+                        {rowBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FolderOpen className="h-3.5 w-3.5" />}
+                      </button>
+                    </>
                   ) : (
                     <button
                       type="button"

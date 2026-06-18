@@ -1,3 +1,4 @@
+#[derive(Debug)]
 pub(super) struct BlockedAssetTarget {
     target_path: Option<String>,
     message: String,
@@ -92,9 +93,33 @@ pub(super) fn resolve_asset_target(
     asset: &AssetView,
     source: &SourceUri,
 ) -> Result<PathBuf, BlockedAssetTarget> {
+    resolve_asset_target_with_override(store, data_dir, asset, source, None)
+}
+
+pub(super) fn resolve_asset_target_with_override(
+    store: &RepositoryStore,
+    data_dir: &Path,
+    asset: &AssetView,
+    source: &SourceUri,
+    target_dir: Option<&Path>,
+) -> Result<PathBuf, BlockedAssetTarget> {
+    if let Some(target_dir) = target_dir {
+        let target_dir = if is_manifest_emulator_bundle(asset) {
+            target_dir.join(crate::downloads::safe_segment(&asset.id))
+        } else {
+            target_dir.to_path_buf()
+        };
+        return Ok(target_dir.join(file_name_for_source(source, &asset.display_name)));
+    }
+
     let Some(hint) = asset.install_hint.as_ref() else {
+        let root = if is_manifest_emulator_bundle(asset) {
+            emulators_root(data_dir)
+        } else {
+            system_root(data_dir)
+        };
         return Ok(destination_for_source(
-            &data_dir.join("System"),
+            &root,
             &asset.platform,
             &asset.id,
             source,
@@ -110,8 +135,7 @@ pub(super) fn resolve_asset_target(
             ) else {
                 return Err(blocked_asset(None, "System file install path is invalid."));
             };
-            Ok(data_dir
-                .join("System")
+            Ok(system_root(data_dir)
                 .join(&asset.platform)
                 .join(relative_path))
         }
@@ -217,6 +241,30 @@ pub(super) fn inspect_asset_installation(
             Some(&target_path),
             "missing",
             None,
+            None,
+        );
+    }
+
+    if target.is_dir() && is_manifest_emulator_bundle(asset) {
+        let verified_sha = download.and_then(|record| record.sha256.as_deref());
+        if let (Some(expected), Some(actual)) = (expected_sha256, verified_sha) {
+            if !actual.eq_ignore_ascii_case(expected) {
+                return store.record_asset_installation(
+                    &asset.id,
+                    Some(&target_path),
+                    "corrupt",
+                    Some(actual),
+                    Some(&format!(
+                        "SHA-256 mismatch: expected {expected}, got {actual}"
+                    )),
+                );
+            }
+        }
+        return store.record_asset_installation(
+            &asset.id,
+            Some(&target_path),
+            "ready",
+            verified_sha,
             None,
         );
     }
@@ -489,6 +537,12 @@ pub(super) fn expected_asset_sha256(asset: &AssetView) -> Option<&str> {
         })
         .map(str::trim)
         .filter(|sha256| !sha256.is_empty())
+}
+
+pub(super) fn is_manifest_emulator_bundle(asset: &AssetView) -> bool {
+    matches!(asset.asset_kind, crate::schema::AssetKind::Emulator)
+        && asset.repository_id.starts_with("manifest-")
+        && asset.source_id.ends_with("-emulator-bundle")
 }
 
 pub(super) fn is_download_ready_status(status: &str) -> bool {

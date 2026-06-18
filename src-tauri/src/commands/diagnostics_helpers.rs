@@ -268,6 +268,31 @@ pub(super) fn remove_path_if_allowed(
     })
 }
 
+pub(super) fn remove_recorded_download_path(candidate: &Path) -> Result<(), String> {
+    if !candidate.exists() {
+        return Ok(());
+    }
+    let canonical_candidate = fs::canonicalize(candidate)
+        .map_err(|error| format!("Failed to inspect {}: {error}", candidate.display()))?;
+    if canonical_candidate.file_name().is_none() {
+        return Err(format!(
+            "Refusing to delete filesystem root: {}",
+            canonical_candidate.display()
+        ));
+    }
+    if canonical_candidate.is_dir() {
+        fs::remove_dir_all(&canonical_candidate)
+    } else {
+        fs::remove_file(&canonical_candidate)
+    }
+    .map_err(|error| {
+        format!(
+            "Failed to remove {}: {error}",
+            canonical_candidate.display()
+        )
+    })
+}
+
 pub(super) fn open_path(path: &Path) -> Result<(), String> {
     if !path.exists() {
         return Err(format!("Path does not exist: {}", path.display()));

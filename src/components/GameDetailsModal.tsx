@@ -7,6 +7,7 @@ import {
   Ban,
   DatabaseZap,
   Download as DownloadIcon,
+  FolderOpen,
   Loader2,
   Pause,
   Play,
@@ -211,7 +212,20 @@ export function GameDetailsModal({
     }
   };
 
-  const handleDownload = async () => {
+  const chooseTargetDirectory = async (title: string) => {
+    if (!isTauriRuntime()) {
+      return `preview://Selected/${game.id}`;
+    }
+    const selected = await open({
+      title,
+      multiple: false,
+      directory: true,
+      defaultPath: defaultSaveDir ?? undefined
+    });
+    return typeof selected === 'string' ? selected : null;
+  };
+
+  const handleDownload = async (targetDir?: string) => {
     if (userProvidedGame || metadataOnlyGame) {
       setMessage(t.gameDetails.messages.importLocalGame);
       return;
@@ -221,13 +235,22 @@ export function GameDetailsModal({
       return;
     }
 
-    await runDownloadAction('download', () => api.startGameDownload(game.id));
+    await runDownloadAction('download', () => api.startGameDownload(game.id, targetDir));
   };
 
-  const handleInstall = async () => {
+  const handleDownloadTo = async () => {
+    const selected = await chooseTargetDirectory(`Download ${game.title} to...`);
+    if (!selected) return;
+    await handleDownload(selected);
+  };
+
+  const handleInstall = async (targetDir?: string) => {
     setMessage(null);
     try {
-      const result = await orchestrator.install();
+      const result = await orchestrator.install(targetDir ? {
+        gameTargetDir: targetDir,
+        emulatorTargetDir: targetDir
+      } : undefined);
       if (result.status === 'ready') {
         setMessage(t.gameDetails.messages.installComplete);
       } else {
@@ -241,6 +264,12 @@ export function GameDetailsModal({
       setShowSetupDetails(true);
       setMessage(error instanceof Error ? error.message : String(error));
     }
+  };
+
+  const handleInstallTo = async () => {
+    const selected = await chooseTargetDirectory(`Install ${game.title} to...`);
+    if (!selected) return;
+    await handleInstall(selected);
   };
 
   const handleImportGame = async () => {
@@ -291,6 +320,24 @@ export function GameDetailsModal({
     } finally {
       setBusy(null);
     }
+  };
+
+  const handleDownloadAsset = async (item: RequirementItem, targetDir?: string) => {
+    if (isUserProvidedRequirement(item)) {
+      void handleImportAsset(item);
+      return;
+    }
+    await run(`asset:${item.asset.id}`, () => (
+      item.status === 'corrupt' || item.status === 'error'
+        ? api.redownloadAsset(item.asset.id, targetDir)
+        : api.downloadAsset(item.asset.id, targetDir)
+    ));
+  };
+
+  const handleDownloadAssetTo = async (item: RequirementItem) => {
+    const selected = await chooseTargetDirectory(`Download ${item.asset.displayName} to...`);
+    if (!selected) return;
+    await handleDownloadAsset(item, selected);
   };
 
   const handleInstallProfileEmulator = async () => {
@@ -579,17 +626,7 @@ export function GameDetailsModal({
                       <ShieldAlert className="h-4 w-4 text-amber-200" />
                     )}
                     <button
-                      onClick={() => {
-                        if (isUserProvidedRequirement(item)) {
-                          void handleImportAsset(item);
-                          return;
-                        }
-                        void run(`asset:${item.asset.id}`, () => (
-                          item.status === 'corrupt' || item.status === 'error'
-                            ? api.redownloadAsset(item.asset.id)
-                            : api.downloadAsset(item.asset.id)
-                        ));
-                      }}
+                      onClick={() => void handleDownloadAsset(item)}
                       disabled={busy !== null || item.status === 'ready'}
                       className="h-8 rounded-md border border-white/10 px-3 text-xs font-semibold text-white/72 transition hover:bg-white/10 disabled:opacity-40"
                     >
@@ -597,6 +634,16 @@ export function GameDetailsModal({
                         <Loader2 className="h-3.5 w-3.5 animate-spin" />
                       ) : isUserProvidedRequirement(item) ? t.common.import : item.status === 'corrupt' || item.status === 'error' ? t.common.retry : t.common.download}
                     </button>
+                    {!isUserProvidedRequirement(item) && item.status !== 'ready' && (
+                      <button
+                        onClick={() => void handleDownloadAssetTo(item)}
+                        disabled={busy !== null}
+                        title="Download to..."
+                        className="grid h-8 w-8 place-items-center rounded-md border border-white/10 text-white/64 transition hover:bg-white/10 disabled:opacity-40"
+                      >
+                        <FolderOpen className="h-3.5 w-3.5" />
+                      </button>
+                    )}
                     {item.asset.executable && item.downloaded && !item.trusted && (
                       <button
                         onClick={() => run(`trust:${item.asset.id}`, () => api.trustExecutable(item.asset.id))}
@@ -663,6 +710,16 @@ export function GameDetailsModal({
                         {status === 'error' ? t.gameDetails.downloadActions.retry : t.gameDetails.downloadActions.resume}
                       </button>
                     )}
+                    {status === 'error' && isDirectGameDownload(game, download.record) && (
+                      <button
+                        onClick={() => void handleDownloadTo()}
+                        disabled={busy !== null}
+                        className="inline-flex h-8 items-center gap-2 rounded-md border border-white/10 px-3 text-xs font-semibold text-white/72 transition hover:bg-white/10 disabled:opacity-40"
+                      >
+                        {busy === 'download' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FolderOpen className="h-3.5 w-3.5" />}
+                        Download to...
+                      </button>
+                    )}
                     {(status === 'resolving' || status === 'downloading' || status === 'paused' || status === 'interrupted' || status === 'error') && (
                       <button
                         onClick={() => runDownloadAction('cancel', download.cancel)}
@@ -690,14 +747,24 @@ export function GameDetailsModal({
                   </button>
                 )}
                 {showInstallAction && (
-                  <button
-                    onClick={() => void handleInstall()}
-                    disabled={!canDownload || !downloadableSource || busy !== null || orchestrator.running}
-                    className={setupActionClass}
-                  >
-                    {orchestrator.running ? <Loader2 className="h-4 w-4 animate-spin" /> : <DownloadIcon className="h-4 w-4" />}
-                    {downloadableSource ? t.common.install : t.gameDetails.setup.manualSource}
-                  </button>
+                  <>
+                    <button
+                      onClick={() => void handleInstall()}
+                      disabled={!canDownload || !downloadableSource || busy !== null || orchestrator.running}
+                      className={setupActionClass}
+                    >
+                      {orchestrator.running ? <Loader2 className="h-4 w-4 animate-spin" /> : <DownloadIcon className="h-4 w-4" />}
+                      {downloadableSource ? t.common.install : t.gameDetails.setup.manualSource}
+                    </button>
+                    <button
+                      onClick={() => void handleInstallTo()}
+                      disabled={!canDownload || !downloadableSource || busy !== null || orchestrator.running}
+                      className={secondaryActionClass}
+                    >
+                      {orchestrator.running ? <Loader2 className="h-4 w-4 animate-spin" /> : <FolderOpen className="h-4 w-4" />}
+                      Install to...
+                    </button>
+                  </>
                 )}
                 {status === 'completed' && !launchReady && !userProvidedGame && (
                   <button

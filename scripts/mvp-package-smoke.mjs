@@ -1,18 +1,22 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { readdir, rm, stat } from 'node:fs/promises';
+import { readFile, readdir, rm, stat } from 'node:fs/promises';
 import path from 'node:path';
 
 const root = process.cwd();
 const smokeDir = path.join(root, '.tmp', 'package-smoke');
 const releaseDir = resolveReleaseDir();
+const expectedVersion = await readPackageVersion();
 const binaryPath = await resolveBinaryPath(releaseDir);
 const nsisDir = path.join(releaseDir, 'bundle', 'nsis');
 
 async function main() {
   await assertFile(binaryPath, 'release binary');
-  const installers = await listNsisInstallers();
-  assert.ok(installers.length > 0, 'Tauri NSIS installer artifact is missing. Run npm run tauri:build first.');
+  const installers = await listNsisInstallers(expectedVersion);
+  assert.ok(
+    installers.length > 0,
+    `Tauri NSIS installer artifact for ${expectedVersion} is missing. Run npm run tauri:build first.`
+  );
 
   await rm(smokeDir, { recursive: true, force: true });
   const output = await runSmokeBinary();
@@ -59,11 +63,17 @@ async function resolveBinaryPath(releaseDir) {
   return path.join(releaseDir, candidates[0]);
 }
 
-async function listNsisInstallers() {
+async function readPackageVersion() {
+  const packageJson = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
+  assert.equal(typeof packageJson.version, 'string', 'package.json version must be a string');
+  return packageJson.version;
+}
+
+async function listNsisInstallers(version) {
   try {
     const entries = await readdir(nsisDir);
     return entries
-      .filter((entry) => entry.toLowerCase().endsWith('.exe'))
+      .filter((entry) => entry.toLowerCase().endsWith('.exe') && entry.includes(`_${version}_`))
       .map((entry) => path.join(nsisDir, entry));
   } catch {
     return [];

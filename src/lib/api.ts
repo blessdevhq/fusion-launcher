@@ -43,6 +43,11 @@ import type {
 
 type PreviewHandler = (args: Record<string, unknown>) => Promise<unknown>;
 
+export interface InstallGameOptions {
+  gameTargetDir?: string;
+  emulatorTargetDir?: string;
+}
+
 const previewHandlers: Record<string, PreviewHandler> = {
   preview_repository: ({ url }) => previewApi.previewRepository(String(url ?? 'preview://fusion-launcher')),
   preview_repository_file: ({ path }) => previewApi.previewRepositoryFile(String(path ?? '')),
@@ -83,14 +88,20 @@ const previewHandlers: Record<string, PreviewHandler> = {
   get_library_statuses: () => previewApi.getLibraryStatuses(),
   list_platform_setup_profiles: () => previewApi.listPlatformSetupProfiles(),
   get_game_setup_state: ({ gameId }) => previewApi.getGameSetupState(String(gameId ?? '')),
-  install_game: ({ gameId }) => previewApi.installGame(String(gameId ?? '')),
+  install_game: ({ gameId, options }) => previewApi.installGame(
+    String(gameId ?? ''),
+    options as InstallGameOptions | undefined
+  ),
   fetch_manifest: () =>
     Promise.reject(new Error('Manifest fetching is available in the desktop app.')),
   install_game_from_manifest: ({ titleId }) => previewApi.installGame(String(titleId ?? '')),
   install_emulator: ({ platform }) => previewApi.installEmulator(String(platform ?? '')),
   get_emulator_status: ({ platform }) => previewApi.getEmulatorStatus(String(platform ?? '')),
   get_emulator_install_status: ({ platform }) => previewApi.getEmulatorStatus(String(platform ?? '')),
-  install_profile_emulator: ({ profileId }) => previewApi.installProfileEmulator(String(profileId ?? '')),
+  install_profile_emulator: ({ profileId, targetDir }) => previewApi.installProfileEmulator(
+    String(profileId ?? ''),
+    typeof targetDir === 'string' ? targetDir : undefined
+  ),
   remove_profile_emulator: ({ profileId }) => previewApi.removeProfileEmulator(String(profileId ?? '')),
   select_profile_emulator: ({ profileId, executablePath }) => previewApi.selectProfileEmulator(
     String(profileId ?? ''),
@@ -109,7 +120,10 @@ const previewHandlers: Record<string, PreviewHandler> = {
   ),
   validate_emulator_config: ({ platform }) => previewApi.validateEmulatorConfig(String(platform ?? '')),
   delete_emulator_config: ({ platform }) => previewApi.deleteEmulatorConfig(String(platform ?? '')),
-  download_asset: ({ assetId }) => previewApi.downloadAsset(String(assetId ?? '')),
+  download_asset: ({ assetId, targetDir }) => previewApi.downloadAsset(
+    String(assetId ?? ''),
+    typeof targetDir === 'string' ? targetDir : undefined
+  ),
   import_asset_file: ({ assetId, sourcePath }) => previewApi.importAssetFile(
     String(assetId ?? ''),
     String(sourcePath ?? '')
@@ -118,14 +132,25 @@ const previewHandlers: Record<string, PreviewHandler> = {
     String(gameId ?? ''),
     String(sourcePath ?? '')
   ),
-  download_game: ({ gameId }) => previewApi.downloadGame(String(gameId ?? '')),
-  start_game_download: ({ gameId }) => previewApi.startGameDownload(String(gameId ?? '')),
+  download_game: ({ gameId, targetDir }) => previewApi.downloadGame(
+    String(gameId ?? ''),
+    typeof targetDir === 'string' ? targetDir : undefined
+  ),
+  start_game_download: ({ gameId, targetDir }) => previewApi.startGameDownload(
+    String(gameId ?? ''),
+    typeof targetDir === 'string' ? targetDir : undefined
+  ),
   trust_executable: ({ assetId }) => previewApi.trustExecutable(String(assetId ?? '')),
   get_download_root: () => previewApi.getDownloadRoot(),
   set_download_root: ({ path }) => previewApi.setDownloadRoot(String(path ?? '')),
   remove_game: ({ gameId, deleteFiles }) => previewApi.removeGame(String(gameId ?? ''), Boolean(deleteFiles)),
-  redownload_asset: ({ assetId }) => previewApi.redownloadAsset(String(assetId ?? '')),
+  remove_download: ({ downloadId, deleteFiles }) => previewApi.removeDownload(String(downloadId ?? ''), Boolean(deleteFiles)),
+  redownload_asset: ({ assetId, targetDir }) => previewApi.redownloadAsset(
+    String(assetId ?? ''),
+    typeof targetDir === 'string' ? targetDir : undefined
+  ),
   open_game_folder: ({ gameId }) => previewApi.openGameFolder(String(gameId ?? '')),
+  open_download_folder: ({ downloadId }) => previewApi.openDownloadFolder(String(downloadId ?? '')),
   open_emulator_folder: ({ platform }) => previewApi.openEmulatorFolder(String(platform ?? '')),
   open_logs_folder: () => previewApi.openLogsFolder(),
   run_health_check: () => previewApi.runHealthCheck(),
@@ -249,8 +274,8 @@ export const api = {
   getGameSetupState(gameId: string) {
     return call<GameSetupState>('get_game_setup_state', { gameId });
   },
-  installGame(gameId: string) {
-    return call<InstallResult>('install_game', { gameId });
+  installGame(gameId: string, options?: InstallGameOptions) {
+    return call<InstallResult>('install_game', { gameId, options });
   },
   fetchManifest(url: string) {
     return call<Manifest>('fetch_manifest', { url });
@@ -264,8 +289,8 @@ export const api = {
   getEmulatorStatus(platform: string) {
     return call<EmulatorStatus>('get_emulator_status', { platform });
   },
-  installProfileEmulator(profileId: string) {
-    return call<ProfileEmulatorConfig>('install_profile_emulator', { profileId });
+  installProfileEmulator(profileId: string, targetDir?: string) {
+    return call<ProfileEmulatorConfig>('install_profile_emulator', { profileId, targetDir });
   },
   removeProfileEmulator(profileId: string) {
     return call<ProfileEmulatorRemovalReport>('remove_profile_emulator', { profileId });
@@ -288,8 +313,8 @@ export const api = {
   deleteEmulatorConfig(platform: string) {
     return call<boolean>('delete_emulator_config', { platform });
   },
-  downloadAsset(assetId: string) {
-    return call<DownloadRecord>('download_asset', { assetId });
+  downloadAsset(assetId: string, targetDir?: string) {
+    return call<DownloadRecord>('download_asset', { assetId, targetDir });
   },
   importAssetFile(assetId: string, sourcePath: string) {
     return call<ImportAssetFileReport>('import_asset_file', { assetId, sourcePath });
@@ -297,11 +322,11 @@ export const api = {
   importGameFile(gameId: string, sourcePath: string) {
     return call<ImportGameFileReport>('import_game_file', { gameId, sourcePath });
   },
-  downloadGame(gameId: string) {
-    return call<DownloadRecord>('download_game', { gameId });
+  downloadGame(gameId: string, targetDir?: string) {
+    return call<DownloadRecord>('download_game', { gameId, targetDir });
   },
-  startGameDownload(gameId: string) {
-    return call<GameDownloadStartReport>('start_game_download', { gameId });
+  startGameDownload(gameId: string, targetDir?: string) {
+    return call<GameDownloadStartReport>('start_game_download', { gameId, targetDir });
   },
   trustExecutable(assetId: string) {
     return call<TrustedExecutable>('trust_executable', { assetId });
@@ -315,11 +340,17 @@ export const api = {
   removeGame(gameId: string, deleteFiles: boolean) {
     return call<boolean>('remove_game', { gameId, deleteFiles });
   },
-  redownloadAsset(assetId: string) {
-    return call<DownloadRecord>('redownload_asset', { assetId });
+  removeDownload(downloadId: string, deleteFiles: boolean) {
+    return call<boolean>('remove_download', { downloadId, deleteFiles });
+  },
+  redownloadAsset(assetId: string, targetDir?: string) {
+    return call<DownloadRecord>('redownload_asset', { assetId, targetDir });
   },
   openGameFolder(gameId: string) {
     return call<void>('open_game_folder', { gameId });
+  },
+  openDownloadFolder(downloadId: string) {
+    return call<void>('open_download_folder', { downloadId });
   },
   openEmulatorFolder(platform: string) {
     return call<void>('open_emulator_folder', { platform });

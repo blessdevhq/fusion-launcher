@@ -222,7 +222,7 @@ export function SettingsModal({
     return nextSettings;
   };
 
-  const installProfileEmulator = async (profile: PlatformSetupProfile) => {
+  const installProfileEmulator = async (profile: PlatformSetupProfile, targetDir?: string) => {
     setBusy(`install:${profile.id}`);
     setActiveProfileId(profile.id);
     activeEmulatorInstallRef.current = profile.id;
@@ -237,7 +237,7 @@ export function SettingsModal({
     }));
     setMessage(null);
     try {
-      await api.installProfileEmulator(profile.id);
+      await api.installProfileEmulator(profile.id, targetDir);
       await refreshSettingsFromBackend();
       setMessage(t.settings.emulators.installSuccess(profile.emulator.emulatorName));
     } catch (error) {
@@ -249,13 +249,25 @@ export function SettingsModal({
     }
   };
 
+  const installProfileEmulatorTo = async (profile: PlatformSetupProfile) => {
+    const selected = isTauriRuntime()
+      ? await open({
+        title: `Download ${profile.emulator.emulatorName} to...`,
+        multiple: false,
+        directory: true
+      })
+      : `preview://Selected/Emulators/${profile.id}`;
+    if (typeof selected !== 'string') return;
+    await installProfileEmulator(profile, selected);
+  };
+
   const selectProfileEmulator = async (profile: PlatformSetupProfile) => {
     setBusy(`select:${profile.id}`);
     setActiveProfileId(profile.id);
     setMessage(null);
     try {
       if (!isTauriRuntime()) {
-        const previewPath = `preview://emulators/${profile.platform}/${profile.emulator.executableName ?? `${profile.platform}.exe`}`;
+        const previewPath = `preview://Emulators/${profile.platform}/${profile.id}/${profile.emulator.executableName ?? `${profile.platform}.exe`}`;
         await api.selectProfileEmulator(profile.id, previewPath);
         await refreshSettingsFromBackend();
         setMessage(t.settings.emulators.selectSuccess(profile.emulator.emulatorName));
@@ -558,6 +570,7 @@ export function SettingsModal({
                 progressByProfileId={emulatorProgressByProfileId}
                 onFocusProfile={setActiveProfileId}
                 onInstall={installProfileEmulator}
+                onInstallTo={installProfileEmulatorTo}
                 onSelect={selectProfileEmulator}
                 onRemove={removeProfileEmulator}
                 onOpenFolder={openProfileFolder}

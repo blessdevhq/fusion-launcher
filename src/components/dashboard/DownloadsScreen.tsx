@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { motion } from 'framer-motion';
-import { Ban, Loader2, Package, Pause, Play, RotateCw } from 'lucide-react';
+import { Ban, Clipboard, FolderOpen, Loader2, Package, Pause, Play, RotateCw, Trash2 } from 'lucide-react';
 import { useI18n } from '@/components/I18nProvider';
 import { GameArt } from '@/components/shell/GamePoster';
 import type { GameLibraryItem } from '@/lib/libraryStatus';
@@ -17,7 +17,10 @@ export function DownloadsScreen({
   onOpenDetails,
   onPause,
   onResume,
+  onResumeTo,
   onCancel,
+  onOpenFolder,
+  onDeleteFiles,
   onPlay,
   onFocus
 }: {
@@ -27,7 +30,10 @@ export function DownloadsScreen({
   onOpenDetails: (game: CatalogGame) => void;
   onPause: (gameId: string) => Promise<void>;
   onResume: (gameId: string) => Promise<void>;
+  onResumeTo: (gameId: string) => Promise<void>;
   onCancel: (gameId: string) => Promise<void>;
+  onOpenFolder: (gameId: string) => Promise<void>;
+  onDeleteFiles: (gameId: string) => Promise<void>;
   onPlay: (item: GameLibraryItem) => void;
   onFocus: (focusId: string) => void;
 }) {
@@ -61,7 +67,10 @@ export function DownloadsScreen({
                 onOpenDetails={onOpenDetails}
                 onPause={onPause}
                 onResume={onResume}
+                onResumeTo={onResumeTo}
                 onCancel={onCancel}
+                onOpenFolder={onOpenFolder}
+                onDeleteFiles={onDeleteFiles}
                 onPlay={onPlay}
                 onFocus={onFocus}
               />
@@ -80,7 +89,10 @@ function DownloadRow({
   onOpenDetails,
   onPause,
   onResume,
+  onResumeTo,
   onCancel,
+  onOpenFolder,
+  onDeleteFiles,
   onPlay,
   onFocus
 }: {
@@ -90,7 +102,10 @@ function DownloadRow({
   onOpenDetails: (game: CatalogGame) => void;
   onPause: (gameId: string) => Promise<void>;
   onResume: (gameId: string) => Promise<void>;
+  onResumeTo: (gameId: string) => Promise<void>;
   onCancel: (gameId: string) => Promise<void>;
+  onOpenFolder: (gameId: string) => Promise<void>;
+  onDeleteFiles: (gameId: string) => Promise<void>;
   onPlay: (item: GameLibraryItem) => void;
   onFocus: (focusId: string) => void;
 }) {
@@ -98,7 +113,8 @@ function DownloadRow({
   const active = ACTIVE_DOWNLOAD_STATUSES.includes(download.status);
   const resumable = RESUMABLE_DOWNLOAD_STATUSES.includes(download.status);
   const direct = download.magnetUri.startsWith('direct:');
-  const cancellable = !direct && !['completed', 'cancelled', 'cancelling'].includes(download.status);
+  const cancellable = !direct && !['completed', 'cancelled', 'cancelling', 'error'].includes(download.status);
+  const removable = ['completed', 'cancelled', 'error'].includes(download.status);
   const statusHint = downloadStatusHint(download, t);
   const title = item?.game.title ?? download.displayName ?? download.gameId;
   const assetDownload = download.subjectType === 'asset' || download.magnetUri.startsWith('direct:asset:');
@@ -135,7 +151,12 @@ function DownloadRow({
           <span>{formatSpeed(download.downloadSpeedBytesPerSec)}</span>
           <span>{download.peersCount} {t.common.peers}</span>
         </div>
-        {download.saveDir && <div className="mt-2 truncate text-xs text-white/32">{download.saveDir}</div>}
+        {download.saveDir && (
+          <div className="rh-download-path" title={download.saveDir}>
+            <span>{t.dashboard.downloads.path}</span>
+            <code>{download.saveDir}</code>
+          </div>
+        )}
         {statusHint && <div className="mt-2 text-xs text-white/42">{statusHint}</div>}
         {download.errorMessage && <div className="mt-2 text-xs text-red-100">{download.errorMessage}</div>}
       </div>
@@ -160,6 +181,16 @@ function DownloadRow({
             onClick={() => onResume(download.gameId)}
           />
         )}
+        {resumable && direct && (
+          <IconAction
+            focusId={`download-action:retry-to:${encodeURIComponent(download.gameId)}`}
+            onFocus={onFocus}
+            busy={busyAction === `resume:${download.gameId}`}
+            label="Download to..."
+            icon={<FolderOpen className="h-3.5 w-3.5" />}
+            onClick={() => onResumeTo(download.gameId)}
+          />
+        )}
         {item?.readyToPlay && download.status === 'completed' && (
           <IconAction
             focusId={`download-action:play:${encodeURIComponent(download.gameId)}`}
@@ -168,6 +199,37 @@ function DownloadRow({
             label={t.dashboard.downloads.play}
             icon={<Play className="h-3.5 w-3.5" />}
             onClick={() => onPlay(item)}
+          />
+        )}
+        {download.saveDir && (
+          <>
+            <IconAction
+              focusId={`download-action:copy-path:${encodeURIComponent(download.gameId)}`}
+              onFocus={onFocus}
+              busy={false}
+              label={t.dashboard.downloads.copyPath}
+              icon={<Clipboard className="h-3.5 w-3.5" />}
+              onClick={() => void navigator.clipboard?.writeText(download.saveDir)}
+            />
+            <IconAction
+              focusId={`download-action:open-folder:${encodeURIComponent(download.gameId)}`}
+              onFocus={onFocus}
+              busy={busyAction === `open-folder:${download.gameId}`}
+              label={t.dashboard.downloads.openFolder}
+              icon={<FolderOpen className="h-3.5 w-3.5" />}
+              onClick={() => onOpenFolder(download.gameId)}
+            />
+          </>
+        )}
+        {removable && (
+          <IconAction
+            focusId={`download-action:delete:${encodeURIComponent(download.gameId)}`}
+            onFocus={onFocus}
+            busy={busyAction === `delete:${download.gameId}`}
+            label={t.dashboard.downloads.deleteFiles}
+            icon={<Trash2 className="h-3.5 w-3.5" />}
+            onClick={() => onDeleteFiles(download.gameId)}
+            danger
           />
         )}
         {cancellable && (

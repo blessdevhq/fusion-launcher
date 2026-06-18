@@ -1,11 +1,15 @@
+use std::fs::File;
+use std::io::Write;
 use std::path::Path;
 
 use tempfile::tempdir;
+use zip::write::SimpleFileOptions;
+use zip::ZipWriter;
 
 use super::*;
 use crate::schema::{
-    AssetKind, InstallHint, InstallTarget, RepositoryAsset, RepositoryGame, RepositoryMetadata,
-    RepositorySchema, SourceUri,
+    AssetKind, AssetView, InstallHint, InstallTarget, RepositoryAsset, RepositoryGame,
+    RepositoryMetadata, RepositorySchema, SourceUri,
 };
 use crate::storage::RepositoryStore;
 use sha2::{Digest, Sha256};
@@ -18,6 +22,36 @@ fn valid_nes_bytes() -> Vec<u8> {
     let mut bytes = b"NES\x1A".to_vec();
     bytes.extend([0_u8; 32]);
     bytes
+}
+
+fn write_zip(path: &Path, entries: &[(&str, &[u8])]) {
+    let file = File::create(path).unwrap();
+    let mut writer = ZipWriter::new(file);
+    for (name, bytes) in entries {
+        writer
+            .start_file(name, SimpleFileOptions::default())
+            .unwrap();
+        writer.write_all(bytes).unwrap();
+    }
+    writer.finish().unwrap();
+}
+
+fn manifest_emulator_asset_view() -> AssetView {
+    AssetView {
+        id: "manifest-demo::0100-emulator-bundle".to_string(),
+        source_id: "0100-emulator-bundle".to_string(),
+        repository_id: "manifest-demo".to_string(),
+        platform: "switch".to_string(),
+        asset_kind: AssetKind::Emulator,
+        display_name: "Switch emulator bundle".to_string(),
+        sources: vec![SourceUri::Http {
+            url: "https://example.com/eden.zip".to_string(),
+            sha256: "a".repeat(64),
+            size_bytes: None,
+        }],
+        install_hint: None,
+        executable: false,
+    }
 }
 
 #[test]
@@ -38,6 +72,102 @@ fn open_game_folder_keeps_download_directory() {
     assert_eq!(
         folder_path_for_open(&game_directory).unwrap(),
         game_directory
+    );
+}
+
+#[test]
+fn manifest_emulator_zip_extracts_into_parent_and_deletes_archive() {
+    let temp = tempdir().unwrap();
+    let bundle_dir = temp.path().join("System").join("switch").join("bundle");
+    std::fs::create_dir_all(&bundle_dir).unwrap();
+    let archive_path = bundle_dir.join("eden.zip");
+    write_zip(&archive_path, &[("eden.exe", b"exe")]);
+
+    let extracted =
+        extract_manifest_emulator_bundle_archive(&manifest_emulator_asset_view(), &archive_path)
+            .unwrap();
+
+    assert_eq!(extracted, bundle_dir);
+    assert!(extracted.join("eden.exe").is_file());
+    assert!(!archive_path.exists());
+}
+
+#[test]
+fn manifest_emulator_zip_rejects_path_traversal_without_deleting_archive() {
+    let temp = tempdir().unwrap();
+    let bundle_dir = temp.path().join("System").join("switch").join("bundle");
+    std::fs::create_dir_all(&bundle_dir).unwrap();
+    let archive_path = bundle_dir.join("eden.zip");
+    write_zip(&archive_path, &[("../outside.exe", b"bad")]);
+
+    let error =
+        extract_manifest_emulator_bundle_archive(&manifest_emulator_asset_view(), &archive_path)
+            .unwrap_err();
+
+    assert!(error.contains("path traversal"));
+    assert!(archive_path.exists());
+    assert!(!temp.path().join("outside.exe").exists());
+}
+
+#[test]
+fn default_asset_targets_split_system_and_manifest_emulators() {
+    let temp = tempdir().unwrap();
+    let store = RepositoryStore::open(&temp.path().join("fusion-launcher.db")).unwrap();
+    let emulator = manifest_emulator_asset_view();
+    let source = emulator.sources.first().unwrap();
+    let emulator_target = resolve_asset_target(&store, temp.path(), &emulator, source).unwrap();
+
+    assert_eq!(
+        emulator_target,
+        temp.path()
+            .join("Emulators")
+            .join("switch")
+            .join("manifest-demo--0100-emulator-bundle")
+            .join("eden.zip")
+    );
+
+    let mut system_asset = emulator.clone();
+    system_asset.id = "repo::prod-keys".to_string();
+    system_asset.source_id = "prod-keys".to_string();
+    system_asset.repository_id = "repo".to_string();
+    system_asset.asset_kind = AssetKind::Keys;
+    system_asset.display_name = "prod.keys".to_string();
+    system_asset.sources = vec![SourceUri::Http {
+        url: "https://example.com/prod.keys".to_string(),
+        sha256: "b".repeat(64),
+        size_bytes: None,
+    }];
+    let system_source = system_asset.sources.first().unwrap();
+    let system_target =
+        resolve_asset_target(&store, temp.path(), &system_asset, system_source).unwrap();
+
+    assert_eq!(
+        system_target,
+        temp.path()
+            .join("System")
+            .join("switch")
+            .join("repo--prod-keys")
+            .join("prod.keys")
+    );
+}
+
+#[test]
+fn manifest_emulator_target_override_uses_asset_subfolder() {
+    let temp = tempdir().unwrap();
+    let store = RepositoryStore::open(&temp.path().join("fusion-launcher.db")).unwrap();
+    let emulator = manifest_emulator_asset_view();
+    let source = emulator.sources.first().unwrap();
+    let selected = temp.path().join("Selected");
+
+    let target =
+        resolve_asset_target_with_override(&store, temp.path(), &emulator, source, Some(&selected))
+            .unwrap();
+
+    assert_eq!(
+        target,
+        selected
+            .join("manifest-demo--0100-emulator-bundle")
+            .join("eden.zip")
     );
 }
 
@@ -86,6 +216,56 @@ fn test_repo(required_asset_ids: Vec<String>) -> RepositorySchema {
             }],
             expected_extensions: vec![".nes".to_string()],
             required_system_file_ids: required_asset_ids,
+            launch: None,
+        }],
+    }
+}
+
+fn manifest_emulator_repo(archive_sha: String) -> RepositorySchema {
+    RepositorySchema {
+        metadata: RepositoryMetadata {
+            id: "manifest-demo".to_string(),
+            name: "Manifest Demo".to_string(),
+            version: "1".to_string(),
+            schema_version: 1,
+            maintainer: None,
+            homepage_url: None,
+            license: None,
+            trust_level: Some("unknown".to_string()),
+            content_hash: None,
+            updated_at: None,
+        },
+        system_files: vec![RepositoryAsset {
+            id: "0100-emulator-bundle".to_string(),
+            platform: "switch".to_string(),
+            asset_kind: AssetKind::Emulator,
+            display_name: "Switch emulator bundle".to_string(),
+            sources: vec![SourceUri::Http {
+                url: "https://example.com/eden.zip".to_string(),
+                sha256: archive_sha,
+                size_bytes: None,
+            }],
+            install_hint: None,
+            executable: false,
+        }],
+        catalog: vec![RepositoryGame {
+            id: "game".to_string(),
+            platform: "switch".to_string(),
+            title: "Switch Game".to_string(),
+            description: None,
+            cover_image_url: None,
+            trailer_url: None,
+            artwork: None,
+            metadata: None,
+            content_mode: Some("user_provided".to_string()),
+            setup_profile_id: None,
+            downloads: vec![SourceUri::UserProvided {
+                instructions: None,
+                sha256: None,
+                size_bytes: None,
+            }],
+            expected_extensions: vec![".nsp".to_string()],
+            required_system_file_ids: vec!["0100-emulator-bundle".to_string()],
             launch: None,
         }],
     }
@@ -244,7 +424,7 @@ fn open_store(required_asset_ids: Vec<String>) -> (tempfile::TempDir, Repository
 #[test]
 fn removing_downloadable_profile_deletes_managed_folder_and_config() {
     let (dir, store) = open_store(Vec::new());
-    let emulator_dir = dir.path().join("Emulators").join("nes");
+    let emulator_dir = dir.path().join("Emulators").join("nes").join("nes-mesen");
     let exe_path = emulator_dir.join("Mesen.exe");
     std::fs::create_dir_all(&emulator_dir).unwrap();
     std::fs::write(&exe_path, b"exe").unwrap();
@@ -370,6 +550,56 @@ fn leaves_switch_keys_unsatisfied_when_archive_lacks_them() {
 
     let state = inspect_profile_system_file(&store, dir.path(), &profile, keys_req).unwrap();
     assert_eq!(state.status, "missing");
+}
+
+#[test]
+fn manifest_emulator_bundle_directory_satisfies_requirement_after_zip_delete() {
+    let dir = tempdir().unwrap();
+    let archive_sha = "b".repeat(64);
+    let mut store = RepositoryStore::open(&dir.path().join("fusion-launcher.db")).unwrap();
+    store
+        .store_repository(
+            "manifest:inline:manifest-demo",
+            &manifest_emulator_repo(archive_sha.clone()),
+        )
+        .unwrap();
+
+    let asset_id = "manifest-demo::0100-emulator-bundle";
+    let bundle_dir = dir
+        .path()
+        .join("Emulators")
+        .join("switch")
+        .join("manifest-demo--0100-emulator-bundle");
+    std::fs::create_dir_all(&bundle_dir).unwrap();
+    std::fs::write(bundle_dir.join("eden.exe"), b"exe").unwrap();
+    let bundle_dir_string = bundle_dir.to_string_lossy().to_string();
+    store
+        .record_download(
+            asset_id,
+            "asset",
+            Some(&bundle_dir_string),
+            Some(&archive_sha),
+            None,
+        )
+        .unwrap();
+
+    let game = store.get_game("manifest-demo::game").unwrap().unwrap();
+    let requirements = build_requirements_report(&store, dir.path(), &game).unwrap();
+
+    assert_eq!(requirements.requirements.len(), 1);
+    let requirement = &requirements.requirements[0];
+    assert!(requirement.downloaded);
+    assert_eq!(requirement.status, "ready");
+    assert_eq!(
+        requirement.local_path.as_deref(),
+        Some(bundle_dir_string.as_str())
+    );
+    assert_eq!(
+        requirement.target_path.as_deref(),
+        Some(bundle_dir_string.as_str())
+    );
+    assert_eq!(requirement.checksum.as_deref(), Some(archive_sha.as_str()));
+    assert_eq!(requirement.sha256.as_deref(), Some(archive_sha.as_str()));
 }
 
 #[test]

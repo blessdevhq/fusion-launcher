@@ -40,9 +40,11 @@ pub fn get_game_setup_state(
 #[tauri::command]
 pub async fn install_profile_emulator(
     profile_id: String,
+    target_dir: Option<String>,
     state: State<'_, AppState>,
     app: AppHandle,
 ) -> Result<ProfileEmulatorConfig, String> {
+    let target_dir = resolve_target_dir_override(target_dir.as_deref())?;
     let profile = setup_profiles::get_platform_setup_profile(profile_id.trim())
         .ok_or_else(|| format!("Unknown setup profile: {profile_id}"))?;
     if profile.emulator.install_mode != "downloadable" {
@@ -52,7 +54,14 @@ pub async fn install_profile_emulator(
         ));
     }
 
-    crate::orchestrator::install_emulator_internal(&app, &state, &profile.platform, None).await?;
+    crate::orchestrator::install_emulator_internal(
+        &app,
+        &state,
+        &profile.platform,
+        None,
+        target_dir.as_deref(),
+    )
+    .await?;
     let store = lock_store(&state)?;
     store
         .get_profile_emulator_config(&profile.id)?
@@ -80,7 +89,7 @@ pub(super) fn remove_profile_emulator_from_store(
 
     if profile.emulator.install_mode == "downloadable" {
         let install_root = data_dir.join("Emulators");
-        let install_dir = install_root.join(&profile.platform);
+        let install_dir = install_root.join(&profile.platform).join(&profile.id);
         deleted_files = crate::archive::remove_directory_inside(&install_root, &install_dir)?;
         removed_path = Some(install_dir.to_string_lossy().to_string());
     }

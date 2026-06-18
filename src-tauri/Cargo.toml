@@ -1,6 +1,6 @@
 [package]
 name = "fusion-launcher"
-version = "0.2.0"
+version = "0.3.0"
 description = "Source-driven Windows launcher for retro game libraries"
 authors = ["Fusion Launcher"]
 license = "GPL-3.0-or-later"
