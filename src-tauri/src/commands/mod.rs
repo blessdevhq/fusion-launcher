@@ -22,10 +22,10 @@ use crate::schema::{
     GameSetupLaunchState, GameSetupState, GameSetupSystemFileState, HealthCheckItem, HealthReport,
     ImportAssetFileReport, ImportGameFileReport, InstallTarget, LibraryGameStatus,
     LibraryScrapeStatus, ManualGameMetadataInput, OnboardingState, PlatformSetupProfile,
-    ProfileEmulatorConfig, ProfileSystemFileRequirement, RepositoryGame, RepositoryMetadata,
-    RepositoryPreview, RepositorySchema, RepositorySummary, RequirementItem, RequirementsReport,
-    ScrapeCandidate, ScrapeStateView, ScreenScraperStatus, SourceUri, SteamGridDbStatus,
-    TorrentDownloadRecord, TrustedExecutable,
+    ProfileEmulatorConfig, ProfileEmulatorRemovalReport, ProfileSystemFileRequirement,
+    RepositoryGame, RepositoryMetadata, RepositoryPreview, RepositorySchema, RepositorySummary,
+    RequirementItem, RequirementsReport, ScrapeCandidate, ScrapeStateView, ScreenScraperStatus,
+    SourceUri, SteamGridDbStatus, TorrentDownloadRecord, TrustedExecutable,
 };
 use crate::security::{validate_platform, validate_repository_schema, validate_repository_url};
 use crate::setup_profiles;

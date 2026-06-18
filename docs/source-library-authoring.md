@@ -4,8 +4,15 @@
 Если в записи указана прямая ссылка (`http`/`magnet`), в каталоге появляется кнопка
 **Download** → **Play**. Если ссылка `user_provided` — кнопка **Import** (выбрать свой файл).
 
-Готовый рабочий пример: [`examples/repositories/homebrew-library.json`](../examples/repositories/homebrew-library.json) —
-каталог бесплатного homebrew с прямыми ссылками на релизы авторов.
+Готовые источники:
+
+- [`public/source-libraries/official-starter.json`](../public/source-libraries/official-starter.json) — официальный starter: first-party demo + openly licensed homebrew, можно сразу вставлять в лаунчер:
+  `https://blessdevhq.github.io/fusion-launcher/source-libraries/official-starter.json`
+- [`public/source-libraries/unofficial-player-wishlist.json`](../public/source-libraries/unofficial-player-wishlist.json) — неофициальный wishlist для promo/showcase: известные коммерческие игры только как `user_provided`, без ссылок на ROM/BIOS/firmware/keys/artwork.
+  URL для проверки в лаунчере:
+  `https://blessdevhq.github.io/fusion-launcher/source-libraries/unofficial-player-wishlist.json`
+- [`examples/repositories/homebrew-library.json`](../examples/repositories/homebrew-library.json) —
+  каталог бесплатного homebrew с прямыми ссылками на релизы авторов.
 
 ## Самый быстрый путь: скрипт
 

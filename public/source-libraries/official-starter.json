@@ -1,0 +1,175 @@
+{
+  "metadata": {
+    "id": "fusion-launcher-official-starter",
+    "name": "Fusion Launcher Official Starter Library",
+    "version": "1.0.0",
+    "schemaVersion": 3,
+    "maintainer": "Fusion Launcher Team",
+    "homepageUrl": "https://blessdevhq.github.io/fusion-launcher/source-libraries/official-starter.json",
+    "license": "Official sample catalog for Fusion Launcher. Includes first-party CC0 smoke-test content and links to openly licensed homebrew releases from their original authors. No commercial ROMs, BIOS, firmware, or keys are distributed.",
+    "trustLevel": "official",
+    "updatedAt": "2026-06-14T16:14:36Z"
+  },
+  "system_files": [],
+  "catalog": [
+    {
+      "id": "fusion-launcher-nes-smoke-http",
+      "platform": "nes",
+      "title": "Fusion Launcher NES Smoke Demo",
+      "description": "First-party NES demo cartridge image for validating source connection, download, SHA-256 verification, install tracking, and launch preflight without commercial content.",
+      "contentMode": "downloadable",
+      "setupProfileId": "nes-mesen",
+      "metadata": {
+        "releaseYear": 2026,
+        "developer": "Fusion Launcher Team",
+        "genres": ["Tech Demo", "Homebrew"],
+        "tags": ["official", "smoke-test", "first-party"],
+        "players": "1 player"
+      },
+      "downloads": [
+        {
+          "kind": "http",
+          "url": "https://blessdevhq.github.io/fusion-launcher/demo-content/fusion-launcher-smoke.nes",
+          "sha256": "566722254227d93e49751a866cf51ff7728917c9f04e970130d24850dce0a7f4",
+          "sizeBytes": 24592
+        }
+      ],
+      "expectedExtensions": [".nes"],
+      "requiredSystemFileIds": [],
+      "launch": {
+        "argsTemplate": "{game_path}",
+        "preferredFile": "fusion-launcher-smoke.nes"
+      }
+    },
+    {
+      "id": "roborun-nes",
+      "platform": "nes",
+      "title": "RoboRun",
+      "description": "Original open-source GPL-3.0 NES homebrew runner by jones-hm. Downloaded directly from the author's GitHub release.",
+      "contentMode": "downloadable",
+      "setupProfileId": "nes-mesen",
+      "metadata": {
+        "developer": "jones-hm",
+        "genres": ["Action", "Homebrew"],
+        "tags": ["open-source", "github-release"],
+        "externalIds": {
+          "github": "jones-hm/roborun-nes"
+        }
+      },
+      "downloads": [
+        {
+          "kind": "http",
+          "url": "https://github.com/jones-hm/roborun-nes/releases/download/1.1/RoboRun-NES_1.1.nes",
+          "sha256": "16a3c5d52d8f4d71322e2e24530c66292c015f5969d38ace826a9231eb5ea516",
+          "sizeBytes": 40976
+        }
+      ],
+      "expectedExtensions": [".nes"],
+      "requiredSystemFileIds": []
+    },
+    {
+      "id": "ucity-advance-gba",
+      "platform": "gba",
+      "title": "µCity Advance",
+      "description": "Open-source GPL-3.0 city-building game for Game Boy Advance by AntonioND. Downloaded directly from the author's GitHub release.",
+      "contentMode": "downloadable",
+      "setupProfileId": "gba-mgba",
+      "metadata": {
+        "developer": "AntonioND",
+        "genres": ["Simulation", "Homebrew"],
+        "tags": ["open-source", "github-release"],
+        "externalIds": {
+          "github": "AntonioND/ucity-advance"
+        }
+      },
+      "downloads": [
+        {
+          "kind": "http",
+          "url": "https://github.com/AntonioND/ucity-advance/releases/download/v1.0.3/ucity-advance-v1.0.3.gba",
+          "sha256": "069230a67939896c15cba86f0bffe31d12655597e2ac4cfed5b832e216b57bff",
+          "sizeBytes": 1933560
+        }
+      ],
+      "expectedExtensions": [".gba"],
+      "requiredSystemFileIds": []
+    },
+    {
+      "id": "skyland-gba",
+      "platform": "gba",
+      "title": "Skyland",
+      "description": "Polished open-source MPL-2.0 strategy/adventure homebrew for Game Boy Advance by Evan Bowman. Downloaded directly from the author's GitHub release.",
+      "contentMode": "downloadable",
+      "setupProfileId": "gba-mgba",
+      "metadata": {
+        "developer": "Evan Bowman",
+        "genres": ["Strategy", "Adventure", "Homebrew"],
+        "tags": ["open-source", "github-release"],
+        "externalIds": {
+          "github": "evanbowman/skyland-gba"
+        }
+      },
+      "downloads": [
+        {
+          "kind": "http",
+          "url": "https://github.com/evanbowman/skyland-gba/releases/download/2022.1.7.0/Skyland.gba",
+          "sha256": "516f185f206366f9d44ed2df0d8afb2bc0e2f7d3adc2a2ed6e686c6c3eb4ac90",
+          "sizeBytes": 3041425
+        }
+      ],
+      "expectedExtensions": [".gba"],
+      "requiredSystemFileIds": []
+    },
+    {
+      "id": "blind-jump-gba",
+      "platform": "gba",
+      "title": "Blind Jump",
+      "description": "Open-source MIT action-adventure homebrew for Game Boy Advance by Evan Bowman. Downloaded directly from the author's GitHub release.",
+      "contentMode": "downloadable",
+      "setupProfileId": "gba-mgba",
+      "metadata": {
+        "developer": "Evan Bowman",
+        "genres": ["Action", "Adventure", "Homebrew"],
+        "tags": ["open-source", "github-release"],
+        "externalIds": {
+          "github": "evanbowman/blind-jump-portable"
+        }
+      },
+      "downloads": [
+        {
+          "kind": "http",
+          "url": "https://github.com/evanbowman/blind-jump-portable/releases/download/2021.11.20.0/BlindJump.gba",
+          "sha256": "597d11e93567f14f97ba4bc44bf41691b5e0fbac8dd169e6b559bb9086a1739d",
+          "sizeBytes": 16565008
+        }
+      ],
+      "expectedExtensions": [".gba"],
+      "requiredSystemFileIds": []
+    },
+    {
+      "id": "sym-merged-gba",
+      "platform": "gba",
+      "title": "Sym Merged",
+      "description": "Openly distributed puzzle homebrew for Game Boy Advance by copyrat90. Downloaded directly from the author's GitHub release.",
+      "contentMode": "downloadable",
+      "setupProfileId": "gba-mgba",
+      "metadata": {
+        "developer": "copyrat90",
+        "genres": ["Puzzle", "Homebrew"],
+        "tags": ["homebrew", "github-release"],
+        "externalIds": {
+          "github": "copyrat90/sym_merged"
+        }
+      },
+      "downloads": [
+        {
+          "kind": "http",
+          "url": "https://github.com/copyrat90/sym_merged/releases/download/Day-44/sym_merged.gba",
+          "sha256": "5c142b35ee39d21ab4e126186231cf306dd2aab9455ae1199de41f36d5653665",
+          "sizeBytes": 2229972
+        }
+      ],
+      "expectedExtensions": [".gba"],
+      "requiredSystemFileIds": []
+    }
+  ]
+}

@@ -41,7 +41,7 @@ export interface InstallProgressEvent {
 
 export interface InstallResult {
   gameId: string;
-  status: 'ready' | 'needs_system_files' | 'error';
+  status: 'ready' | 'needs_system_files' | 'needs_game_file' | 'error';
   errorCode: string | null;
   message: string | null;
 }

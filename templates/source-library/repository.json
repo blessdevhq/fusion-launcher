@@ -5,7 +5,7 @@
     "version": "1.0.0",
     "schemaVersion": 3,
     "maintainer": "Replace with your name or community",
-    "homepageUrl": "https://example.com/fusion-launcher-source-library",
+    "homepageUrl": "https://blessdevhq.github.io/fusion-launcher/source-library-template/",
     "license": "Template metadata only. Replace with your source library license.",
     "trustLevel": "community",
     "updatedAt": "2026-06-03T00:00:00Z"
@@ -34,8 +34,8 @@
     {
       "id": "template_homebrew_http",
       "platform": "nes",
-      "title": "Template Homebrew HTTP Entry",
-      "description": "Replace this with a game that you have permission to distribute over HTTPS.",
+      "title": "Fusion Launcher Smoke Demo",
+      "description": "First-party demo cartridge image for validating a downloadable starter entry.",
       "contentMode": "downloadable",
       "setupProfileId": "nes-mesen",
       "metadata": {
@@ -48,16 +48,16 @@
       "downloads": [
         {
           "kind": "http",
-          "url": "https://example.com/releases/template-homebrew.nes",
-          "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-          "sizeBytes": 24576
+          "url": "https://blessdevhq.github.io/fusion-launcher/demo-content/fusion-launcher-smoke.nes",
+          "sha256": "566722254227d93e49751a866cf51ff7728917c9f04e970130d24850dce0a7f4",
+          "sizeBytes": 24592
         }
       ],
       "expectedExtensions": [".nes"],
       "requiredSystemFileIds": [],
       "launch": {
         "argsTemplate": "{game_path}",
-        "preferredFile": "template-homebrew.nes"
+        "preferredFile": "fusion-launcher-smoke.nes"
       }
     },
     {

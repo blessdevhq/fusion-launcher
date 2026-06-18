@@ -163,8 +163,12 @@ fn find_file_by_name(root: &Path, file_name: &str) -> Option<PathBuf> {
 }
 
 fn remove_dir_inside(root: &Path, target: &Path) -> Result<(), String> {
+    remove_directory_inside(root, target).map(|_| ())
+}
+
+pub(crate) fn remove_directory_inside(root: &Path, target: &Path) -> Result<bool, String> {
     if !target.exists() {
-        return Ok(());
+        return Ok(false);
     }
     let root = fs::canonicalize(root)
         .map_err(|error| format!("Failed to inspect emulator root: {error}"))?;
@@ -177,7 +181,8 @@ fn remove_dir_inside(root: &Path, target: &Path) -> Result<(), String> {
         ));
     }
     fs::remove_dir_all(target)
-        .map_err(|error| format!("Failed to replace emulator install folder: {error}"))
+        .map_err(|error| format!("Failed to remove emulator folder: {error}"))?;
+    Ok(true)
 }
 
 #[cfg(test)]
@@ -217,5 +222,30 @@ mod tests {
         let executable = resolve_executable(temp.path(), "Mesen.exe", "Mesen2").unwrap();
 
         assert!(executable.ends_with("Mesen.exe"));
+    }
+
+    #[test]
+    fn managed_directory_removal_refuses_outside_target() {
+        let temp = tempdir().unwrap();
+        let root = temp.path().join("Emulators");
+        let outside = temp.path().join("Outside");
+        fs::create_dir_all(&root).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+
+        let error = remove_directory_inside(&root, &outside).unwrap_err();
+
+        assert!(error.contains("outside app data"));
+        assert!(outside.exists());
+    }
+
+    #[test]
+    fn managed_directory_removal_reports_missing_target() {
+        let temp = tempdir().unwrap();
+        let root = temp.path().join("Emulators");
+        fs::create_dir_all(&root).unwrap();
+
+        let removed = remove_directory_inside(&root, &root.join("nes")).unwrap();
+
+        assert!(!removed);
     }
 }

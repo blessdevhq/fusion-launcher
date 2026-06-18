@@ -1,6 +1,10 @@
 pub(super) fn build_diagnostics_bundle(state: &AppState) -> Result<DiagnosticsBundle, String> {
     let health = build_health_report(state)?;
-    let downloads = state.torrents.list_downloads()?;
+    // Diagnostics must still generate when the torrent engine is unavailable.
+    let downloads = match state.torrents() {
+        Ok(torrents) => torrents.list_downloads()?,
+        Err(_) => Vec::new(),
+    };
     let log_path = logging::log_file_path(&state.data_dir);
     Ok(DiagnosticsBundle {
         generated_at: Utc::now().to_rfc3339(),

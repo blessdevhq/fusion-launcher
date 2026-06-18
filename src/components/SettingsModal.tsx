@@ -19,8 +19,9 @@ import { api } from '@/lib/api';
 import { isTauriRuntime } from '@/lib/runtime';
 import { getEmulatorPath, type AppSettings } from '@/lib/settings';
 import type { Locale } from '@/lib/i18n';
-import { countConfiguredEmulators, getEmulatorDraftState, hasEmulatorDraftChanges, updateDraftEmulatorPath } from '@/lib/settingsModalState';
-import { MVP_PLATFORMS, PLATFORM_LABELS, type MvpPlatform } from '@/types/platform';
+import { countConfiguredEmulators, getEmulatorDraftState, hasEmulatorDraftChanges } from '@/lib/settingsModalState';
+import { EMULATOR_MANAGER_PLATFORMS, PLATFORM_LABELS } from '@/types/platform';
+import type { InstallProgressEvent } from '@/types/emulatorProfile';
 import type { HealthReport, LibraryScrapeProgressEvent, PlatformSetupProfile, RepositoryPreview, RepositorySummary, ScreenScraperStatus, SteamGridDbStatus, TorrentDownloadRecord } from '@/types/repository';
 
 interface SettingsModalProps {
@@ -34,12 +35,14 @@ interface SettingsModalProps {
   sourcePreview: RepositoryPreview | null;
   onClose: () => void;
   onSave: (settings: AppSettings) => Promise<AppSettings>;
+  onReloadSettings: () => Promise<AppSettings>;
   onSourceUrlChange: (value: string) => void;
   onPreviewRepositoryUrl: () => Promise<void>;
   onConnectRepositoryUrl: () => Promise<void>;
   onConnectRepositoryFile: () => Promise<void>;
   onDisconnect: (repositoryId: string) => Promise<void>;
   onRefreshRepository: (repositoryId: string) => Promise<void>;
+  onManifestInstalled: () => Promise<void>;
   onRunHealth: () => Promise<void>;
   onCopyDiagnostics: () => Promise<void>;
   onOpenLogs: () => Promise<void>;
@@ -68,12 +71,14 @@ export function SettingsModal({
   sourcePreview,
   onClose,
   onSave,
+  onReloadSettings,
   onSourceUrlChange,
   onPreviewRepositoryUrl,
   onConnectRepositoryUrl,
   onConnectRepositoryFile,
   onDisconnect,
   onRefreshRepository,
+  onManifestInstalled,
   onRunHealth,
   onCopyDiagnostics,
   onOpenLogs,
@@ -84,9 +89,10 @@ export function SettingsModal({
   const [savedSettings, setSavedSettings] = useState<AppSettings>(settings);
   const [draftSettings, setDraftSettings] = useState<AppSettings>(settings);
   const [activeSection, setActiveSection] = useState<SettingsSection>('emulators');
-  const [activePlatform, setActivePlatform] = useState<MvpPlatform>(MVP_PLATFORMS[0]);
+  const [activeProfileId, setActiveProfileId] = useState('nes-mesen');
   const [busy, setBusy] = useState<BusyState>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [emulatorProgressByProfileId, setEmulatorProgressByProfileId] = useState<Record<string, InstallProgressEvent | undefined>>({});
   const [downloadRoot, setDownloadRoot] = useState('');
   const [savedDownloadRoot, setSavedDownloadRoot] = useState('');
   const [profiles, setProfiles] = useState<PlatformSetupProfile[]>([]);
@@ -104,6 +110,7 @@ export function SettingsModal({
   const [batchProgress, setBatchProgress] = useState<LibraryScrapeProgressEvent | null>(null);
   const modalRef = useRef<HTMLDivElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const activeEmulatorInstallRef = useRef<string | null>(null);
 
   useEffect(() => {
     setSavedSettings(settings);
@@ -173,9 +180,30 @@ export function SettingsModal({
     };
   }, []);
 
+  useEffect(() => {
+    if (!isTauriRuntime()) return undefined;
+    let cleanup: (() => void) | null = null;
+    const unlistenPromise = listen<InstallProgressEvent>('install:progress', (event) => {
+      const profileId = activeEmulatorInstallRef.current;
+      const progress = event.payload;
+      if (!profileId || progress.gameId) return;
+      setEmulatorProgressByProfileId((current) => ({
+        ...current,
+        [profileId]: progress
+      }));
+    });
+    void unlistenPromise.then((unlisten) => {
+      cleanup = unlisten;
+    });
+    return () => {
+      if (cleanup) cleanup();
+      else void unlistenPromise.then((unlisten) => unlisten());
+    };
+  }, []);
+
   const configuredCount = countConfiguredEmulators(draftSettings);
   const readyCount = useMemo(() => (
-    MVP_PLATFORMS.filter((platform) => (
+    EMULATOR_MANAGER_PLATFORMS.filter((platform) => (
       getEmulatorDraftState(draftSettings, savedSettings, platform, locale).tone === 'valid'
     )).length
   ), [draftSettings, locale, savedSettings]);
@@ -187,25 +215,68 @@ export function SettingsModal({
     download.status === 'resolving' || download.status === 'downloading' || download.status === 'cancelling'
   )).length;
 
-  const updateEmulatorPath = (platform: MvpPlatform, emulatorPath: string) => {
-    setDraftSettings((currentSettings) => updateDraftEmulatorPath(currentSettings, platform, emulatorPath));
-    setActivePlatform(platform);
-    setMessage(null);
+  const refreshSettingsFromBackend = async () => {
+    const nextSettings = await onReloadSettings();
+    setSavedSettings(nextSettings);
+    setDraftSettings(nextSettings);
+    return nextSettings;
   };
 
-  const browseForEmulator = async (platform: MvpPlatform) => {
-    setBusy(`browse:${platform}`);
-    setActivePlatform(platform);
+  const installProfileEmulator = async (profile: PlatformSetupProfile, targetDir?: string) => {
+    setBusy(`install:${profile.id}`);
+    setActiveProfileId(profile.id);
+    activeEmulatorInstallRef.current = profile.id;
+    setEmulatorProgressByProfileId((current) => ({
+      ...current,
+      [profile.id]: {
+        gameId: '',
+        stage: 'emulator',
+        message: t.installProgress.emulator,
+        percent: 5
+      }
+    }));
+    setMessage(null);
+    try {
+      await api.installProfileEmulator(profile.id, targetDir);
+      await refreshSettingsFromBackend();
+      setMessage(t.settings.emulators.installSuccess(profile.emulator.emulatorName));
+    } catch (error) {
+      setMessage(t.settings.emulators.installError(profile.emulator.emulatorName, error));
+    } finally {
+      activeEmulatorInstallRef.current = null;
+      setEmulatorProgressByProfileId((current) => ({ ...current, [profile.id]: undefined }));
+      setBusy(null);
+    }
+  };
+
+  const installProfileEmulatorTo = async (profile: PlatformSetupProfile) => {
+    const selected = isTauriRuntime()
+      ? await open({
+        title: `Download ${profile.emulator.emulatorName} to...`,
+        multiple: false,
+        directory: true
+      })
+      : `preview://Selected/Emulators/${profile.id}`;
+    if (typeof selected !== 'string') return;
+    await installProfileEmulator(profile, selected);
+  };
+
+  const selectProfileEmulator = async (profile: PlatformSetupProfile) => {
+    setBusy(`select:${profile.id}`);
+    setActiveProfileId(profile.id);
     setMessage(null);
     try {
       if (!isTauriRuntime()) {
-        setMessage(t.settings.messages.nativeFilePickerUnavailable);
+        const previewPath = `preview://Emulators/${profile.platform}/${profile.id}/${profile.emulator.executableName ?? `${profile.platform}.exe`}`;
+        await api.selectProfileEmulator(profile.id, previewPath);
+        await refreshSettingsFromBackend();
+        setMessage(t.settings.emulators.selectSuccess(profile.emulator.emulatorName));
         return;
       }
 
-      const currentPath = getEmulatorPath(draftSettings, platform);
+      const currentPath = getEmulatorPath(draftSettings, profile.platform);
       const selected = await open({
-        title: t.settings.emulators.pickerTitle(PLATFORM_LABELS[platform]),
+        title: t.settings.emulators.pickerTitle(PLATFORM_LABELS[profile.platform]),
         multiple: false,
         directory: false,
         defaultPath: currentPath || undefined,
@@ -218,10 +289,45 @@ export function SettingsModal({
       });
 
       if (typeof selected === 'string') {
-        updateEmulatorPath(platform, selected);
+        await api.selectProfileEmulator(profile.id, selected);
+        await refreshSettingsFromBackend();
+        setMessage(t.settings.emulators.selectSuccess(profile.emulator.emulatorName));
       }
     } catch (error) {
-      setMessage(t.settings.messages.browseError(error));
+      setMessage(t.settings.emulators.selectError(profile.emulator.emulatorName, error));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const removeProfileEmulator = async (profile: PlatformSetupProfile) => {
+    const confirmMessage = profile.emulator.installMode === 'downloadable'
+      ? t.settings.emulators.removeManagedConfirm(profile.emulator.emulatorName, PLATFORM_LABELS[profile.platform])
+      : t.settings.emulators.forgetManualConfirm(profile.emulator.emulatorName, PLATFORM_LABELS[profile.platform]);
+    if (!window.confirm(confirmMessage)) return;
+
+    setBusy(`remove:${profile.id}`);
+    setActiveProfileId(profile.id);
+    setMessage(null);
+    try {
+      await api.removeProfileEmulator(profile.id);
+      await refreshSettingsFromBackend();
+      setMessage(t.settings.emulators.removeSuccess(profile.emulator.emulatorName));
+    } catch (error) {
+      setMessage(t.settings.emulators.removeError(profile.emulator.emulatorName, error));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const openProfileFolder = async (profile: PlatformSetupProfile) => {
+    setBusy(`open:${profile.id}`);
+    setActiveProfileId(profile.id);
+    setMessage(null);
+    try {
+      await api.openEmulatorFolder(profile.platform);
+    } catch (error) {
+      setMessage(t.settings.emulators.openFolderError(profile.emulator.emulatorName, error));
     } finally {
       setBusy(null);
     }
@@ -387,8 +493,8 @@ export function SettingsModal({
           <div className="mt-auto border-t border-white/10 pt-5">
             <div className="text-xs font-semibold text-white/[0.42]">{t.settings.readiness.title}</div>
             <div className="mt-3 grid gap-2 text-xs text-white/[0.54]">
-              <MetricLine label={t.settings.readiness.configured} value={`${configuredCount}/${MVP_PLATFORMS.length}`} />
-              <MetricLine label={t.settings.readiness.ready} value={`${readyCount}/${MVP_PLATFORMS.length}`} />
+              <MetricLine label={t.settings.readiness.configured} value={`${configuredCount}/${EMULATOR_MANAGER_PLATFORMS.length}`} />
+              <MetricLine label={t.settings.readiness.ready} value={`${readyCount}/${EMULATOR_MANAGER_PLATFORMS.length}`} />
               <MetricLine label={t.settings.readiness.sources} value={String(repositories.length)} />
               <MetricLine label={t.settings.readiness.unsaved} value={hasUnsavedChanges ? t.common.yes : t.common.no} />
             </div>
@@ -457,14 +563,17 @@ export function SettingsModal({
 
             {activeSection === 'emulators' && (
               <EmulatorsSection
-                draftSettings={draftSettings}
-                savedSettings={savedSettings}
-                activePlatform={activePlatform}
+                settings={draftSettings}
+                profiles={profiles}
+                activeProfileId={activeProfileId}
                 busy={busy}
-                locale={locale}
-                onFocusPlatform={setActivePlatform}
-                onPathChange={updateEmulatorPath}
-                onBrowse={browseForEmulator}
+                progressByProfileId={emulatorProgressByProfileId}
+                onFocusProfile={setActiveProfileId}
+                onInstall={installProfileEmulator}
+                onInstallTo={installProfileEmulatorTo}
+                onSelect={selectProfileEmulator}
+                onRemove={removeProfileEmulator}
+                onOpenFolder={openProfileFolder}
               />
             )}
 
@@ -503,6 +612,7 @@ export function SettingsModal({
                 onConnectRepositoryFile={onConnectRepositoryFile}
                 onRefreshRepository={onRefreshRepository}
                 onDisconnect={onDisconnect}
+                onManifestInstalled={onManifestInstalled}
               />
             )}
 

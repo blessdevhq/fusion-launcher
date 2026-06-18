@@ -1,4 +1,3 @@
-import type { MvpPlatform } from '@/types/platform';
 import type { UpdateCheckError, UpdateCheckReport } from '@/types/repository';
 
 export type BusyAction = string | null;
@@ -10,5 +9,5 @@ export interface UpdatePanelState {
   error: UpdateCheckError | null;
 }
 
-export type BusyState = `browse:${MvpPlatform}` | 'save' | null;
+export type BusyState = string | null;
 export type SettingsSection = 'general' | 'emulators' | 'metadata' | 'sources' | 'storage' | 'diagnostics' | 'updates';

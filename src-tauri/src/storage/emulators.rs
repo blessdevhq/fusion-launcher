@@ -78,11 +78,15 @@ impl RepositoryStore {
         let Some(profile) = setup_profiles::get_default_platform_setup_profile(platform) else {
             return Ok(false);
         };
+        self.delete_profile_emulator_config(&profile.id)
+    }
+
+    pub fn delete_profile_emulator_config(&self, profile_id: &str) -> Result<bool, String> {
         let changed = self
             .conn
             .execute(
                 "DELETE FROM profile_emulator_configs WHERE profile_id = ?1",
-                params![profile.id],
+                params![profile_id],
             )
             .map_err(|error| error.to_string())?;
         Ok(changed > 0)

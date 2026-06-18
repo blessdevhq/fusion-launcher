@@ -9,18 +9,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout source library
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           path: source-library
 
       - name: Checkout Fusion Launcher validator
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
-          repository: YOUR_ORG_OR_USER/fusion-launcher
+          repository: blessdevhq/fusion-launcher
           path: fusion-launcher-validator
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm

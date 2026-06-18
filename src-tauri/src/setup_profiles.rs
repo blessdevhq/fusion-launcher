@@ -120,7 +120,10 @@ pub fn list_platform_setup_profiles() -> Vec<PlatformSetupProfile> {
             "switch-manual",
             "switch",
             "Nintendo Switch / Manual Emulator",
-            emulator_manual("Switch emulator", &["Ryujinx.exe", "suyu.exe"]),
+            emulator_manual(
+                "Eden-compatible Switch emulator",
+                &["eden.exe", "eden-cli.exe", "Ryujinx.exe", "suyu.exe"],
+            ),
             game_files(&[".nsp", ".xci", ".nca"], true, &["*.nsp", "*.xci"], &[]),
             vec![
                 system_file(
@@ -402,12 +405,17 @@ mod tests {
             let profile = get_default_platform_setup_profile(platform).unwrap();
             assert_eq!(profile.emulator.install_mode, "downloadable");
         }
+        let switch = get_default_platform_setup_profile("switch").unwrap();
+        assert_eq!(switch.emulator.install_mode, "manual");
+        assert_eq!(switch.emulator.executable_name.as_deref(), Some("eden.exe"));
         assert_eq!(
-            get_default_platform_setup_profile("switch")
-                .unwrap()
-                .emulator
-                .install_mode,
-            "manual"
+            switch.emulator.executable_candidates,
+            vec![
+                "eden.exe".to_string(),
+                "eden-cli.exe".to_string(),
+                "Ryujinx.exe".to_string(),
+                "suyu.exe".to_string()
+            ]
         );
     }
 

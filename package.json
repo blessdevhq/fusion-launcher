@@ -1,17 +1,17 @@
 {
   "name": "fusion-launcher",
-  "version": "0.2.0",
-  "description": "Source-driven Windows launcher for retro and console game libraries.",
+  "version": "0.3.0",
+  "description": "Source-driven Windows launcher for retro game libraries and emulator setup.",
   "author": "Fusion Launcher",
   "license": "GPL-3.0-or-later",
   "private": true,
-  "homepage": "https://github.com/MrBeastie/fusion-launcher#readme",
+  "homepage": "https://github.com/blessdevhq/fusion-launcher#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/MrBeastie/fusion-launcher.git"
+    "url": "git+https://github.com/blessdevhq/fusion-launcher.git"
   },
   "bugs": {
-    "url": "https://github.com/MrBeastie/fusion-launcher/issues"
+    "url": "https://github.com/blessdevhq/fusion-launcher/issues"
   },
   "type": "module",
   "scripts": {
@@ -38,7 +38,9 @@
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
-    "tauri:build:vs": "scripts\\tauri-build-vs.cmd"
+    "tauri:build:vs": "scripts\\tauri-build-vs.cmd",
+    "sidecar:build": "node scripts/build-sidecar.mjs",
+    "tauri:build:bundled": "tauri build --config src-tauri/tauri.sidecar.conf.json"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.9.0",
@@ -63,5 +65,8 @@
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.17",
     "typescript": "^5.7.0"
+  },
+  "overrides": {
+    "postcss": "$postcss"
   }
 }

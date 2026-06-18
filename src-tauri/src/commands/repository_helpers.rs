@@ -35,15 +35,26 @@ pub(super) async fn fetch_repository_schema(
     let parsed = validate_repository_url(url, allow_dev_http)?;
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(12))
+        .user_agent(crate::net::HTTP_USER_AGENT)
         .build()
         .map_err(|error| format!("Failed to initialize repository client: {error}"))?;
     let response = client
         .get(parsed)
         .send()
         .await
-        .map_err(|error| format!("Failed to fetch repository: {error}"))?
+        .map_err(|error| {
+            format!(
+                "Failed to fetch repository: {}",
+                crate::net::format_reqwest_error("source library", &error)
+            )
+        })?
         .error_for_status()
-        .map_err(|error| format!("Repository returned an error: {error}"))?;
+        .map_err(|error| {
+            format!(
+                "Repository returned an error: {}",
+                crate::net::format_reqwest_error("source library", &error)
+            )
+        })?;
     let repo = response
         .json::<RepositorySchema>()
         .await

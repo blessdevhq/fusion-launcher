@@ -22,7 +22,30 @@ pub fn log_file_path(data_dir: &Path) -> PathBuf {
 
 pub fn initialize(data_dir: &Path) {
     let _ = fs::create_dir_all(log_dir(data_dir));
+    init_tracing(data_dir);
     log_event(data_dir, "app_start", &[]);
+}
+
+/// Route the torrent engine's internal `tracing` output (DHT bootstrap, tracker
+/// announces, peer connections) to `logs/torrent.log` so download issues can be
+/// diagnosed. Without a subscriber these logs are silently dropped. Best-effort:
+/// failures here must never stop the app from starting. Override the verbosity
+/// with the `RUST_LOG` environment variable.
+fn init_tracing(data_dir: &Path) {
+    use std::sync::Once;
+    use tracing_subscriber::{fmt, prelude::*, EnvFilter};
+
+    static INIT: Once = Once::new();
+    INIT.call_once(|| {
+        let appender = tracing_appender::rolling::never(log_dir(data_dir), "torrent.log");
+        let filter = EnvFilter::try_from_default_env()
+            .unwrap_or_else(|_| EnvFilter::new("info,fusion_launcher=debug"));
+        let layer = fmt::layer()
+            .with_ansi(false)
+            .with_writer(appender)
+            .with_filter(filter);
+        let _ = tracing_subscriber::registry().with(layer).try_init();
+    });
 }
 
 pub fn log_event(data_dir: &Path, event: &str, fields: &[(&str, &str)]) {

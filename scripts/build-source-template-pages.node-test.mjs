@@ -35,12 +35,12 @@ describe('source template Pages artifact builder', () => {
     const landingHtml = await readFile(landingPath, 'utf8');
 
     await access(appIconPath);
-    assert.equal(manifest.publicUrl, 'https://mrbeastie.github.io/fusion-launcher/source-library-template/repository.json');
+    assert.equal(manifest.publicUrl, 'https://blessdevhq.github.io/fusion-launcher/source-library-template/repository.json');
     assert.equal(manifest.trustLevel, 'community');
     assert.equal(manifest.templateId, repository.metadata.id);
     assert.equal(manifest.catalogCount, repository.catalog.length);
     assert.match(indexHtml, /repository\.json<\/a> \| <a href="\.\/README\.md">README\.md<\/a> \|/);
-    assert.match(landingHtml, /retro and console games on PC/i);
+    assert.match(landingHtml, /retro game libraries on PC/i);
     assert.match(landingHtml, /Content-neutral by design/);
     assert.match(landingHtml, /\.\/fusion\/app-icon\.png/);
     assert.doesNotMatch(indexHtml, /В/);

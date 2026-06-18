@@ -1,11 +1,11 @@
 [package]
 name = "fusion-launcher"
-version = "0.2.0"
-description = "Source-driven Windows launcher for retro and console games"
+version = "0.3.0"
+description = "Source-driven Windows launcher for retro game libraries"
 authors = ["Fusion Launcher"]
 license = "GPL-3.0-or-later"
-repository = "https://github.com/MrBeastie/fusion-launcher"
-homepage = "https://github.com/MrBeastie/fusion-launcher#readme"
+repository = "https://github.com/blessdevhq/fusion-launcher"
+homepage = "https://github.com/blessdevhq/fusion-launcher#readme"
 edition = "2021"
 
 [lib]
@@ -17,13 +17,13 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 chrono = { version = "0.4", features = ["serde"] }
+async-trait = "0.1"
 crc32fast = "1.4"
 fs2 = "0.4"
 glob = "0.3"
 hex = "0.4"
-librqbit = "8.1.1"
 md-5 = "0.10"
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "system-proxy"] }
 rusqlite = { version = "0.32", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -34,9 +34,13 @@ shlex = "1.3"
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
+tauri-plugin-shell = "2"
 tauri-plugin-store = "2"
 tauri-plugin-updater = "2"
 tokio = { version = "1", features = ["fs", "process", "sync", "time"] }
+tracing = "0.1"
+tracing-appender = "0.2"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 url = "2"
 zip = { version = "2.4", default-features = false, features = ["deflate"] }
 

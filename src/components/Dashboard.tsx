@@ -13,6 +13,7 @@ import { ExploreScreen } from '@/components/dashboard/ExploreScreen';
 import { HomeScreen } from '@/components/dashboard/HomeScreen';
 import { LibraryScreen } from '@/components/dashboard/LibraryScreen';
 import { TopChrome } from '@/components/dashboard/TopChrome';
+import { ACTIVE_DOWNLOAD_STATUSES } from '@/components/dashboard/constants';
 import type { BusyAction, UpdatePanelState } from '@/components/dashboard/types';
 import { composeHomeRails, cssEscape, normalizeUpdateCheckError, safeDecodeURIComponent } from '@/components/dashboard/utils';
 import { AppShell } from '@/components/shell/AppShell';
@@ -20,6 +21,7 @@ import { collectionTargetForId, type CollectionTarget } from '@/components/shell
 import { useGamepad } from '@/hooks/useGamepad';
 import { buildGameLibraryItems, searchAndSortLibraryItems, type GameLibraryItem, type LibraryFilter, type LibrarySort } from '@/lib/libraryStatus';
 import { api } from '@/lib/api';
+import { displayProductText } from '@/lib/brandText';
 import { isDirectGameDownload } from '@/lib/downloadActions';
 import { getUiText } from '@/lib/i18n';
 import { normalizeLaunchFailure } from '@/lib/launchErrors';
@@ -167,9 +169,9 @@ export function Dashboard({
     [libraryStatuses, settings, storeCatalog]
   );
   const itemsByGameId = useMemo(() => new Map(items.map((item) => [item.game.id, item])), [items]);
-  const activeDownloadItems = useMemo(
-    () => items.filter((item) => item.isDownloading || item.isPaused || item.hasError),
-    [items]
+  const activeDownloadsCount = useMemo(
+    () => downloads.filter((download) => ACTIVE_DOWNLOAD_STATUSES.includes(download.status)).length,
+    [downloads]
   );
   const selectedGame = selectedGameId ? storeCatalog.find((game) => game.id === selectedGameId) ?? null : null;
   const visibleLibraryItems = useMemo(
@@ -196,6 +198,14 @@ export function Dashboard({
     setSettingsMessage(null);
     await refreshLauncherData();
     return savedSettings;
+  };
+
+  const reloadSettings = async () => {
+    const nextSettings = await loadSettings();
+    setSettings(nextSettings);
+    setSettingsMessage(null);
+    await refreshLauncherData();
+    return nextSettings;
   };
 
   const runAction = async (label: string, action: () => Promise<unknown>) => {
@@ -419,6 +429,41 @@ export function Dashboard({
     setSelectedGameId(item.game.id);
   };
 
+  const copyDownloadPath = (downloadId: string) => {
+    const path = downloads.find((download) => download.gameId === downloadId)?.saveDir;
+    if (path) void navigator.clipboard?.writeText(path);
+  };
+
+  const deleteDownload = async (downloadId: string) => {
+    const record = downloads.find((download) => download.gameId === downloadId);
+    const item = itemsByGameId.get(downloadId);
+    const title = item?.game.title ?? record?.displayName ?? downloadId;
+    if (!window.confirm(t.dashboard.downloads.deleteConfirm(displayProductText(title)))) return;
+    await runAction(`delete:${downloadId}`, () => api.removeDownload(downloadId, true));
+  };
+
+  const chooseDownloadTargetDir = async (downloadId: string) => {
+    if (!isTauriRuntime()) return `preview://Selected/Downloads/${downloadId}`;
+    const selected = await open({
+      title: 'Download to...',
+      multiple: false,
+      directory: true
+    });
+    return typeof selected === 'string' ? selected : null;
+  };
+
+  const retryDownloadTo = async (gameId: string) => {
+    const targetDir = await chooseDownloadTargetDir(gameId);
+    if (!targetDir) return;
+    const item = itemsByGameId.get(gameId);
+    const record = downloads.find((download) => download.gameId === gameId) ?? item?.download;
+    await runAction(`resume:${gameId}`, () => (
+      record?.subjectType === 'asset' || record?.magnetUri.startsWith('direct:asset:')
+        ? api.downloadAsset(gameId, targetDir)
+        : api.startGameDownload(gameId, targetDir)
+    ));
+  };
+
   const openLibraryCollection = useCallback((target: CollectionTarget) => {
     setLibraryFilter(target.filter);
     setLibrarySearch(target.query);
@@ -470,6 +515,7 @@ export function Dashboard({
       const [downloadAction] = rest;
       if (!gameId) return;
       if (downloadAction === 'pause') void runAction(`pause:${gameId}`, () => api.pauseDownload(gameId));
+      if (downloadAction === 'retry-to') void retryDownloadTo(gameId);
       if (downloadAction === 'resume' || downloadAction === 'retry') {
         const item = itemsByGameId.get(gameId);
         void runAction(`resume:${gameId}`, () => (
@@ -479,6 +525,9 @@ export function Dashboard({
         ));
       }
       if (downloadAction === 'cancel') void runAction(`cancel:${gameId}`, () => api.cancelDownload(gameId));
+      if (downloadAction === 'copy-path') copyDownloadPath(gameId);
+      if (downloadAction === 'open-folder') void runAction(`open-folder:${gameId}`, () => api.openDownloadFolder(gameId));
+      if (downloadAction === 'delete') void deleteDownload(gameId);
       if (downloadAction === 'play') {
         const item = itemsByGameId.get(gameId);
         if (item) void launchItem(item);
@@ -508,7 +557,7 @@ export function Dashboard({
     }
     if (focusId === 'downloads:open') setActiveView('downloads');
     if (focusId === 'library:open') setActiveView('library');
-  }, [checkAppUpdate, executePrimaryAction, installAppUpdate, itemsByGameId, launchItem, openLibraryCollection, refreshAll, runAction, setActiveView, setSelectedGameId]);
+  }, [checkAppUpdate, copyDownloadPath, deleteDownload, executePrimaryAction, installAppUpdate, itemsByGameId, launchItem, openLibraryCollection, refreshAll, runAction, setActiveView, setSelectedGameId]);
 
   useEffect(() => {
     document.querySelectorAll<HTMLElement>('[data-focus-active="true"]').forEach((element) => {
@@ -544,7 +593,7 @@ export function Dashboard({
       <AppShell
         activeView={activeView}
         repositoriesCount={storeRepositories.length}
-        activeDownloadsCount={activeDownloadItems.length}
+        activeDownloadsCount={activeDownloadsCount}
         onNavigate={setActiveView}
         onOpenSettings={() => {
           setNotificationsOpen(false);
@@ -614,12 +663,17 @@ export function Dashboard({
               const item = itemsByGameId.get(gameId);
               const record = downloads.find((download) => download.gameId === gameId) ?? item?.download;
               return runAction(`resume:${gameId}`, () => (
-                isDirectGameDownload(item?.game, record)
+                record?.subjectType === 'asset' || record?.magnetUri.startsWith('direct:asset:')
+                  ? api.downloadAsset(gameId)
+                  : isDirectGameDownload(item?.game, record)
                   ? api.startGameDownload(gameId)
                   : api.resumeDownload(gameId)
               ));
             }}
+            onResumeTo={retryDownloadTo}
             onCancel={(gameId) => runAction(`cancel:${gameId}`, () => api.cancelDownload(gameId))}
+            onOpenFolder={(gameId) => runAction(`open-folder:${gameId}`, () => api.openDownloadFolder(gameId))}
+            onDeleteFiles={deleteDownload}
             onPlay={(item) => void launchItem(item)}
             onFocus={setFocusedItemId}
           />
@@ -693,12 +747,14 @@ export function Dashboard({
             sourcePreview={sourcePreview}
             onClose={() => setSettingsOpen(false)}
             onSave={persistSettings}
+            onReloadSettings={reloadSettings}
             onSourceUrlChange={updateSourceUrl}
             onPreviewRepositoryUrl={previewRepositoryUrl}
             onConnectRepositoryUrl={connectRepositoryUrl}
             onConnectRepositoryFile={connectRepositoryFile}
             onDisconnect={disconnect}
             onRefreshRepository={refreshRepository}
+            onManifestInstalled={refreshLauncherData}
             onRunHealth={runHealthCheck}
             onCopyDiagnostics={copyDiagnostics}
             onOpenLogs={openLogs}

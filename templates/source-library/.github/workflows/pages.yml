@@ -26,18 +26,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout source library
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           path: source-library
 
       - name: Checkout Fusion Launcher validator
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
-          repository: YOUR_ORG_OR_USER/fusion-launcher
+          repository: blessdevhq/fusion-launcher
           path: fusion-launcher-validator
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
@@ -60,10 +60,10 @@ jobs:
           cp source-library/CONTRIBUTING.md pages/CONTRIBUTING.md
 
       - name: Configure Pages
-        uses: actions/configure-pages@v5
+        uses: actions/configure-pages@v6
 
       - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@v5
         with:
           path: pages
 
@@ -76,4 +76,4 @@ jobs:
     steps:
       - name: Deploy to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5

@@ -215,6 +215,44 @@ fn stores_and_updates_emulator_configs() {
 }
 
 #[test]
+fn deletes_only_the_requested_profile_emulator_config() {
+    let dir = tempdir().unwrap();
+    let store = RepositoryStore::open(&dir.path().join("fusion-launcher.db")).unwrap();
+
+    store
+        .upsert_profile_emulator_config(
+            "ps2-pcsx2",
+            "ps2",
+            Some("C:/Managed/pcsx2-qt.exe"),
+            "valid",
+            Some("nightly"),
+            Some("-fullscreen -- {game_path}"),
+        )
+        .unwrap();
+    store
+        .upsert_profile_emulator_config(
+            "ps2-manual",
+            "ps2",
+            Some("D:/Tools/PCSX2/pcsx2-qt.exe"),
+            "valid",
+            None,
+            Some("-fullscreen -- \"{game_path}\""),
+        )
+        .unwrap();
+
+    assert!(store.delete_profile_emulator_config("ps2-pcsx2").unwrap());
+
+    assert!(store
+        .get_profile_emulator_config("ps2-pcsx2")
+        .unwrap()
+        .is_none());
+    assert!(store
+        .get_profile_emulator_config("ps2-manual")
+        .unwrap()
+        .is_some());
+}
+
+#[test]
 fn migrates_legacy_emulator_configs_to_default_profiles() {
     let dir = tempdir().unwrap();
     let store = RepositoryStore::open(&dir.path().join("fusion-launcher.db")).unwrap();

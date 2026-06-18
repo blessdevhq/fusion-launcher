@@ -3,11 +3,12 @@ import { cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { validateSourceLibraryObject } from './validate-source-library.mjs';
 
-const PUBLIC_TEMPLATE_URL = 'https://mrbeastie.github.io/fusion-launcher/source-library-template/repository.json';
-const PUBLIC_BASE_URL = 'https://mrbeastie.github.io/fusion-launcher';
-const GITHUB_REPO_URL = 'https://github.com/MrBeastie/fusion-launcher';
+const PUBLIC_TEMPLATE_URL = 'https://blessdevhq.github.io/fusion-launcher/source-library-template/repository.json';
+const PUBLIC_BASE_URL = 'https://blessdevhq.github.io/fusion-launcher';
+const GITHUB_REPO_URL = 'https://github.com/blessdevhq/fusion-launcher';
 const TEMPLATE_DIR = path.resolve('templates/source-library');
 const FUSION_ASSET_DIR = path.resolve('public/fusion');
+const DEMO_CONTENT_DIR = path.resolve('public/demo-content');
 const DEFAULT_OUTPUT_DIR = path.resolve('out');
 const CHECK_OUTPUT_DIR = path.resolve('.tmp/source-library-template-pages-check');
 
@@ -75,6 +76,7 @@ async function buildSourceTemplateArtifact(outputRoot) {
 
 async function buildLandingPage(outputRoot, manifest) {
   await cp(FUSION_ASSET_DIR, path.join(outputRoot, 'fusion'), { recursive: true, force: true });
+  await cp(DEMO_CONTENT_DIR, path.join(outputRoot, 'demo-content'), { recursive: true, force: true });
   await writeFile(path.join(outputRoot, 'index.html'), renderLandingHtml(manifest));
 }
 
@@ -89,10 +91,10 @@ function renderLandingHtml(manifest) {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Fusion Launcher - source-driven retro and console launcher</title>
-  <meta name="description" content="Fusion Launcher is a source-driven Windows launcher for retro and console games on PC. Connect sources, install allowed content, set up emulators, and play from one desktop app.">
+  <title>Fusion Launcher - source-driven retro library launcher</title>
+  <meta name="description" content="Fusion Launcher is a source-driven Windows launcher for retro game libraries on PC. Connect sources, install allowed content, set up emulators, and play from one desktop app.">
   <meta property="og:title" content="Fusion Launcher">
-  <meta property="og:description" content="Source-driven Windows launcher for retro and console games on PC.">
+  <meta property="og:description" content="Source-driven Windows launcher for retro game libraries on PC.">
   <meta property="og:image" content="${ogImageUrl}">
   <meta name="theme-color" content="#050707">
   <style>
@@ -584,7 +586,7 @@ function renderLandingHtml(manifest) {
     <section class="hero">
       <div class="hero-copy">
         <div class="eyebrow">Source libraries + guided emulator setup</div>
-        <h1>Organize and launch <span class="gradient-word">retro & console</span> libraries from one PC launcher.</h1>
+        <h1>Organize and launch <span class="gradient-word">retro game</span> libraries from one PC launcher.</h1>
         <p class="lead">Fusion Launcher connects sources, tracks allowed install flows, prepares emulator requirements, enriches artwork, and launches everything from a local-first Windows desktop app.</p>
         <div class="actions">
           <a class="button primary" href="${githubUrl}">View on GitHub</a>
@@ -613,7 +615,7 @@ function renderLandingHtml(manifest) {
           </aside>
           <div class="app-area">
             <div class="app-top">
-              <div><div class="app-kicker">source connected</div><div class="app-title">Console library</div></div>
+              <div><div class="app-kicker">source connected</div><div class="app-title">Retro library</div></div>
               <div class="status-pill">Local-first</div>
             </div>
             <div class="game-grid">
@@ -645,7 +647,7 @@ function renderLandingHtml(manifest) {
       </div>
       <div class="flow-grid">
         <div class="step"><b>01</b><strong>Connect</strong><span>Paste or import a source-library URL.</span></div>
-        <div class="step"><b>02</b><strong>Browse</strong><span>Explore retro and console catalogs in one launcher.</span></div>
+        <div class="step"><b>02</b><strong>Browse</strong><span>Explore retro game catalogs in one launcher.</span></div>
         <div class="step"><b>03</b><strong>Install</strong><span>Track files described by the connected source.</span></div>
         <div class="step"><b>04</b><strong>Set up</strong><span>Prepare emulator paths and required system files.</span></div>
         <div class="step"><b>05</b><strong>Launch</strong><span>Start games after readiness checks pass.</span></div>

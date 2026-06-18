@@ -386,6 +386,8 @@ pub struct GameDownloadStartReport {
 #[serde(rename_all = "camelCase")]
 pub struct TorrentDownloadRecord {
     pub game_id: String,
+    pub subject_type: Option<String>,
+    pub display_name: Option<String>,
     pub magnet_uri: String,
     pub save_dir: String,
     pub status: String,
@@ -432,6 +434,17 @@ pub struct ProfileEmulatorConfig {
     pub last_validated_at: Option<String>,
     pub version: Option<String>,
     pub launch_args_template: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileEmulatorRemovalReport {
+    pub profile_id: String,
+    pub platform: String,
+    pub removed_config: bool,
+    pub deleted_files: bool,
+    pub removed_path: Option<String>,
+    pub message: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]

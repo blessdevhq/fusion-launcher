@@ -3,6 +3,7 @@ import { useI18n } from '@/components/I18nProvider';
 import { displayProductText } from '@/lib/brandText';
 import { sourceTrustLabel } from '@/lib/sourceTrust';
 import type { RepositoryPreview, RepositorySummary } from '@/types/repository';
+import { ManifestInstallCard } from './ManifestInstallCard';
 import { PUBLIC_SOURCE_TEMPLATE_URL } from './constants';
 import type { BusyAction } from './types';
 import { formatDateTime, shortHash, trustBadgeClass } from './utils';
@@ -17,7 +18,8 @@ export function SourcesSection({
   onConnectRepositoryUrl,
   onConnectRepositoryFile,
   onRefreshRepository,
-  onDisconnect
+  onDisconnect,
+  onManifestInstalled
 }: {
   repositories: RepositorySummary[];
   busyAction: BusyAction;
@@ -29,6 +31,7 @@ export function SourcesSection({
   onConnectRepositoryFile: () => Promise<void>;
   onRefreshRepository: (repositoryId: string) => Promise<void>;
   onDisconnect: (repositoryId: string) => Promise<void>;
+  onManifestInstalled: () => Promise<void>;
 }) {
   const { t } = useI18n();
   const sourceBusy = busyAction === 'repo-preview-url' || busyAction === 'repo-connect-url' || busyAction === 'repo-file';
@@ -71,7 +74,7 @@ export function SourcesSection({
             value={sourceUrl}
             onChange={(event) => onSourceUrlChange(event.target.value)}
             className="h-11 min-w-0 rounded-sm border border-white/10 bg-black/40 px-3 text-sm text-white/80 outline-none transition placeholder:text-white/25 focus:border-white/60"
-            placeholder="https://example.com/fusion-launcher-repository.json"
+            placeholder="https://blessdevhq.github.io/fusion-launcher/source-library-template/repository.json"
             data-testid="settings-source-url"
           />
           <button
@@ -105,6 +108,8 @@ export function SourcesSection({
 
         {sourcePreview && <SourcePreviewCard preview={sourcePreview} />}
       </div>
+
+      <ManifestInstallCard onInstalled={onManifestInstalled} />
 
       <div className="rounded-sm border border-white/10 bg-black/[0.28] p-4">
         <div className="mb-3 flex items-center justify-between gap-3">

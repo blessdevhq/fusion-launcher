@@ -16,6 +16,7 @@ import type {
   OnboardingState,
   PlatformSetupProfile,
   ProfileEmulatorConfig,
+  ProfileEmulatorRemovalReport,
   RepairLibraryReport,
   RepositoryPreview,
   RepositorySummary,
@@ -43,6 +44,14 @@ import {
 } from './setupProfiles.ts';
 
 const now = '2026-05-26T08:00:00.000Z';
+const PREVIEW_GAMES_ROOT = 'preview://Games';
+const PREVIEW_EMULATORS_ROOT = 'preview://Emulators';
+const PREVIEW_SYSTEM_ROOT = 'preview://System';
+
+interface PreviewInstallGameOptions {
+  gameTargetDir?: string;
+  emulatorTargetDir?: string;
+}
 
 const repository: RepositorySummary = {
   id: 'fusion-launcher-preview',
@@ -53,7 +62,7 @@ const repository: RepositorySummary = {
   catalogCount: 13,
   systemFileCount: 3,
   maintainer: 'Fusion Launcher Team',
-  homepageUrl: 'https://fusion.local',
+  homepageUrl: 'https://blessdevhq.github.io/fusion-launcher/',
   license: 'Legal homebrew/demo content',
   trustLevel: 'official',
   contentHash: '0'.repeat(64),
@@ -73,8 +82,8 @@ const catalog: CatalogGame[] = [
   ),
   game('crystal-caverns', 'gba', 'Crystal Caverns DX', 'A fast homebrew platformer tuned for short sessions.', ['.gba'], undefined, {
     artwork: {
-      cover: 'https://example.com/fusion-launcher/showcase/crystal-caverns-cover.jpg',
-      hero: 'https://example.com/fusion-launcher/showcase/crystal-caverns-hero.jpg'
+      cover: 'https://blessdevhq.github.io/fusion-launcher/fusion/app-icon.png',
+      hero: 'https://blessdevhq.github.io/fusion-launcher/fusion/og-image.png'
     },
     metadata: {
       releaseYear: 2026,
@@ -84,22 +93,22 @@ const catalog: CatalogGame[] = [
     }
   }),
   game('neon-rally', 'psp', 'Neon Rally Portable', 'Arcade racing with synthetic night tracks and drift challenges.', ['.iso']),
-  game('star-orbit', 'switch', 'Star Orbit Prototype', 'Техно-demo сообщества для проверки современных handheld-сценариев.', ['.nsp', '.xci'], [
+  game('star-orbit', 'switch', 'Star Orbit Prototype', 'Community tech demo for checking user-provided package flows.', ['.nsp', '.xci'], [
     { kind: 'user_provided', instructions: 'Импортируй локально собранный или легально снятый .nsp/.xci пакет.' }
   ], {
     contentMode: 'user_provided',
     setupProfileId: 'switch-manual',
     artwork: {
-      cover: 'https://example.com/fusion-launcher/showcase/star-orbit-cover.jpg',
-      hero: 'https://example.com/fusion-launcher/showcase/star-orbit-hero.jpg',
-      logo: 'https://example.com/fusion-launcher/showcase/star-orbit-logo.png'
+      cover: 'https://blessdevhq.github.io/fusion-launcher/fusion/hero-mascot.png',
+      hero: 'https://blessdevhq.github.io/fusion-launcher/fusion/hero-key-visual.png',
+      logo: 'https://blessdevhq.github.io/fusion-launcher/fusion/logo-lockup.png'
     },
     metadata: {
       releaseYear: 2026,
       developer: 'North Pier Interactive',
       publisher: 'Community Preview',
       genres: ['Приключение', 'Tech Demo'],
-      tags: ['user-provided', 'modern-console'],
+      tags: ['user-provided', 'showcase'],
       players: '1 игрок',
       series: 'Star Orbit'
     }
@@ -115,6 +124,7 @@ const catalog: CatalogGame[] = [
   game('copper-line', 'genesis', 'Copper Line', 'A bright scrolling test ROM with punchy status art.', ['.md'])
 ];
 
+let downloadRoot = PREVIEW_GAMES_ROOT;
 let downloads: TorrentDownloadRecord[] = [
   torrent('crystal-caverns', 'completed', 100, 46_000_000, 46_000_000, 0, 0, null),
   torrent('neon-rally', 'downloading', 68, 2_400_000_000, 3_500_000_000, 12_000_000, 7, null),
@@ -124,7 +134,6 @@ let downloads: TorrentDownloadRecord[] = [
 
 let profileEmulatorConfigs: ProfileEmulatorConfig[] = [];
 let profileSystemFileImports: Record<string, string> = {};
-let downloadRoot = 'preview://games';
 let scraperStatus: ScreenScraperStatus = {
   configured: false,
   ssid: null,
@@ -221,7 +230,7 @@ export const previewApi = {
       Object.assign(game, {
         artwork: {
           ...(game.artwork ?? {}),
-          cover: `https://example.com/fusion-launcher/screenscraper/${game.id}.jpg`
+          cover: 'https://blessdevhq.github.io/fusion-launcher/fusion/og-image.png'
         },
         metadata: {
           ...(game.metadata ?? {}),
@@ -338,7 +347,7 @@ export const previewApi = {
     if (!game) throw new Error(`Unknown preview game: ${gameId}`);
     return buildPreviewGameSetupState(game);
   },
-  async installGame(gameId: string): Promise<InstallResult> {
+  async installGame(gameId: string, options?: PreviewInstallGameOptions): Promise<InstallResult> {
     const game = catalog.find((item) => item.id === gameId);
     if (!game) {
       return { gameId, status: 'error', errorCode: 'unknown_game', message: `Unknown preview game: ${gameId}` };
@@ -353,7 +362,7 @@ export const previewApi = {
           message: 'Выбери исполняемый файл Switch-эмулятора перед установкой игры.'
         };
       }
-      await previewApi.installEmulator(game.platform);
+      await previewApi.installEmulator(game.platform, options?.emulatorTargetDir);
     }
     let setup = await previewApi.getGameSetupState(gameId);
     const missingSystemFiles = setup.systemFiles
@@ -371,12 +380,12 @@ export const previewApi = {
       if (isUserProvidedGame(game) || game.contentMode === 'metadata_only') {
         return {
           gameId,
-          status: 'error',
+          status: 'needs_game_file',
           errorCode: 'game_requires_import',
-          message: 'Импортируй локальный файл игры, чтобы продолжить.'
+          message: 'Emulator installed. Import your local game file to continue.'
         };
       }
-      await previewApi.startGameDownload(gameId);
+      await previewApi.startGameDownload(gameId, options?.gameTargetDir);
       setup = await previewApi.getGameSetupState(gameId);
     }
     if (setup.launch.status !== 'ready') {
@@ -389,7 +398,7 @@ export const previewApi = {
     }
     return { gameId, status: 'ready', errorCode: null, message: null };
   },
-  async installEmulator(platform: string): Promise<EmulatorInstallResult> {
+  async installEmulator(platform: string, targetDir?: string): Promise<EmulatorInstallResult> {
     if (platform === 'switch') {
       throw new Error('switch_emulator_not_configured: выбери исполняемый файл Switch-эмулятора.');
     }
@@ -398,7 +407,7 @@ export const previewApi = {
       throw new Error(`no_profile_for:${platform}`);
     }
     const existing = emulatorConfigForPlatform(platform);
-    if (existing?.exePath) {
+    if (existing?.exePath && !targetDir) {
       return {
         profileId: profile.id,
         exePath: existing.exePath,
@@ -406,7 +415,7 @@ export const previewApi = {
         fromCache: true
       };
     }
-    const exePath = `preview://emulators/${platform}/${profile.emulator.executableName ?? `${platform}.exe`}`;
+    const exePath = previewEmulatorExePath(profile, targetDir);
     const version = 'latest';
     await previewApi.saveEmulatorConfig(platform, exePath, profile.launch.argsTemplate);
     return { profileId: profile.id, exePath, version, fromCache: false };
@@ -421,18 +430,36 @@ export const previewApi = {
       profileId: profile?.id ?? null
     };
   },
-  async installProfileEmulator(profileId: string): Promise<ProfileEmulatorConfig> {
+  async installProfileEmulator(profileId: string, targetDir?: string): Promise<ProfileEmulatorConfig> {
     const profile = getPlatformSetupProfile(profileId);
     if (!profile) throw new Error(`Unknown setup profile: ${profileId}`);
     if (profile.emulator.installMode !== 'downloadable') {
       throw new Error(`${profile.displayName} requires manual emulator selection.`);
     }
-    await previewApi.installEmulator(profile.platform);
+    await previewApi.installEmulator(profile.platform, targetDir);
     return profileEmulatorConfigs.find((item) => item.profileId === profile.id)
       ?? previewApi.selectProfileEmulator(
         profile.id,
-        `preview://emulators/${profile.platform}/${profile.emulator.executableName ?? `${profile.platform}.exe`}`
+        previewEmulatorExePath(profile, targetDir)
       );
+  },
+  async removeProfileEmulator(profileId: string): Promise<ProfileEmulatorRemovalReport> {
+    const profile = getPlatformSetupProfile(profileId);
+    if (!profile) throw new Error(`Unknown setup profile: ${profileId}`);
+    const existing = profileEmulatorConfigs.find((item) => item.profileId === profile.id);
+    const before = profileEmulatorConfigs.length;
+    profileEmulatorConfigs = profileEmulatorConfigs.filter((item) => item.profileId !== profile.id);
+    const removedConfig = profileEmulatorConfigs.length !== before;
+    const managed = profile.emulator.installMode === 'downloadable';
+
+    return {
+      profileId: profile.id,
+      platform: profile.platform,
+      removedConfig,
+      deletedFiles: managed && Boolean(existing),
+      removedPath: managed ? previewEmulatorInstallDir(profile) : null,
+      message: null
+    };
   },
   async selectProfileEmulator(profileId: string, executablePath: string): Promise<ProfileEmulatorConfig> {
     const profile = getPlatformSetupProfile(profileId);
@@ -465,7 +492,7 @@ export const previewApi = {
     if (!requirement.extensions.some((extension) => sourcePath.toLowerCase().endsWith(extension))) {
       return { status: 'error', installedPath: '', errorCode: 'wrong_extension' };
     }
-    const installedPath = `preview://system/${profile.platform}/${requirement.targetName ?? requirement.id}`;
+    const installedPath = previewJoin(PREVIEW_SYSTEM_ROOT, profile.platform, requirement.targetName ?? requirement.id);
     profileSystemFileImports[`${profile.id}:${requirement.id}`] = installedPath;
     return { status: 'installed', installedPath };
   },
@@ -505,19 +532,29 @@ export const previewApi = {
     profileEmulatorConfigs = profileEmulatorConfigs.filter((item) => item.profileId !== profile.id);
     return profileEmulatorConfigs.length !== before;
   },
-  async downloadAsset(assetId: string): Promise<DownloadRecord> {
-    return downloadRecord(assetId, 'asset');
+  async downloadAsset(assetId: string, targetDir?: string): Promise<DownloadRecord> {
+    const record = downloadRecord(assetId, 'asset', previewAssetPath(assetId, targetDir));
+    const torrentRecord = directDownloadRecord(
+      assetId,
+      'asset:http',
+      record.localPath ?? previewAssetPath(assetId, targetDir),
+      24_592,
+      'asset',
+      assetId
+    );
+    downloads = [torrentRecord, ...downloads.filter((item) => item.gameId !== assetId)];
+    return record;
   },
   async importAssetFile(assetId: string, sourcePath: string): Promise<ImportAssetFileReport> {
     if (!assetId.trim()) {
       return { status: 'error', installedPath: '', errorCode: 'unknown_asset' };
     }
     if (!sourcePath.trim()) {
-      return { status: 'error', installedPath: `preview://system/${assetId}`, errorCode: 'source_missing' };
+      return { status: 'error', installedPath: previewJoin(PREVIEW_SYSTEM_ROOT, assetId), errorCode: 'source_missing' };
     }
     return {
       status: 'installed',
-      installedPath: `preview://system/${assetId}`,
+      installedPath: previewJoin(PREVIEW_SYSTEM_ROOT, assetId),
       errorCode: undefined
     };
   },
@@ -549,22 +586,24 @@ export const previewApi = {
       sha256: '1'.repeat(64)
     };
   },
-  async downloadGame(gameId: string): Promise<DownloadRecord> {
-    return downloadRecord(gameId, 'game');
+  async downloadGame(gameId: string, targetDir?: string): Promise<DownloadRecord> {
+    return downloadRecord(gameId, 'game', previewGameFilePath(gameId, targetDir));
   },
-  async startGameDownload(gameId: string): Promise<GameDownloadStartReport> {
+  async startGameDownload(gameId: string, targetDir?: string): Promise<GameDownloadStartReport> {
     const game = catalog.find((item) => item.id === gameId);
     const source = game?.downloads[0];
     if (game && (game.contentMode === 'user_provided' || game.contentMode === 'metadata_only' || isUserProvidedGame(game))) {
       throw new Error('Для этой игры нужен пользовательский файл. Импортируй его в деталях игры.');
     }
     if (source?.kind === 'http' || source?.kind === 'bundled') {
-      const record = downloadRecord(gameId, 'game');
+      const record = downloadRecord(gameId, 'game', previewGameFilePath(gameId, targetDir));
       const torrentRecord = directDownloadRecord(
         gameId,
         source.kind,
-        record.localPath ?? `${downloadRoot}/${gameId}`,
-        source.sizeBytes ?? 24_592
+        record.localPath ?? previewGameFilePath(gameId, targetDir),
+        source.sizeBytes ?? 24_592,
+        'game',
+        game?.title ?? gameId
       );
       downloads = [torrentRecord, ...downloads.filter((item) => item.gameId !== gameId)];
       return { gameId, sourceKind: source.kind, saveDir: torrentRecord.saveDir, record, torrent: torrentRecord };
@@ -572,7 +611,7 @@ export const previewApi = {
     const torrent = await previewApi.startMagnetDownload(
       gameId,
       source?.kind === 'magnet' ? source.uri : `magnet:?xt=urn:btih:${gameId.replaceAll('-', '')}`,
-      `${downloadRoot}/${gameId}`
+      previewGameTorrentDir(gameId, targetDir)
     );
     const record = downloads.find((item) => item.gameId === gameId) ?? null;
     return { gameId, sourceKind: 'magnet', saveDir: torrent.saveDir, record: null, torrent: record };
@@ -580,7 +619,7 @@ export const previewApi = {
   async trustExecutable(assetId: string): Promise<TrustedExecutable> {
     return {
       assetId,
-      localPath: `preview://system/${assetId}`,
+      localPath: previewJoin(PREVIEW_SYSTEM_ROOT, assetId),
       sha256: '0'.repeat(64),
       trustedAt: new Date().toISOString()
     };
@@ -597,10 +636,14 @@ export const previewApi = {
     downloads = downloads.filter((item) => item.gameId !== gameId);
     return downloads.length !== before;
   },
-  async redownloadAsset(assetId: string): Promise<DownloadRecord> {
-    return downloadRecord(assetId, 'asset');
+  async removeDownload(downloadId: string, deleteFiles: boolean): Promise<boolean> {
+    return previewApi.removeGame(downloadId, deleteFiles);
+  },
+  async redownloadAsset(assetId: string, targetDir?: string): Promise<DownloadRecord> {
+    return previewApi.downloadAsset(assetId, targetDir);
   },
   async openGameFolder(_gameId: string): Promise<void> {},
+  async openDownloadFolder(_downloadId: string): Promise<void> {},
   async openEmulatorFolder(_platform: string): Promise<void> {},
   async openLogsFolder(): Promise<void> {},
   async runHealthCheck(): Promise<HealthReport> {
@@ -688,10 +731,10 @@ export const previewApi = {
       throw new Error(setup.launch.blockers.join('; '));
     }
     const emulator = emulatorConfigForPlatform(setup.emulator.platform);
-    const gamePath = downloads.find((item) => item.gameId === gameId)?.saveDir ?? `preview://games/${gameId}`;
+    const gamePath = downloads.find((item) => item.gameId === gameId)?.saveDir ?? previewGameTorrentDir(gameId);
     return {
       pid: 1,
-      executable: emulator?.exePath ?? `preview://emulators/${game.platform}`,
+      executable: emulator?.exePath ?? previewJoin(PREVIEW_EMULATORS_ROOT, game.platform),
       gamePath,
       resolvedGamePath: gamePath,
       args: [emulator?.launchArgsTemplate ?? '{game_path}', setup.gameFile.expectedExtensions.join(',')]
@@ -801,6 +844,40 @@ function normalizeScrapeRegion(region: string): ScreenScraperStatus['region'] {
   return region === 'eu' || region === 'us' || region === 'jp' ? region : 'auto';
 }
 
+function previewTrim(path: string): string {
+  return path.replace(/[\\/]+$/g, '');
+}
+
+function previewJoin(root: string, ...parts: string[]): string {
+  return [previewTrim(root), ...parts.map((part) => part.replace(/^[\\/]+|[\\/]+$/g, ''))]
+    .filter(Boolean)
+    .join('/');
+}
+
+function previewGameFilePath(gameId: string, targetDir?: string): string {
+  return previewJoin(targetDir || downloadRoot, `${gameId}.zip`);
+}
+
+function previewGameTorrentDir(gameId: string, targetDir?: string): string {
+  return previewJoin(targetDir || downloadRoot, gameId);
+}
+
+function previewEmulatorInstallDir(profile: PlatformSetupProfile, targetDir?: string): string {
+  return previewJoin(targetDir || PREVIEW_EMULATORS_ROOT, profile.platform, profile.id);
+}
+
+function previewEmulatorExePath(profile: PlatformSetupProfile, targetDir?: string): string {
+  return previewJoin(
+    previewEmulatorInstallDir(profile, targetDir),
+    profile.emulator.executableName ?? `${profile.platform}.exe`
+  );
+}
+
+function previewAssetPath(assetId: string, targetDir?: string): string {
+  const root = targetDir || (assetId.endsWith('-emulator-bundle') ? PREVIEW_EMULATORS_ROOT : PREVIEW_SYSTEM_ROOT);
+  return previewJoin(root, assetId);
+}
+
 function torrent(
   gameId: string,
   status: TorrentDownloadRecord['status'],
@@ -814,7 +891,7 @@ function torrent(
   return {
     gameId,
     magnetUri: `magnet:?xt=urn:btih:${gameId.replaceAll('-', '')}`,
-    saveDir: `preview://games/${gameId}`,
+    saveDir: previewGameTorrentDir(gameId),
     status,
     progressPercent,
     downloadedBytes,
@@ -832,13 +909,17 @@ function torrent(
 
 function directDownloadRecord(
   gameId: string,
-  sourceKind: 'http' | 'bundled' | 'user_import',
+  sourceKind: 'http' | 'bundled' | 'user_import' | 'asset:http' | 'asset:bundled',
   saveDir: string,
-  totalBytes: number
+  totalBytes: number,
+  subjectType: TorrentDownloadRecord['subjectType'] = 'game',
+  displayName?: string
 ): TorrentDownloadRecord {
   const timestamp = new Date().toISOString();
   return {
     gameId,
+    subjectType,
+    displayName: displayName ?? gameId,
     magnetUri: `direct:${sourceKind}`,
     saveDir,
     status: 'completed',
@@ -966,12 +1047,16 @@ function buildPreviewGameSetupState(game: CatalogGame): GameSetupState {
   };
 }
 
-function downloadRecord(subjectId: string, subjectType: DownloadRecord['subjectType']): DownloadRecord {
+function downloadRecord(
+  subjectId: string,
+  subjectType: DownloadRecord['subjectType'],
+  localPath?: string
+): DownloadRecord {
   return {
     subjectId,
     subjectType,
     status: 'ready',
-    localPath: `preview://${subjectType}/${subjectId}`,
+    localPath: localPath ?? previewJoin(subjectType === 'game' ? PREVIEW_GAMES_ROOT : PREVIEW_SYSTEM_ROOT, subjectId),
     sha256: '0'.repeat(64),
     source: 'legacy',
     magnetUri: '',

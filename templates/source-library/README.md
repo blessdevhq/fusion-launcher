@@ -7,7 +7,7 @@ local file in Fusion Launcher.
 The canonical starter template is published by Fusion Launcher at:
 
 ```text
-https://mrbeastie.github.io/fusion-launcher/source-library-template/repository.json
+https://blessdevhq.github.io/fusion-launcher/source-library-template/repository.json
 ```
 
 ## Quick Start
@@ -16,8 +16,8 @@ https://mrbeastie.github.io/fusion-launcher/source-library-template/repository.j
    `.github/workflows` folder.
 2. Replace the metadata in `repository.json`.
 3. Replace the sample catalog entries with your own entries.
-4. Replace `YOUR_ORG_OR_USER/fusion-launcher` in the copied workflows with the
-   Fusion Launcher validator repository, usually `MrBeastie/fusion-launcher`.
+4. Keep `blessdevhq/fusion-launcher` in the copied workflows as the Fusion
+   Launcher validator repository, unless you maintain a validator fork.
 5. Run the validator from the Fusion Launcher project:
 
 ```powershell

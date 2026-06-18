@@ -66,11 +66,16 @@ pub async fn download_source_to_file_with_progress(
             sha256,
             size_bytes,
         } => {
+            let expected_sha256 = if sha256.trim().is_empty() {
+                None
+            } else {
+                Some(sha256.as_str())
+            };
             download_http_streaming(
                 url,
                 destination,
                 StreamOptions {
-                    expected_sha256: Some(sha256),
+                    expected_sha256,
                     expected_size_bytes: *size_bytes,
                     max_bytes: None,
                     resume: true,

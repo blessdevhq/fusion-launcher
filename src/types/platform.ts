@@ -21,6 +21,9 @@ export type Platform = (typeof PLATFORMS)[number];
 export const MVP_PLATFORMS = ['switch', 'ps1', 'ps2', 'gba', 'nes'] as const satisfies readonly Platform[];
 export type MvpPlatform = (typeof MVP_PLATFORMS)[number];
 
+export const EMULATOR_MANAGER_PLATFORMS = ['nes', 'snes', 'n64', 'gba', 'ps2', 'psp', 'ps1', 'switch'] as const satisfies readonly Platform[];
+export type EmulatorManagerPlatform = (typeof EMULATOR_MANAGER_PLATFORMS)[number];
+
 export const PLATFORM_LABELS: Record<Platform, string> = {
   switch: 'Nintendo Switch',
   nes: 'NES / Famicom',
@@ -58,7 +61,7 @@ export const PLATFORM_DEFAULT_EXTENSIONS: Record<Platform, string[]> = {
 };
 
 export const PLATFORM_EMULATOR_HINTS: Record<MvpPlatform, string> = {
-  switch: 'Ryujinx.exe',
+  switch: 'eden.exe',
   ps1: 'duckstation-qt-x64-ReleaseLTCG.exe',
   ps2: 'pcsx2-qt.exe',
   gba: 'mGBA.exe',

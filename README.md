@@ -6,9 +6,9 @@
 
 **Status:** public MVP preview for Windows; fresh Fusion-branded installer
 release is being prepared.
-**Repository:** [MrBeastie/fusion-launcher](https://github.com/MrBeastie/fusion-launcher)
+**Repository:** [blessdevhq/fusion-launcher](https://github.com/blessdevhq/fusion-launcher)
 
-Fusion Launcher is a source-driven Windows launcher for retro and console games
+Fusion Launcher is a source-driven Windows launcher for retro game libraries
 on PC. It combines source-library browsing and install tracking with guided
 portable-emulator setup: connect a source, install content you are allowed to
 use, satisfy emulator requirements, and launch everything from one desktop app.
@@ -23,7 +23,7 @@ The project is built with Next.js, Tauri 2, Rust, and local-first storage.
 
 - Connects community, personal, or local source-library JSON catalogs from
   GitHub Pages, HTTPS URLs, or local files.
-- Presents retro and console game catalogs in one Windows desktop launcher.
+- Presents user-selected retro game catalogs in one Windows desktop launcher.
 - Tracks direct, bundled, and torrent-aware install state for content described
   by connected sources.
 - Validates schema v3 catalogs with rich metadata, artwork, tags, genres, setup
@@ -50,6 +50,8 @@ Automatic portable-emulator setup is available for NES, SNES, Nintendo 64, Game
 Boy Advance, PlayStation 2, and PSP. PlayStation 1 and Nintendo Switch currently
 use manual executable selection. Platform-owned BIOS, firmware, and keys always
 remain user-provided.
+For Nintendo Switch, the recommended manual executable is Eden (`eden.exe` or
+`eden-cli.exe`); existing Ryujinx and Suyu paths remain supported as fallbacks.
 
 ## Content Model
 
@@ -77,12 +79,21 @@ Useful entry points:
 
 - [Source library template](docs/source-library-template.md)
 - [Repository authoring guide](docs/repository-authoring.md)
+- [Official starter source](public/source-libraries/official-starter.json) — safe first run with first-party demo content and openly licensed homebrew.
+- [Unofficial player wishlist](public/source-libraries/unofficial-player-wishlist.json) — user-provided commercial game metadata only; no downloads, ROMs, BIOS, firmware, keys, or publisher artwork.
 - [Rich metadata example](examples/repositories/showcase.metadata.json)
+
+Paste-ready public source URLs:
+
+```text
+https://blessdevhq.github.io/fusion-launcher/source-libraries/official-starter.json
+https://blessdevhq.github.io/fusion-launcher/source-libraries/unofficial-player-wishlist.json
+```
 
 The starter template is published at:
 
 ```text
-https://mrbeastie.github.io/fusion-launcher/source-library-template/repository.json
+https://blessdevhq.github.io/fusion-launcher/source-library-template/repository.json
 ```
 
 ## Development

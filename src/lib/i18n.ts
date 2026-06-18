@@ -55,7 +55,7 @@ export const en = {
     peers: 'peers'
   },
   brand: {
-    tagline: 'Retro and console games. One Windows launcher.',
+    tagline: 'Retro game libraries. One Windows launcher.',
     demoCopy: 'Connect sources to install and launch allowed content. Fusion Launcher ships only first-party demo content.'
   },
   actions: {
@@ -188,15 +188,27 @@ export const en = {
       synced: (mode: string) => `Settings are synced. Mode: ${mode}.`
     },
     emulators: {
-      title: 'Emulator paths',
-      copy: 'Choose the Windows `.exe` for each platform. Paths are stored locally and used only to launch games.',
+      title: 'Emulator manager',
+      copy: 'Download supported portable emulators, select manual ones, and remove launcher-managed installs from one place.',
       active: (platform: string) => `Active: ${platform}`,
       expectedFile: (file: string) => `Expected file: ${file}`,
       pathSr: (platform: string) => `Emulator path for ${platform}`,
       pathPlaceholder: 'Path to .exe',
       chooseExecutable: (platform: string) => `Choose ${platform} executable`,
       pickerTitle: (platform: string) => `Choose emulator for ${platform}`,
-      windowsExecutable: 'Windows executable'
+      windowsExecutable: 'Windows executable',
+      downloadableDetail: (name: string) => `Download and manage ${name} inside Fusion Launcher's app data.`,
+      manualDetail: (name: string) => `${name} must be selected from an emulator you already installed.`,
+      openFolder: 'Open folder',
+      installSuccess: (name: string) => `${name} is ready.`,
+      installError: (name: string, error: unknown) => `Failed to download ${name}: ${error}`,
+      selectSuccess: (name: string) => `${name} path saved.`,
+      selectError: (name: string, error: unknown) => `Failed to select ${name}: ${error}`,
+      removeSuccess: (name: string) => `${name} removed from Fusion Launcher.`,
+      removeError: (name: string, error: unknown) => `Failed to remove ${name}: ${error}`,
+      openFolderError: (name: string, error: unknown) => `Failed to open ${name} folder: ${error}`,
+      removeManagedConfirm: (name: string, platform: string) => `Remove ${name} for ${platform}? Fusion Launcher will delete only its managed app-data folder.`,
+      forgetManualConfirm: (name: string, platform: string) => `Forget the selected ${name} path for ${platform}? User files will stay on disk.`
     },
     sourcesPanel: {
       title: 'Community and personal sources',
@@ -209,7 +221,20 @@ export const en = {
       empty: 'No community sources connected yet.',
       executableAssets: 'Source contains executable files',
       unknownSource: 'User source: check the team and file rights before connecting.',
-      executableRequiresTrust: 'Executable files require a trusted source'
+      executableRequiresTrust: 'Executable files require a trusted source',
+      manifest: {
+        title: 'Install from manifest',
+        copy: 'Load a JSON manifest by URL or paste the JSON directly. The manifest can provide an emulator bundle; games without a real magnet are imported locally.',
+        placeholder: 'https://example.com/manifest.json or paste manifest JSON',
+        load: 'Load',
+        gamesTitle: 'Games in manifest',
+        empty: 'This manifest has no games.',
+        emulatorIncluded: 'Emulator included',
+        install: 'Install',
+        installing: 'Installing...',
+        installed: 'Installed',
+        needsAttention: 'Needs attention'
+      }
     },
     storage: {
       title: 'Storage',
@@ -356,6 +381,11 @@ export const en = {
       retry: 'Retry',
       play: 'Play',
       cancel: 'Cancel',
+      path: 'Path',
+      copyPath: 'Copy path',
+      openFolder: 'Open folder',
+      deleteFiles: 'Delete files',
+      deleteConfirm: (title: string) => `Delete downloaded files for ${title}?`,
       statusHints: {
         interrupted: 'Restored after restart. Resume to continue.',
         paused: 'Paused state is persisted.',
@@ -754,7 +784,7 @@ export const ru: UiText = {
     peers: 'peers'
   },
   brand: {
-    tagline: 'Ретро и консольные игры. Один Windows-лаунчер.',
+    tagline: 'Ретро-библиотеки игр. Один Windows-лаунчер.',
     demoCopy: 'Подключай источники, чтобы устанавливать и запускать разрешённый контент. Fusion Launcher поставляет только first-party demo.'
   },
   actions: {
@@ -895,7 +925,19 @@ export const ru: UiText = {
       pathPlaceholder: 'Путь к .exe',
       chooseExecutable: (platform: string) => `Выбрать ${platform} executable`,
       pickerTitle: (platform: string) => `Выбери эмулятор для ${platform}`,
-      windowsExecutable: 'Windows executable'
+      windowsExecutable: 'Windows executable',
+      downloadableDetail: (name: string) => `Fusion Launcher will download and manage ${name} in app data.`,
+      manualDetail: (name: string) => `${name} must be selected from an emulator you already installed.`,
+      openFolder: 'Open folder',
+      installSuccess: (name: string) => `${name} is ready.`,
+      installError: (name: string, error: unknown) => `Failed to download ${name}: ${error}`,
+      selectSuccess: (name: string) => `${name} path saved.`,
+      selectError: (name: string, error: unknown) => `Failed to select ${name}: ${error}`,
+      removeSuccess: (name: string) => `${name} removed from Fusion Launcher.`,
+      removeError: (name: string, error: unknown) => `Failed to remove ${name}: ${error}`,
+      openFolderError: (name: string, error: unknown) => `Failed to open ${name} folder: ${error}`,
+      removeManagedConfirm: (name: string, platform: string) => `Remove ${name} for ${platform}? Fusion Launcher will delete only its managed app-data folder.`,
+      forgetManualConfirm: (name: string, platform: string) => `Forget the selected ${name} path for ${platform}? User files will stay on disk.`
     },
     sourcesPanel: {
       title: 'Сообщество и личные источники',
@@ -908,7 +950,20 @@ export const ru: UiText = {
       empty: 'Источники сообщества пока не подключены.',
       executableAssets: 'Источник содержит исполняемые файлы',
       unknownSource: 'Пользовательский источник: проверь команду и права на файлы перед подключением.',
-      executableRequiresTrust: 'Исполняемые файлы требуют доверенного источника'
+      executableRequiresTrust: 'Исполняемые файлы требуют доверенного источника',
+      manifest: {
+        title: 'Установка из манифеста',
+        copy: 'Загрузи JSON-манифест и установи игру напрямую. Манифест содержит ROM и, при наличии, ссылку на эмулятор.',
+        placeholder: 'https://example.com/manifest.json or paste manifest JSON',
+        load: 'Загрузить',
+        gamesTitle: 'Игры в манифесте',
+        empty: 'В этом манифесте нет игр.',
+        emulatorIncluded: 'Эмулятор включён',
+        install: 'Установить',
+        installing: 'Установка...',
+        installed: 'Установлено',
+        needsAttention: 'Требует внимания'
+      }
     },
     storage: {
       title: 'Хранилище',
@@ -1055,6 +1110,11 @@ export const ru: UiText = {
       retry: 'Повторить',
       play: 'Играть',
       cancel: 'Отменить',
+      path: 'Путь',
+      copyPath: 'Копировать путь',
+      openFolder: 'Открыть папку',
+      deleteFiles: 'Удалить файлы',
+      deleteConfirm: (title: string) => `Удалить скачанные файлы для ${title}?`,
       statusHints: {
         interrupted: 'Восстановлено после перезапуска. Продолжи, чтобы скачать дальше.',
         paused: 'Пауза сохранена.',

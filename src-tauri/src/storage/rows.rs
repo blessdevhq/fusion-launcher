@@ -424,6 +424,8 @@ pub(super) fn map_torrent_download_row(
 ) -> rusqlite::Result<TorrentDownloadRecord> {
     Ok(TorrentDownloadRecord {
         game_id: row.get(0)?,
+        subject_type: None,
+        display_name: None,
         magnet_uri: row.get(1)?,
         save_dir: row.get(2)?,
         status: row.get(3)?,

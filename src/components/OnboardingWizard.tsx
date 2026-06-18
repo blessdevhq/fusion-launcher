@@ -17,6 +17,7 @@ import {
   ShieldAlert,
   Wrench
 } from 'lucide-react';
+import { ManifestInstallCard } from '@/components/settings/ManifestInstallCard';
 import { useI18n } from '@/components/I18nProvider';
 import { api } from '@/lib/api';
 import { displayProductText } from '@/lib/brandText';
@@ -508,6 +509,7 @@ export function OnboardingWizard({
               onConnectBuiltInRepository={connectBuiltInRepository}
               onConnectRepository={connectRepository}
               onConnectRepositoryFile={connectRepositoryFile}
+              onManifestInstalled={onReload}
               onNext={nextStep}
             />
           )}
@@ -637,6 +639,7 @@ function SourceStep({
   onConnectBuiltInRepository,
   onConnectRepository,
   onConnectRepositoryFile,
+  onManifestInstalled,
   onNext
 }: {
   repositoryReady: boolean;
@@ -651,6 +654,7 @@ function SourceStep({
   onConnectBuiltInRepository: () => Promise<void>;
   onConnectRepository: () => Promise<void>;
   onConnectRepositoryFile: () => Promise<void>;
+  onManifestInstalled: () => Promise<void>;
   onNext: () => void;
 }) {
   const { t } = useI18n();
@@ -689,7 +693,7 @@ function SourceStep({
               value={repoUrl}
               onChange={(event) => onRepoUrlChange(event.target.value)}
               className="h-11 w-full rounded-sm border border-white/10 bg-black/40 px-3 text-sm outline-none focus:border-fusion-accent/70"
-              placeholder="https://example.com/repo.json"
+              placeholder="https://blessdevhq.github.io/fusion-launcher/source-library-template/repository.json"
               data-testid="onboarding-source-url"
             />
           </label>
@@ -709,6 +713,9 @@ function SourceStep({
             </button>
           </div>
         </section>
+      </div>
+      <div className="mt-4">
+        <ManifestInstallCard onInstalled={onManifestInstalled} />
       </div>
       <div className="rh-onboarding-checkline">
         <SetupItem done={repositoryReady} title={t.onboarding.setup.source} detail={repositoryReady ? t.onboarding.sourceStep.connected(catalogCount) : t.onboarding.sourceStep.notConnected} />

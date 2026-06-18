@@ -16,13 +16,12 @@ if (!hasUpdaterSigningKey) {
 
 const tauriCliPath = path.join(root, 'node_modules', '@tauri-apps', 'cli', 'tauri.js');
 const packageSmokePath = path.join(root, 'scripts', 'mvp-package-smoke.mjs');
+const buildSidecarPath = path.join(root, 'scripts', 'build-sidecar.mjs');
+// The default engine is the libtorrent sidecar, so the bundle must include it.
+const sidecarConfigPath = path.join(root, 'src-tauri', 'tauri.sidecar.conf.json');
 const buildArgs = hasUpdaterSigningKey
-  ? ['build']
-  : [
-      'build',
-      '--config',
-      smokeConfigPath
-    ];
+  ? ['build', '--config', sidecarConfigPath]
+  : ['build', '--config', smokeConfigPath, '--config', sidecarConfigPath];
 
 if (!hasUpdaterSigningKey) {
   console.log(
@@ -30,6 +29,8 @@ if (!hasUpdaterSigningKey) {
   );
 }
 
+// Build the torrent sidecar first; the externalBin overlay above expects it.
+await run(process.execPath, [buildSidecarPath]);
 await run(process.execPath, [tauriCliPath, ...buildArgs]);
 await run(process.execPath, [packageSmokePath]);
 

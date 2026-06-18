@@ -1,5 +1,5 @@
 import { getEmulatorConfig, getEmulatorPath, setEmulatorPath, type AppSettings } from './settings.ts';
-import { MVP_PLATFORMS, type MvpPlatform } from '../types/platform.ts';
+import { EMULATOR_MANAGER_PLATFORMS, type Platform } from '../types/platform.ts';
 import { DEFAULT_LOCALE, getUiText, type Locale } from './i18n.ts';
 
 export type EmulatorSaveIntent = 'unchanged' | 'save' | 'delete';
@@ -14,7 +14,7 @@ export interface EmulatorDraftState {
 
 export function updateDraftEmulatorPath(
   settings: AppSettings,
-  platform: MvpPlatform,
+  platform: Platform,
   executablePath: string
 ): AppSettings {
   return setEmulatorPath(settings, platform, executablePath);
@@ -23,7 +23,7 @@ export function updateDraftEmulatorPath(
 export function getEmulatorSaveIntent(
   draftSettings: AppSettings,
   savedSettings: AppSettings,
-  platform: MvpPlatform
+  platform: Platform
 ): EmulatorSaveIntent {
   const draftPath = getEmulatorPath(draftSettings, platform);
   const savedPath = getEmulatorPath(savedSettings, platform);
@@ -35,7 +35,7 @@ export function getEmulatorSaveIntent(
 export function getEmulatorDraftState(
   draftSettings: AppSettings,
   savedSettings: AppSettings,
-  platform: MvpPlatform,
+  platform: Platform,
   locale: Locale = DEFAULT_LOCALE
 ): EmulatorDraftState {
   const text = getUiText(locale).settings.emulatorDraft;
@@ -110,11 +110,11 @@ export function hasEmulatorDraftChanges(
   draftSettings: AppSettings,
   savedSettings: AppSettings
 ): boolean {
-  return MVP_PLATFORMS.some((platform) => (
+  return EMULATOR_MANAGER_PLATFORMS.some((platform) => (
     getEmulatorPath(draftSettings, platform) !== getEmulatorPath(savedSettings, platform)
   ));
 }
 
 export function countConfiguredEmulators(settings: AppSettings): number {
-  return MVP_PLATFORMS.filter((platform) => Boolean(getEmulatorPath(settings, platform))).length;
+  return EMULATOR_MANAGER_PLATFORMS.filter((platform) => Boolean(getEmulatorPath(settings, platform))).length;
 }

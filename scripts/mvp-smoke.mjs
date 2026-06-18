@@ -59,7 +59,7 @@ await check('one-click NES demo setup path', async () => {
   assert.equal(setup.launch.status, 'ready');
 
   const launch = await previewApi.launchGame('fusion_launcher_nes_smoke');
-  assert.equal(launch.executable, 'preview://emulators/nes/Mesen.exe');
+  assert.equal(launch.executable, 'preview://Emulators/nes/nes-mesen/Mesen.exe');
   assert.ok(launch.resolvedGamePath.includes('fusion_launcher_nes_smoke'));
 
   return `${download.sourceKind} download -> ${launch.executable}`;

@@ -2,11 +2,46 @@ pub(super) fn download_root(state: &State<'_, AppState>) -> Result<PathBuf, Stri
     download_root_for_app_state(state)
 }
 
+pub(super) fn managed_storage_root_for_app_state(state: &AppState) -> PathBuf {
+    state.data_dir.clone()
+}
+
+pub(super) fn default_games_root(data_dir: &Path) -> PathBuf {
+    data_dir.join("Games")
+}
+
+pub(super) fn emulators_root(data_dir: &Path) -> PathBuf {
+    data_dir.join("Emulators")
+}
+
+pub(super) fn system_root(data_dir: &Path) -> PathBuf {
+    data_dir.join("System")
+}
+
+pub(crate) fn temp_root(data_dir: &Path) -> PathBuf {
+    data_dir.join("Temp")
+}
+
 pub(super) fn download_root_for_app_state(state: &AppState) -> Result<PathBuf, String> {
     let configured = lock_app_store(state)?.get_config("download_root")?;
     Ok(configured
         .map(PathBuf::from)
-        .unwrap_or_else(|| state.data_dir.join("Games")))
+        .unwrap_or_else(|| default_games_root(&managed_storage_root_for_app_state(state))))
+}
+
+pub(crate) fn resolve_target_dir_override(target_dir: Option<&str>) -> Result<Option<PathBuf>, String> {
+    let Some(target_dir) = target_dir.map(str::trim).filter(|path| !path.is_empty()) else {
+        return Ok(None);
+    };
+    let path = PathBuf::from(target_dir);
+    if !path.is_absolute() {
+        return Err("Download destination must be an absolute path.".to_string());
+    }
+    fs::create_dir_all(&path)
+        .map_err(|error| format!("Failed to create download destination: {error}"))?;
+    fs::canonicalize(&path)
+        .or(Ok(path))
+        .map(Some)
 }
 
 pub(super) fn preflight_disk_space(root: &Path, needed_bytes: Option<u64>) -> Result<(), String> {
@@ -33,6 +68,8 @@ pub(super) fn emit_direct_download_record(app: &AppHandle, record: &TorrentDownl
         "download:progress",
         crate::torrent::DownloadProgressEvent {
             game_id: record.game_id.clone(),
+            subject_type: record.subject_type.clone(),
+            display_name: record.display_name.clone(),
             status: record.status.clone(),
             progress: record.progress_percent / 100.0,
             progress_percent: record.progress_percent,

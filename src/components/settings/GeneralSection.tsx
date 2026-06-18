@@ -1,7 +1,7 @@
 import { Settings } from 'lucide-react';
 import { useI18n } from '@/components/I18nProvider';
 import { LOCALES, type Locale } from '@/lib/i18n';
-import { MVP_PLATFORMS } from '@/types/platform';
+import { EMULATOR_MANAGER_PLATFORMS } from '@/types/platform';
 import type { HealthReport } from '@/types/repository';
 import { SummaryCard } from './shared';
 import type { SettingsSection, UpdatePanelPhase } from './types';
@@ -55,10 +55,10 @@ export function GeneralSection({
   return (
     <section className="grid gap-4">
       <div className="grid gap-3 sm:grid-cols-3">
-        <SummaryCard label={t.settings.general.configured} value={`${configuredCount}/${MVP_PLATFORMS.length}`} />
+        <SummaryCard label={t.settings.general.configured} value={`${configuredCount}/${EMULATOR_MANAGER_PLATFORMS.length}`} />
         <SummaryCard label={t.settings.general.sources} value={String(repositoriesCount)} />
         <SummaryCard label={t.settings.general.downloads} value={String(activeDownloadsCount)} />
-        <SummaryCard label={t.settings.general.ready} value={`${readyCount}/${MVP_PLATFORMS.length}`} />
+        <SummaryCard label={t.settings.general.ready} value={`${readyCount}/${EMULATOR_MANAGER_PLATFORMS.length}`} />
         <SummaryCard label={t.settings.general.health} value={healthTotal > 0 ? `${healthReady}/${healthTotal}` : t.common.notRun} />
         <SummaryCard label={t.settings.general.update} value={updatePhaseLabel(updatePhase, t)} />
       </div>

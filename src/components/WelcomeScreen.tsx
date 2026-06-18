@@ -60,7 +60,7 @@ export function WelcomeScreen({ initialMessage, onConnect }: WelcomeScreenProps)
               id="repository-url"
               value={url}
               onChange={(event) => setUrl(event.target.value)}
-              placeholder="https://example.com/index.json"
+              placeholder="https://blessdevhq.github.io/fusion-launcher/source-library-template/repository.json"
               className="min-w-0 flex-1 bg-transparent text-sm text-white outline-none placeholder:text-white/28"
               autoCapitalize="off"
               autoCorrect="off"

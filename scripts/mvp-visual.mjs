@@ -36,11 +36,13 @@ async function main() {
   await expectVisible(page.getByTestId('onboarding-demo-card'), 'onboarding demo source card');
   await expectVisible(page.getByTestId('onboarding-source-card'), 'onboarding community source card');
   const onboardingSource = page.getByTestId('onboarding-source-card');
-  await onboardingSource.getByPlaceholder('https://example.com/repo.json').fill('https://community.example/fusion-launcher-repository.json');
+  await onboardingSource
+    .getByPlaceholder('https://blessdevhq.github.io/fusion-launcher/source-library-template/repository.json')
+    .fill('https://blessdevhq.github.io/fusion-launcher/source-library-template/repository.json');
   await onboardingSource.getByRole('button', { name: 'Check' }).click();
   await expectVisible(page.getByTestId('onboarding-source-preview'), 'onboarding source preview');
 
-  await page.getByTestId('onboarding-use-demo').click();
+  await page.getByTestId('onboarding-next-source').click();
   await expectVisible(page.getByTestId('onboarding-step-metadata'), 'onboarding metadata step');
   await expectVisible(page.getByTestId('onboarding-metadata-sources'), 'onboarding metadata sources');
   await expectVisible(page.getByTestId('onboarding-metadata-strategy-source'), 'onboarding source metadata strategy');
@@ -123,7 +125,7 @@ async function main() {
   await expectVisible(page.getByTestId('settings-modal'), 'settings modal');
   await expectVisible(page.getByTestId('settings-modal-emulators'), 'settings modal emulators panel');
   await expectVisible(page.getByTestId('emulator-row-switch'), 'switch emulator row');
-  await expectVisible(page.getByRole('button', { name: 'Choose Nintendo Switch executable' }), 'native executable picker button');
+  await expectVisible(page.getByTestId('emulator-row-switch').getByRole('button', { name: 'Select' }), 'native executable picker button');
   await expectVisible(page.getByRole('button', { name: 'Save' }), 'settings modal save button');
   await assertNestedScrollContainer(page.getByTestId('settings-modal'), '[data-testid="settings-modal-emulators"]', 'settings modal emulators scroll');
   await assertLightweightSettingsCompositing(page);

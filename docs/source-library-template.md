@@ -11,7 +11,7 @@ The Fusion Launcher project publishes the canonical starter template through Git
 Pages:
 
 ```text
-https://mrbeastie.github.io/fusion-launcher/source-library-template/repository.json
+https://blessdevhq.github.io/fusion-launcher/source-library-template/repository.json
 ```
 
 Use this URL to preview the template in Fusion Launcher, or copy
@@ -23,17 +23,17 @@ entries.
 1. Copy the contents of `templates/source-library` into a new GitHub repository,
    including the `.github/workflows` folder.
 2. Edit `repository.json` metadata, catalog entries, and system file entries.
-3. Replace `YOUR_ORG_OR_USER/fusion-launcher` in the copied workflow files with the
-   repository that contains the Fusion Launcher validator, usually
-   `MrBeastie/fusion-launcher`.
+3. Keep `blessdevhq/fusion-launcher` in the copied workflow files as the
+   Fusion Launcher validator repository, unless you maintain a validator fork.
 4. In GitHub, open the new repository settings and set Pages build and
    deployment to GitHub Actions.
 5. Push to `main`, then let `Publish Fusion Launcher source library` deploy Pages.
 6. Paste `https://<owner>.github.io/<repo>/repository.json` into Fusion Launcher
    Settings > Sources.
 
-If you copy the template workflow into a standalone repository, replace
-`YOUR_ORG_OR_USER/fusion-launcher` with the repository that contains the validator.
+If you copy the template workflow into a standalone repository, keep
+`blessdevhq/fusion-launcher` as the validator repository unless you maintain a
+validator fork.
 
 ## Create a Private or Local Library
 

@@ -62,7 +62,7 @@ describe('settings modal draft state', () => {
     assert.equal(getEmulatorDraftState(savedSettings, savedSettings, 'ps1').label, 'File moved');
   });
 
-  it('counts configured MVP emulator paths', () => {
+  it('counts configured emulator manager paths', () => {
     assert.equal(countConfiguredEmulators(savedSettings), 2);
   });
 });

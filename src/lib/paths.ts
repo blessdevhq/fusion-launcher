@@ -6,11 +6,11 @@ export async function defaultSaveDirForGame(gameId: string) {
 
   if (isTauriRuntime()) {
     const appDataDir = await appLocalDataDir();
-    return join(appDataDir, 'games', safeGameId);
+    return join(appDataDir, 'Games', safeGameId);
   }
 
   if (isPreviewRuntime()) {
-    return `preview://games/${safeGameId}`;
+    return `preview://Games/${safeGameId}`;
   }
 
   return requireDesktopBridge('Resolving download folders');

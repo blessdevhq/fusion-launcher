@@ -186,7 +186,8 @@ impl RepositoryStore {
         &self,
         game_id: &str,
     ) -> Result<Option<TorrentDownloadRecord>, String> {
-        self.conn
+        let mut record = self
+            .conn
             .query_row(
                 r#"
             SELECT
@@ -201,7 +202,11 @@ impl RepositoryStore {
                 map_torrent_download_row,
             )
             .optional()
-            .map_err(|error| error.to_string())
+            .map_err(|error| error.to_string())?;
+        if let Some(record) = record.as_mut() {
+            self.enrich_torrent_download_record(record)?;
+        }
+        Ok(record)
     }
 
     pub fn list_torrent_downloads(&self) -> Result<Vec<TorrentDownloadRecord>, String> {
@@ -235,8 +240,27 @@ impl RepositoryStore {
         let rows = statement
             .query_map([], map_torrent_download_row)
             .map_err(|error| error.to_string())?;
-        rows.collect::<rusqlite::Result<Vec<_>>>()
-            .map_err(|error| error.to_string())
+        let mut records = rows
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(|error| error.to_string())?;
+        for record in &mut records {
+            self.enrich_torrent_download_record(record)?;
+        }
+        Ok(records)
+    }
+
+    fn enrich_torrent_download_record(
+        &self,
+        record: &mut TorrentDownloadRecord,
+    ) -> Result<(), String> {
+        if let Some(game) = self.get_game(&record.game_id)? {
+            record.subject_type = Some("game".to_string());
+            record.display_name = Some(game.title);
+        } else if let Some(asset) = self.get_asset(&record.game_id)? {
+            record.subject_type = Some("asset".to_string());
+            record.display_name = Some(asset.display_name);
+        }
+        Ok(())
     }
 
     pub fn list_startup_torrent_downloads(&self) -> Result<Vec<TorrentDownloadRecord>, String> {
@@ -452,6 +476,21 @@ impl RepositoryStore {
             .ok_or_else(|| "Direct download record was not persisted.".to_string())
     }
 
+    pub fn record_direct_asset_download_started(
+        &self,
+        asset_id: &str,
+        source_kind: &str,
+        target_path: &str,
+        total_bytes: u64,
+    ) -> Result<TorrentDownloadRecord, String> {
+        self.record_direct_game_download_started(
+            asset_id,
+            &format!("asset:{source_kind}"),
+            target_path,
+            total_bytes,
+        )
+    }
+
     pub fn record_direct_game_download_failed(
         &self,
         game_id: &str,
@@ -469,6 +508,26 @@ impl RepositoryStore {
                 total_bytes,
             )?;
             self.set_torrent_status(game_id, "error", Some(error))
+        })
+    }
+
+    pub fn record_direct_asset_download_failed(
+        &self,
+        asset_id: &str,
+        source_kind: &str,
+        target_path: &str,
+        total_bytes: u64,
+        error: &str,
+    ) -> Result<TorrentDownloadRecord, String> {
+        self.in_transaction(|| {
+            self.record_download(asset_id, "asset", None, None, Some(error))?;
+            self.record_direct_asset_download_started(
+                asset_id,
+                source_kind,
+                target_path,
+                total_bytes,
+            )?;
+            self.set_torrent_status(asset_id, "error", Some(error))
         })
     }
 
@@ -491,6 +550,37 @@ impl RepositoryStore {
             )?;
             let torrent = self.update_torrent_progress(
                 game_id,
+                "completed",
+                100.0,
+                total_bytes,
+                total_bytes,
+                0,
+                0,
+                0,
+            )?;
+            Ok((download, torrent))
+        })
+    }
+
+    pub fn record_direct_asset_download_completed(
+        &self,
+        asset_id: &str,
+        source_kind: &str,
+        local_path: &str,
+        sha256: &str,
+        total_bytes: u64,
+    ) -> Result<(DownloadRecord, TorrentDownloadRecord), String> {
+        self.in_transaction(|| {
+            let download =
+                self.record_download(asset_id, "asset", Some(local_path), Some(sha256), None)?;
+            self.record_direct_asset_download_started(
+                asset_id,
+                source_kind,
+                local_path,
+                total_bytes,
+            )?;
+            let torrent = self.update_torrent_progress(
+                asset_id,
                 "completed",
                 100.0,
                 total_bytes,

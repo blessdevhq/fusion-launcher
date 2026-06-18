@@ -5,7 +5,7 @@
     "version": "1.0.0",
     "schemaVersion": 3,
     "maintainer": "Fusion Launcher Team",
-    "homepageUrl": "https://github.com/MrBeastie/fusion-launcher/tree/main/examples/repositories",
+    "homepageUrl": "https://github.com/blessdevhq/fusion-launcher/tree/main/examples/repositories",
     "license": "Metadata-only fictional showcase entries",
     "trustLevel": "official"
   },
@@ -32,13 +32,13 @@
       "id": "star-orbit",
       "platform": "switch",
       "title": "Star Orbit Prototype",
-      "description": "A fictional modern-console showcase entry for testing user-provided package import.",
+      "description": "A fictional user-provided showcase entry for testing package import and setup notes.",
       "artwork": {
-        "cover": "https://example.com/fusion-launcher/showcase/star-orbit-cover.jpg",
-        "hero": "https://example.com/fusion-launcher/showcase/star-orbit-hero.jpg",
-        "logo": "https://example.com/fusion-launcher/showcase/star-orbit-logo.png",
+        "cover": "https://blessdevhq.github.io/fusion-launcher/fusion/hero-mascot.png",
+        "hero": "https://blessdevhq.github.io/fusion-launcher/fusion/hero-key-visual.png",
+        "logo": "https://blessdevhq.github.io/fusion-launcher/fusion/logo-lockup.png",
         "screenshots": [
-          "https://example.com/fusion-launcher/showcase/star-orbit-screen-1.jpg"
+          "https://blessdevhq.github.io/fusion-launcher/fusion/reference-board.png"
         ]
       },
       "metadata": {
@@ -73,8 +73,8 @@
       "title": "Crystal Caverns DX",
       "description": "A fictional handheld platformer entry for validating rich catalog artwork and import setup.",
       "artwork": {
-        "cover": "https://example.com/fusion-launcher/showcase/crystal-caverns-cover.jpg",
-        "hero": "https://example.com/fusion-launcher/showcase/crystal-caverns-hero.jpg"
+        "cover": "https://blessdevhq.github.io/fusion-launcher/fusion/app-icon.png",
+        "hero": "https://blessdevhq.github.io/fusion-launcher/fusion/og-image.png"
       },
       "metadata": {
         "releaseYear": 2026,

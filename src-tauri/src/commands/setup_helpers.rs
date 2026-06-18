@@ -346,6 +346,158 @@ pub(super) fn import_profile_system_file_into_store(
     }
 }
 
+/// Scan `search_dir` (a freshly-extracted emulator install) for files that
+/// satisfy the profile's required system files and register any found ones as
+/// imports. Used by the manifest install flow: an emulator delivered via
+/// `core_bundle_url` may ship its own keys/BIOS inside the archive, so those
+/// count as provided instead of forcing a separate manual import. Returns the
+/// requirement ids that were adopted.
+pub(crate) fn adopt_bundled_profile_system_files(
+    store: &RepositoryStore,
+    data_dir: &Path,
+    profile: &PlatformSetupProfile,
+    search_dir: &Path,
+) -> Result<Vec<String>, String> {
+    let mut adopted = Vec::new();
+    let dir_str = search_dir.to_string_lossy().to_string();
+    if !search_dir.is_dir() {
+        crate::logging::log_event(
+            data_dir,
+            "adopt_skip_no_dir",
+            &[("platform", profile.platform.as_str()), ("dir", &dir_str)],
+        );
+        return Ok(adopted);
+    }
+    for requirement in &profile.system_files {
+        if requirement.source_mode != "user_provided" {
+            continue;
+        }
+        // Leave a file the user already imported successfully untouched.
+        if let Some(import) = store.get_profile_system_file_import(&profile.id, &requirement.id)? {
+            if import.status == "ready" {
+                continue;
+            }
+        }
+        let Some(found) = find_bundled_system_file(search_dir, requirement) else {
+            // Log what is actually on disk so a non-standard key name/location
+            // is visible instead of silently surfacing "Needs attention".
+            crate::logging::log_event(
+                data_dir,
+                "adopt_not_found",
+                &[
+                    ("requirement", requirement.id.as_str()),
+                    ("dir", &dir_str),
+                    ("files", &sample_files(search_dir)),
+                ],
+            );
+            continue;
+        };
+        let found_str = found.to_string_lossy().to_string();
+        let report =
+            import_profile_system_file_into_store(store, data_dir, profile, requirement, &found)?;
+        crate::logging::log_event(
+            data_dir,
+            "adopt_system_file",
+            &[
+                ("requirement", requirement.id.as_str()),
+                ("found", &found_str),
+                ("status", report.error_code.as_deref().unwrap_or("ready")),
+            ],
+        );
+        if report.error_code.is_none() {
+            adopted.push(requirement.id.clone());
+        }
+    }
+    Ok(adopted)
+}
+
+/// Up to 40 file paths (relative to `dir`) for diagnostics logging.
+fn sample_files(dir: &Path) -> String {
+    let mut names = Vec::new();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(current) = stack.pop() {
+        if names.len() >= 40 {
+            break;
+        }
+        let Ok(entries) = fs::read_dir(&current) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+            } else if let Some(relative) = path.strip_prefix(dir).ok().and_then(|r| r.to_str()) {
+                names.push(relative.to_string());
+                if names.len() >= 40 {
+                    break;
+                }
+            }
+        }
+    }
+    if names.is_empty() {
+        "<none>".to_string()
+    } else {
+        names.join(" | ")
+    }
+}
+
+/// Locate a file under `dir` that satisfies a system-file requirement, searching
+/// recursively. Match priority: (1) exact target file name (e.g. `prod.keys`),
+/// (2) any file with a matching extension (e.g. `*.keys`), (3) for `keys`
+/// requirements only, any file whose name contains the requirement keyword
+/// (covers non-standard names a bundle might ship).
+fn find_bundled_system_file(
+    dir: &Path,
+    requirement: &ProfileSystemFileRequirement,
+) -> Option<PathBuf> {
+    let wanted_name = requirement
+        .target_name
+        .as_deref()
+        .and_then(|target| Path::new(target).file_name())
+        .and_then(|name| name.to_str())
+        .map(|name| name.to_ascii_lowercase());
+    // Keyword fallback applies only to key bundles, to avoid false positives.
+    let keyword = (requirement.asset_kind == "keys").then_some("keys");
+
+    let mut stack = vec![dir.to_path_buf()];
+    let mut extension_match = None;
+    let mut keyword_match = None;
+    while let Some(current) = stack.pop() {
+        let Ok(entries) = fs::read_dir(&current) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            let file_name = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .map(|name| name.to_ascii_lowercase());
+            if let (Some(wanted), Some(name)) = (wanted_name.as_ref(), file_name.as_ref()) {
+                if name == wanted {
+                    return Some(path);
+                }
+            }
+            if extension_match.is_none()
+                && profile_system_file_matches_extension(&path, requirement)
+            {
+                extension_match = Some(path.clone());
+            }
+            if keyword_match.is_none() {
+                if let (Some(keyword), Some(name)) = (keyword, file_name.as_ref()) {
+                    if name.contains(keyword) {
+                        keyword_match = Some(path);
+                    }
+                }
+            }
+        }
+    }
+    extension_match.or(keyword_match)
+}
+
 pub(super) fn profile_system_file_target(
     data_dir: &Path,
     profile: &PlatformSetupProfile,

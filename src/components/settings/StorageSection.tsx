@@ -15,6 +15,10 @@ export function StorageSection({
   onDownloadRootChange: (value: string) => void;
 }) {
   const { t } = useI18n();
+  const managedRoot = appDataDir || t.common.loading;
+  const gamesRoot = appDataDir ? appendPath(appDataDir, 'Games') : t.common.loading;
+  const emulatorsRoot = appDataDir ? appendPath(appDataDir, 'Emulators') : t.common.loading;
+  const systemRoot = appDataDir ? appendPath(appDataDir, 'System') : t.common.loading;
 
   return (
     <section className="grid gap-4">
@@ -38,9 +42,18 @@ export function StorageSection({
         />
       </label>
       <div className="grid gap-3 lg:grid-cols-2">
+        <PathCard label="Managed root" value={managedRoot} />
+        <PathCard label="Games" value={gamesRoot} />
+        <PathCard label="Emulators" value={emulatorsRoot} />
+        <PathCard label="System" value={systemRoot} />
         <PathCard label={t.settings.storage.appData} value={appDataDir || t.common.loading} />
         <PathCard label={t.settings.storage.logs} value={logPath || t.common.loading} />
       </div>
     </section>
   );
+}
+
+function appendPath(root: string, child: string) {
+  const separator = root.startsWith('preview://') || root.includes('/') ? '/' : '\\';
+  return `${root.replace(/[\\/]+$/, '')}${separator}${child}`;
 }

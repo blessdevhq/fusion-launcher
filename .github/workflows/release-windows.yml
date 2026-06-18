@@ -14,10 +14,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
@@ -29,6 +29,19 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # Build the libtorrent download sidecar into a standalone .exe and place it
+      # at src-tauri/binaries/fusion-torrent-<triple>.exe for the externalBin
+      # overlay (tauri.sidecar.conf.json) applied during the installer build.
+      - name: Build torrent sidecar
+        run: |
+          pip install -r sidecar/requirements.txt
+          npm run sidecar:build
 
       - name: Run QA gate
         run: npm run qa
@@ -63,7 +76,7 @@ jobs:
           # scraping still works per-user but under stricter anonymous throttling.
           FUSION_LAUNCHER_SCREENSCRAPER_DEVID: ${{ secrets.FUSION_LAUNCHER_SCREENSCRAPER_DEVID || secrets.RETROHYDRA_SCREENSCRAPER_DEVID }}
           FUSION_LAUNCHER_SCREENSCRAPER_DEVPASSWORD: ${{ secrets.FUSION_LAUNCHER_SCREENSCRAPER_DEVPASSWORD || secrets.RETROHYDRA_SCREENSCRAPER_DEVPASSWORD }}
-        run: npm run tauri:build -- --target x86_64-pc-windows-msvc
+        run: npm run tauri:build -- --target x86_64-pc-windows-msvc --config src-tauri/tauri.sidecar.conf.json
 
       - name: Run packaged smoke
         env:
@@ -131,7 +144,7 @@ jobs:
             platforms = [ordered]@{
               "windows-x86_64" = [ordered]@{
                 signature = $signature
-                url = "https://github.com/MrBeastie/fusion-launcher/releases/download/$tag/FusionLauncher_${version}_x64-setup.nsis.zip"
+                url = "https://github.com/blessdevhq/fusion-launcher/releases/download/$tag/FusionLauncher_${version}_x64-setup.nsis.zip"
               }
             }
           }

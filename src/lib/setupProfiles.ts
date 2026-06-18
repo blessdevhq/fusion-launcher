@@ -168,8 +168,8 @@ export const PLATFORM_SETUP_PROFILES: PlatformSetupProfile[] = [
     emulator: {
       installMode: 'manual',
       emulatorName: 'Switch-эмулятор',
-      executableName: 'Ryujinx.exe',
-      executableCandidates: ['Ryujinx.exe', 'suyu.exe']
+      executableName: 'eden.exe',
+      executableCandidates: ['eden.exe', 'eden-cli.exe', 'Ryujinx.exe', 'suyu.exe']
     },
     gameFiles: {
       expectedExtensions: ['.nsp', '.xci', '.nca'],

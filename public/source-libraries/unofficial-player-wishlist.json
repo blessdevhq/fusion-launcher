@@ -1,0 +1,562 @@
+{
+  "metadata": {
+    "id": "fusion-launcher-unofficial-player-wishlist",
+    "name": "Fusion Launcher Unofficial Player Wishlist",
+    "version": "1.0.0",
+    "schemaVersion": 3,
+    "maintainer": "Community example",
+    "homepageUrl": "https://blessdevhq.github.io/fusion-launcher/source-libraries/unofficial-player-wishlist.json",
+    "license": "Unofficial metadata-only/user-provided showcase catalog. It provides no ROMs, disc images, BIOS, firmware, keys, download URLs, artwork from publishers, or instructions for obtaining copyrighted content. Game names and trademarks belong to their respective owners.",
+    "trustLevel": "community",
+    "updatedAt": "2026-06-14T16:14:36Z"
+  },
+  "system_files": [
+    {
+      "id": "user-ps1-bios",
+      "platform": "ps1",
+      "assetKind": "bios",
+      "displayName": "User-provided PlayStation BIOS",
+      "sources": [
+        {
+          "kind": "user_provided",
+          "instructions": "Import a PlayStation BIOS file that you dumped from hardware you own. This catalog does not provide BIOS downloads."
+        }
+      ],
+      "installHint": {
+        "target": "app_system",
+        "relativePath": "ps1/bios/scph5501.bin"
+      }
+    },
+    {
+      "id": "user-ps2-bios",
+      "platform": "ps2",
+      "assetKind": "bios",
+      "displayName": "User-provided PlayStation 2 BIOS",
+      "sources": [
+        {
+          "kind": "user_provided",
+          "instructions": "Import a PlayStation 2 BIOS file that you dumped from hardware you own. This catalog does not provide BIOS downloads."
+        }
+      ],
+      "installHint": {
+        "target": "app_system",
+        "relativePath": "ps2/bios/ps2-bios.bin"
+      }
+    },
+    {
+      "id": "user-switch-keys",
+      "platform": "switch",
+      "assetKind": "keys",
+      "displayName": "User-provided Switch keys",
+      "sources": [
+        {
+          "kind": "user_provided",
+          "instructions": "Import keys from your own legally owned console environment. This catalog does not provide keys, firmware, or games."
+        }
+      ],
+      "installHint": {
+        "target": "app_system",
+        "relativePath": "switch/prod.keys"
+      }
+    }
+  ],
+  "catalog": [
+    {
+      "id": "super-mario-bros-3-nes",
+      "platform": "nes",
+      "title": "Super Mario Bros. 3",
+      "description": "Unofficial wishlist entry for users who legally own the game and provide their own dump. No download is included.",
+      "contentMode": "user_provided",
+      "setupProfileId": "nes-mesen",
+      "metadata": {
+        "releaseYear": 1988,
+        "developer": "Nintendo R&D4",
+        "publisher": "Nintendo",
+        "genres": ["Platformer"],
+        "tags": ["wishlist", "user-provided", "no-downloads"],
+        "players": "1-2 players",
+        "series": "Super Mario"
+      },
+      "downloads": [
+        {
+          "kind": "user_provided",
+          "instructions": "Import your own legally dumped .nes file."
+        }
+      ],
+      "expectedExtensions": [".nes"],
+      "requiredSystemFileIds": [],
+      "launch": {
+        "argsTemplate": "{game_path}"
+      }
+    },
+    {
+      "id": "the-legend-of-zelda-nes",
+      "platform": "nes",
+      "title": "The Legend of Zelda",
+      "description": "Unofficial wishlist entry for users who legally own the game and provide their own dump. No download is included.",
+      "contentMode": "user_provided",
+      "setupProfileId": "nes-mesen",
+      "metadata": {
+        "releaseYear": 1986,
+        "developer": "Nintendo R&D4",
+        "publisher": "Nintendo",
+        "genres": ["Action-adventure"],
+        "tags": ["wishlist", "user-provided", "no-downloads"],
+        "players": "1 player",
+        "series": "The Legend of Zelda"
+      },
+      "downloads": [
+        {
+          "kind": "user_provided",
+          "instructions": "Import your own legally dumped .nes file."
+        }
+      ],
+      "expectedExtensions": [".nes"],
+      "requiredSystemFileIds": [],
+      "launch": {
+        "argsTemplate": "{game_path}"
+      }
+    },
+    {
+      "id": "super-mario-world-snes",
+      "platform": "snes",
+      "title": "Super Mario World",
+      "description": "Unofficial wishlist entry for users who legally own the game and provide their own dump. No download is included.",
+      "contentMode": "user_provided",
+      "setupProfileId": "snes-mesen",
+      "metadata": {
+        "releaseYear": 1990,
+        "developer": "Nintendo EAD",
+        "publisher": "Nintendo",
+        "genres": ["Platformer"],
+        "tags": ["wishlist", "user-provided", "no-downloads"],
+        "players": "1-2 players",
+        "series": "Super Mario"
+      },
+      "downloads": [
+        {
+          "kind": "user_provided",
+          "instructions": "Import your own legally dumped .sfc or .smc file."
+        }
+      ],
+      "expectedExtensions": [".sfc", ".smc"],
+      "requiredSystemFileIds": []
+    },
+    {
+      "id": "zelda-link-to-the-past-snes",
+      "platform": "snes",
+      "title": "The Legend of Zelda: A Link to the Past",
+      "description": "Unofficial wishlist entry for users who legally own the game and provide their own dump. No download is included.",
+      "contentMode": "user_provided",
+      "setupProfileId": "snes-mesen",
+      "metadata": {
+        "releaseYear": 1991,
+        "developer": "Nintendo EAD",
+        "publisher": "Nintendo",
+        "genres": ["Action-adventure"],
+        "tags": ["wishlist", "user-provided", "no-downloads"],
+        "players": "1 player",
+        "series": "The Legend of Zelda"
+      },
+      "downloads": [
+        {
+          "kind": "user_provided",
+          "instructions": "Import your own legally dumped .sfc or .smc file."
+        }
+      ],
+      "expectedExtensions": [".sfc", ".smc"],
+      "requiredSystemFileIds": []
+    },
+    {
+      "id": "chrono-trigger-snes",
+      "platform": "snes",
+      "title": "Chrono Trigger",
+      "description": "Unofficial wishlist entry for users who legally own the game and provide their own dump. No download is included.",
+      "contentMode": "user_provided",
+      "setupProfileId": "snes-mesen",
+      "metadata": {
+        "releaseYear": 1995,
+        "developer": "Square",
+        "publisher": "Square",
+        "genres": ["RPG"],
+        "tags": ["wishlist", "user-provided", "no-downloads"],
+        "players": "1 player"
+      },
+      "downloads": [
+        {
+          "kind": "user_provided",
+          "instructions": "Import your own legally dumped .sfc or .smc file."
+        }
+      ],
+      "expectedExtensions": [".sfc", ".smc"],
+      "requiredSystemFileIds": []
+    },
+    {
+      "id": "super-mario-64-n64",
+      "platform": "n64",
+      "title": "Super Mario 64",
+      "description": "Unofficial wishlist entry for users who legally own the game and provide their own dump. No download is included.",
+      "contentMode": "user_provided",
+      "setupProfileId": "n64-rmg",
+      "metadata": {
+        "releaseYear": 1996,
+        "developer": "Nintendo EAD",
+        "publisher": "Nintendo",
+        "genres": ["3D Platformer"],
+        "tags": ["wishlist", "user-provided", "no-downloads"],
+        "players": "1 player",
+        "series": "Super Mario"
+      },
+      "downloads": [
+        {
+          "kind": "user_provided",
+          "instructions": "Import your own legally dumped .z64, .n64, or .v64 file."
+        }
+      ],
+      "expectedExtensions": [".z64", ".n64", ".v64"],
+      "requiredSystemFileIds": []
+    },
+    {
+      "id": "zelda-ocarina-of-time-n64",
+      "platform": "n64",
+      "title": "The Legend of Zelda: Ocarina of Time",
+      "description": "Unofficial wishlist entry for users who legally own the game and provide their own dump. No download is included.",
+      "contentMode": "user_provided",
+      "setupProfileId": "n64-rmg",
+      "metadata": {
+        "releaseYear": 1998,
+        "developer": "Nintendo EAD",
+        "publisher": "Nintendo",
+        "genres": ["Action-adventure"],
+        "tags": ["wishlist", "user-provided", "no-downloads"],
+        "players": "1 player",
+        "series": "The Legend of Zelda"
+      },
+      "downloads": [
+        {
+          "kind": "user_provided",
+          "instructions": "Import your own legally dumped .z64, .n64, or .v64 file."
+        }
+      ],
+      "expectedExtensions": [".z64", ".n64", ".v64"],
+      "requiredSystemFileIds": []
+    },
+    {
+      "id": "goldeneye-007-n64",
+      "platform": "n64",
+      "title": "GoldenEye 007",
+      "description": "Unofficial wishlist entry for users who legally own the game and provide their own dump. No download is included.",
+      "contentMode": "user_provided",
+      "setupProfileId": "n64-rmg",
+      "metadata": {
+        "releaseYear": 1997,
+        "developer": "Rare",
+        "publisher": "Nintendo",
+        "genres": ["First-person shooter"],
+        "tags": ["wishlist", "user-provided", "no-downloads"],
+        "players": "1-4 players"
+      },
+      "downloads": [
+        {
+          "kind": "user_provided",
+          "instructions": "Import your own legally dumped .z64, .n64, or .v64 file."
+        }
+      ],
+      "expectedExtensions": [".z64", ".n64", ".v64"],
+      "requiredSystemFileIds": []
+    },
+    {
+      "id": "pokemon-firered-version-gba",
+      "platform": "gba",
+      "title": "Pokémon FireRed Version",
+      "description": "Unofficial wishlist entry for users who legally own the game and provide their own dump. No download is included.",
+      "contentMode": "user_provided",
+      "setupProfileId": "gba-mgba",
+      "metadata": {
+        "releaseYear": 2004,
+        "developer": "Game Freak",
+        "publisher": "Nintendo",
+        "genres": ["RPG"],
+        "tags": ["wishlist", "user-provided", "no-downloads"],
+        "players": "1 player",
+        "series": "Pokémon"
+      },
+      "downloads": [
+        {
+          "kind": "user_provided",
+          "instructions": "Import your own legally dumped .gba file."
+        }
+      ],
+      "expectedExtensions": [".gba"],
+      "requiredSystemFileIds": []
+    },
+    {
+      "id": "metroid-fusion-gba",
+      "platform": "gba",
+      "title": "Metroid Fusion",
+      "description": "Unofficial wishlist entry for users who legally own the game and provide their own dump. No download is included.",
+      "contentMode": "user_provided",
+      "setupProfileId": "gba-mgba",
+      "metadata": {
+        "releaseYear": 2002,
+        "developer": "Nintendo R&D1",
+        "publisher": "Nintendo",
+        "genres": ["Action-adventure"],
+        "tags": ["wishlist", "user-provided", "no-downloads"],
+        "players": "1 player",
+        "series": "Metroid"
+      },
+      "downloads": [
+        {
+          "kind": "user_provided",
+          "instructions": "Import your own legally dumped .gba file."
+        }
+      ],
+      "expectedExtensions": [".gba"],
+      "requiredSystemFileIds": []
+    },
+    {
+      "id": "advance-wars-gba",
+      "platform": "gba",
+      "title": "Advance Wars",
+      "description": "Unofficial wishlist entry for users who legally own the game and provide their own dump. No download is included.",
+      "contentMode": "user_provided",
+      "setupProfileId": "gba-mgba",
+      "metadata": {
+        "releaseYear": 2001,
+        "developer": "Intelligent Systems",
+        "publisher": "Nintendo",
+        "genres": ["Turn-based tactics"],
+        "tags": ["wishlist", "user-provided", "no-downloads"],
+        "players": "1-4 players",
+        "series": "Advance Wars"
+      },
+      "downloads": [
+        {
+          "kind": "user_provided",
+          "instructions": "Import your own legally dumped .gba file."
+        }
+      ],
+      "expectedExtensions": [".gba"],
+      "requiredSystemFileIds": []
+    },
+    {
+      "id": "castlevania-symphony-of-the-night-ps1",
+      "platform": "ps1",
+      "title": "Castlevania: Symphony of the Night",
+      "description": "Unofficial wishlist entry for users who legally own the game and provide their own disc image. No download is included.",
+      "contentMode": "user_provided",
+      "setupProfileId": "ps1-manual",
+      "metadata": {
+        "releaseYear": 1997,
+        "developer": "Konami",
+        "publisher": "Konami",
+        "genres": ["Action RPG", "Metroidvania"],
+        "tags": ["wishlist", "user-provided", "no-downloads"],
+        "players": "1 player",
+        "series": "Castlevania"
+      },
+      "downloads": [
+        {
+          "kind": "user_provided",
+          "instructions": "Import your own legally created .cue/.bin, .iso, .img, .pbp, or .chd disc image."
+        }
+      ],
+      "expectedExtensions": [".cue", ".bin", ".iso", ".img", ".pbp", ".chd"],
+      "requiredSystemFileIds": ["user-ps1-bios"],
+      "launch": {
+        "argsTemplate": "-batch \"{game_path}\""
+      }
+    },
+    {
+      "id": "final-fantasy-vii-ps1",
+      "platform": "ps1",
+      "title": "Final Fantasy VII",
+      "description": "Unofficial wishlist entry for users who legally own the game and provide their own disc image. No download is included.",
+      "contentMode": "user_provided",
+      "setupProfileId": "ps1-manual",
+      "metadata": {
+        "releaseYear": 1997,
+        "developer": "Square",
+        "publisher": "Square",
+        "genres": ["RPG"],
+        "tags": ["wishlist", "user-provided", "no-downloads"],
+        "players": "1 player",
+        "series": "Final Fantasy"
+      },
+      "downloads": [
+        {
+          "kind": "user_provided",
+          "instructions": "Import your own legally created .cue/.bin, .iso, .img, .pbp, or .chd disc image."
+        }
+      ],
+      "expectedExtensions": [".cue", ".bin", ".iso", ".img", ".pbp", ".chd"],
+      "requiredSystemFileIds": ["user-ps1-bios"],
+      "launch": {
+        "argsTemplate": "-batch \"{game_path}\""
+      }
+    },
+    {
+      "id": "gran-turismo-4-ps2",
+      "platform": "ps2",
+      "title": "Gran Turismo 4",
+      "description": "Unofficial wishlist entry for users who legally own the game and provide their own disc image. No download is included.",
+      "contentMode": "user_provided",
+      "setupProfileId": "ps2-pcsx2",
+      "metadata": {
+        "releaseYear": 2004,
+        "developer": "Polyphony Digital",
+        "publisher": "Sony Computer Entertainment",
+        "genres": ["Racing", "Simulation"],
+        "tags": ["wishlist", "user-provided", "no-downloads"],
+        "players": "1-2 players",
+        "series": "Gran Turismo"
+      },
+      "downloads": [
+        {
+          "kind": "user_provided",
+          "instructions": "Import your own legally created .iso, .bin, .img, or .chd disc image."
+        }
+      ],
+      "expectedExtensions": [".iso", ".bin", ".img", ".chd"],
+      "requiredSystemFileIds": ["user-ps2-bios"],
+      "launch": {
+        "argsTemplate": "-fullscreen -- \"{game_path}\""
+      }
+    },
+    {
+      "id": "god-of-war-ii-ps2",
+      "platform": "ps2",
+      "title": "God of War II",
+      "description": "Unofficial wishlist entry for users who legally own the game and provide their own disc image. No download is included.",
+      "contentMode": "user_provided",
+      "setupProfileId": "ps2-pcsx2",
+      "metadata": {
+        "releaseYear": 2007,
+        "developer": "Santa Monica Studio",
+        "publisher": "Sony Computer Entertainment",
+        "genres": ["Action-adventure"],
+        "tags": ["wishlist", "user-provided", "no-downloads"],
+        "players": "1 player",
+        "series": "God of War"
+      },
+      "downloads": [
+        {
+          "kind": "user_provided",
+          "instructions": "Import your own legally created .iso, .bin, .img, or .chd disc image."
+        }
+      ],
+      "expectedExtensions": [".iso", ".bin", ".img", ".chd"],
+      "requiredSystemFileIds": ["user-ps2-bios"],
+      "launch": {
+        "argsTemplate": "-fullscreen -- \"{game_path}\""
+      }
+    },
+    {
+      "id": "persona-3-portable-psp",
+      "platform": "psp",
+      "title": "Persona 3 Portable",
+      "description": "Unofficial wishlist entry for users who legally own the game and provide their own dump. No download is included.",
+      "contentMode": "user_provided",
+      "setupProfileId": "psp-ppsspp",
+      "metadata": {
+        "releaseYear": 2009,
+        "developer": "Atlus",
+        "publisher": "Atlus",
+        "genres": ["RPG"],
+        "tags": ["wishlist", "user-provided", "no-downloads"],
+        "players": "1 player",
+        "series": "Persona"
+      },
+      "downloads": [
+        {
+          "kind": "user_provided",
+          "instructions": "Import your own legally dumped .iso, .cso, or .pbp file."
+        }
+      ],
+      "expectedExtensions": [".iso", ".cso", ".pbp"],
+      "requiredSystemFileIds": []
+    },
+    {
+      "id": "crisis-core-final-fantasy-vii-psp",
+      "platform": "psp",
+      "title": "Crisis Core: Final Fantasy VII",
+      "description": "Unofficial wishlist entry for users who legally own the game and provide their own dump. No download is included.",
+      "contentMode": "user_provided",
+      "setupProfileId": "psp-ppsspp",
+      "metadata": {
+        "releaseYear": 2007,
+        "developer": "Square Enix",
+        "publisher": "Square Enix",
+        "genres": ["Action RPG"],
+        "tags": ["wishlist", "user-provided", "no-downloads"],
+        "players": "1 player",
+        "series": "Final Fantasy"
+      },
+      "downloads": [
+        {
+          "kind": "user_provided",
+          "instructions": "Import your own legally dumped .iso, .cso, or .pbp file."
+        }
+      ],
+      "expectedExtensions": [".iso", ".cso", ".pbp"],
+      "requiredSystemFileIds": []
+    },
+    {
+      "id": "super-mario-odyssey-switch",
+      "platform": "switch",
+      "title": "Super Mario Odyssey",
+      "description": "Unofficial wishlist entry for users who legally own the game, console environment, and provide their own package. No download is included.",
+      "contentMode": "user_provided",
+      "setupProfileId": "switch-manual",
+      "metadata": {
+        "releaseYear": 2017,
+        "developer": "Nintendo EPD",
+        "publisher": "Nintendo",
+        "genres": ["3D Platformer"],
+        "tags": ["wishlist", "user-provided", "no-downloads", "manual-setup"],
+        "players": "1-2 players",
+        "series": "Super Mario"
+      },
+      "downloads": [
+        {
+          "kind": "user_provided",
+          "instructions": "Import your own legally dumped .nsp, .xci, or .nca package."
+        }
+      ],
+      "expectedExtensions": [".nsp", ".xci", ".nca"],
+      "requiredSystemFileIds": ["user-switch-keys"],
+      "launch": {
+        "argsTemplate": "{game_path}"
+      }
+    },
+    {
+      "id": "zelda-breath-of-the-wild-switch",
+      "platform": "switch",
+      "title": "The Legend of Zelda: Breath of the Wild",
+      "description": "Unofficial wishlist entry for users who legally own the game, console environment, and provide their own package. No download is included.",
+      "contentMode": "user_provided",
+      "setupProfileId": "switch-manual",
+      "metadata": {
+        "releaseYear": 2017,
+        "developer": "Nintendo EPD",
+        "publisher": "Nintendo",
+        "genres": ["Action-adventure", "Open world"],
+        "tags": ["wishlist", "user-provided", "no-downloads", "manual-setup"],
+        "players": "1 player",
+        "series": "The Legend of Zelda"
+      },
+      "downloads": [
+        {
+          "kind": "user_provided",
+          "instructions": "Import your own legally dumped .nsp, .xci, or .nca package."
+        }
+      ],
+      "expectedExtensions": [".nsp", ".xci", ".nca"],
+      "requiredSystemFileIds": ["user-switch-keys"],
+      "launch": {
+        "argsTemplate": "{game_path}"
+      }
+    }
+  ]
+}

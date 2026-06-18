@@ -40,9 +40,11 @@ pub fn get_game_setup_state(
 #[tauri::command]
 pub async fn install_profile_emulator(
     profile_id: String,
+    target_dir: Option<String>,
     state: State<'_, AppState>,
     app: AppHandle,
 ) -> Result<ProfileEmulatorConfig, String> {
+    let target_dir = resolve_target_dir_override(target_dir.as_deref())?;
     let profile = setup_profiles::get_platform_setup_profile(profile_id.trim())
         .ok_or_else(|| format!("Unknown setup profile: {profile_id}"))?;
     if profile.emulator.install_mode != "downloadable" {
@@ -52,11 +54,56 @@ pub async fn install_profile_emulator(
         ));
     }
 
-    crate::orchestrator::install_emulator_internal(&app, &state, &profile.platform).await?;
+    crate::orchestrator::install_emulator_internal(
+        &app,
+        &state,
+        &profile.platform,
+        None,
+        target_dir.as_deref(),
+    )
+    .await?;
     let store = lock_store(&state)?;
     store
         .get_profile_emulator_config(&profile.id)?
         .ok_or_else(|| format!("{} was installed but not persisted.", profile.display_name))
+}
+
+#[tauri::command]
+pub fn remove_profile_emulator(
+    profile_id: String,
+    state: State<'_, AppState>,
+) -> Result<ProfileEmulatorRemovalReport, String> {
+    let store = lock_store(&state)?;
+    remove_profile_emulator_from_store(&store, &state.data_dir, profile_id.trim())
+}
+
+pub(super) fn remove_profile_emulator_from_store(
+    store: &RepositoryStore,
+    data_dir: &Path,
+    profile_id: &str,
+) -> Result<ProfileEmulatorRemovalReport, String> {
+    let profile = setup_profiles::get_platform_setup_profile(profile_id)
+        .ok_or_else(|| format!("Unknown setup profile: {profile_id}"))?;
+    let mut deleted_files = false;
+    let mut removed_path = None;
+
+    if profile.emulator.install_mode == "downloadable" {
+        let install_root = data_dir.join("Emulators");
+        let install_dir = install_root.join(&profile.platform).join(&profile.id);
+        deleted_files = crate::archive::remove_directory_inside(&install_root, &install_dir)?;
+        removed_path = Some(install_dir.to_string_lossy().to_string());
+    }
+
+    let removed_config = store.delete_profile_emulator_config(&profile.id)?;
+
+    Ok(ProfileEmulatorRemovalReport {
+        profile_id: profile.id,
+        platform: profile.platform,
+        removed_config,
+        deleted_files,
+        removed_path,
+        message: None,
+    })
 }
 
 #[tauri::command]

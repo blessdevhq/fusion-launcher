@@ -324,6 +324,8 @@ export type TorrentDownloadStatus =
 
 export interface TorrentDownloadRecord {
   gameId: string;
+  subjectType?: 'asset' | 'game' | null;
+  displayName?: string | null;
   magnetUri: string;
   saveDir: string;
   status: TorrentDownloadStatus;
@@ -380,6 +382,8 @@ export interface TorrentStatus {
 
 export interface DownloadProgressEvent {
   gameId: string;
+  subjectType?: 'asset' | 'game' | null;
+  displayName?: string | null;
   status: TorrentDownloadStatus;
   progress: number;
   progressPercent: number;
@@ -512,6 +516,15 @@ export interface ProfileEmulatorConfig {
   lastValidatedAt?: string | null;
   version?: string | null;
   launchArgsTemplate?: string | null;
+}
+
+export interface ProfileEmulatorRemovalReport {
+  profileId: string;
+  platform: Platform;
+  removedConfig: boolean;
+  deletedFiles: boolean;
+  removedPath?: string | null;
+  message?: string | null;
 }
 
 export interface GameSetupState {

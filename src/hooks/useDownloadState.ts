@@ -121,6 +121,8 @@ function mergeRecordWithEvent(
 ): TorrentDownloadRecord {
   return {
     ...record,
+    subjectType: event.subjectType ?? record.subjectType,
+    displayName: event.displayName ?? record.displayName,
     status: event.status,
     saveDir: event.saveDir || record.saveDir,
     progressPercent: event.progressPercent,

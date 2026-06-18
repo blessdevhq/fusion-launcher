@@ -1,0 +1,6 @@
+# The torrent sidecar binaries are build artifacts produced by
+# `npm run sidecar:build` (PyInstaller). They are bundled into the installer via
+# tauri.sidecar.conf.json and must NOT be committed — CI rebuilds them per
+# target. Keep this directory in the tree but ignore everything it holds.
+*
+!.gitignore
