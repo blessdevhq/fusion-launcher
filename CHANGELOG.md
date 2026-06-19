@@ -1,5 +1,30 @@
 # Changelog
 
+## v0.4.0
+
+Storage, sources, and artwork quality-of-life from tester feedback.
+
+### Added
+
+- Configurable **Library folder** for large content (emulators, ROMs, system files, temp). Defaults to `AppData\Local` instead of `Roaming`, with a folder picker in Settings. The database, logs, and config stay in `Roaming`; existing installs keep working with no migration.
+- Unified **Add a source** flow: a single field accepts a community/personal repository or a game manifest (URL or pasted JSON) and auto-detects the format. Adding a source registers its catalog as browsable without installing anything.
+- Automatic **cover-art backfill**: a background scrape fills in missing covers on launch and after a source is added (capped, skipping already-scraped games), shipping a default SteamGridDB key so it works out of the box.
+- Downloads now **group an emulator/core bundle under the game** it was pulled in for, instead of showing two unrelated rows.
+- The NSIS installer **bundles the Visual C++ Redistributable** and installs it on demand when missing, so the libtorrent download sidecar runs on a clean Windows.
+
+### Changed
+
+- First-run onboarding requires only a **connected source**; metadata and emulator setup moved to Settings (the emulator installs on demand when a game is installed), so nothing is downloaded just to get into the app.
+- Release builds no longer open an extra **console window** alongside the app.
+
+### Fixed
+
+- Torrent sidecar failures now surface the real **stderr** cause (e.g. a missing runtime) instead of a bare "exited unexpectedly (code 1)".
+
+### Notes
+
+- The shipped SteamGridDB key is read-only and rate-limited; a user-supplied key (Settings) or a compile-time release key overrides it.
+
 ## v0.2.0
 
 Automatic metadata and artwork scraping.
