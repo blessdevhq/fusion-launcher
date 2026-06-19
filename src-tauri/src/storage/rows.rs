@@ -58,17 +58,21 @@ pub(super) fn apply_payload(
         }
     }
 
-    if let Some(cover) = payload.cover.as_deref().filter(|value| !is_blank(value)) {
+    if let Some(cover) = payload
+        .cover
+        .as_deref()
+        .filter(|value| has_usable_artwork_url(value))
+    {
         let source_has_cover = view
             .artwork
             .as_ref()
             .and_then(|artwork| artwork.cover.as_deref())
-            .map(|value| !is_blank(value))
+            .map(has_usable_artwork_url)
             .unwrap_or(false)
             || view
                 .cover_image_url
                 .as_deref()
-                .map(|value| !is_blank(value))
+                .map(has_usable_artwork_url)
                 .unwrap_or(false);
         if replace_existing || !source_has_cover {
             let artwork = view.artwork.get_or_insert_with(empty_artwork);
@@ -77,7 +81,7 @@ pub(super) fn apply_payload(
                 || view
                     .cover_image_url
                     .as_deref()
-                    .map(is_blank)
+                    .map(|value| !has_usable_artwork_url(value))
                     .unwrap_or(true)
             {
                 view.cover_image_url = Some(cover.to_string());
@@ -85,12 +89,16 @@ pub(super) fn apply_payload(
         }
     }
 
-    if let Some(hero) = payload.hero.as_deref().filter(|value| !is_blank(value)) {
+    if let Some(hero) = payload
+        .hero
+        .as_deref()
+        .filter(|value| has_usable_artwork_url(value))
+    {
         let source_has_hero = view
             .artwork
             .as_ref()
             .and_then(|artwork| artwork.hero.as_deref())
-            .map(|value| !is_blank(value))
+            .map(has_usable_artwork_url)
             .unwrap_or(false);
         if replace_existing || !source_has_hero {
             let artwork = view.artwork.get_or_insert_with(empty_artwork);
@@ -98,12 +106,16 @@ pub(super) fn apply_payload(
         }
     }
 
-    if let Some(logo) = payload.logo.as_deref().filter(|value| !is_blank(value)) {
+    if let Some(logo) = payload
+        .logo
+        .as_deref()
+        .filter(|value| has_usable_artwork_url(value))
+    {
         let source_has_logo = view
             .artwork
             .as_ref()
             .and_then(|artwork| artwork.logo.as_deref())
-            .map(|value| !is_blank(value))
+            .map(has_usable_artwork_url)
             .unwrap_or(false);
         if replace_existing || !source_has_logo {
             let artwork = view.artwork.get_or_insert_with(empty_artwork);
@@ -114,14 +126,19 @@ pub(super) fn apply_payload(
     let screenshots = payload
         .screenshots
         .iter()
-        .filter(|value| !is_blank(value))
+        .filter(|value| has_usable_artwork_url(value))
         .cloned()
         .collect::<Vec<_>>();
     if !screenshots.is_empty() {
         let source_has_screenshots = view
             .artwork
             .as_ref()
-            .map(|artwork| artwork.screenshots.iter().any(|value| !is_blank(value)))
+            .map(|artwork| {
+                artwork
+                    .screenshots
+                    .iter()
+                    .any(|value| has_usable_artwork_url(value))
+            })
             .unwrap_or(false);
         if replace_existing || !source_has_screenshots {
             let artwork = view.artwork.get_or_insert_with(empty_artwork);
@@ -223,6 +240,11 @@ pub(super) fn empty_metadata() -> GameMetadata {
 
 pub(super) fn is_blank(value: &str) -> bool {
     value.trim().is_empty()
+}
+
+fn has_usable_artwork_url(value: &str) -> bool {
+    let value = value.trim();
+    !value.is_empty() && !value.contains("...")
 }
 
 pub(super) fn map_game_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<CatalogGameView> {
@@ -426,6 +448,7 @@ pub(super) fn map_torrent_download_row(
         game_id: row.get(0)?,
         subject_type: None,
         display_name: None,
+        parent_game_id: None,
         magnet_uri: row.get(1)?,
         save_dir: row.get(2)?,
         status: row.get(3)?,

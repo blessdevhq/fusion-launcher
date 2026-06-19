@@ -19,16 +19,21 @@ test('scraperApi routes metadata commands through preview runtime', async () => 
   let status = await scraperApi.getScreenscraperStatus();
   assert.equal(status.configured, false);
 
-  status = await scraperApi.saveScreenscraperCredentials('preview-user', 'secret', 'us');
-  assert.equal(status.configured, true);
-  assert.equal(status.region, 'us');
-
   let sgdbStatus = await scraperApi.getSteamgriddbStatus();
   assert.equal(sgdbStatus.configured, false);
 
   sgdbStatus = await scraperApi.saveSteamgriddbKey('sgdb-preview-key');
   assert.equal(sgdbStatus.configured, true);
   assert.equal(sgdbStatus.keySource, 'user');
+
+  await scraperApi.scrapeGame('crystal-caverns');
+  const artworkOnlyState = await scraperApi.getScrapeState('crystal-caverns');
+  assert.equal(artworkOnlyState.status, 'ready');
+  assert.equal(artworkOnlyState.matchKind, 'artwork');
+
+  status = await scraperApi.saveScreenscraperCredentials('preview-user', 'secret', 'us');
+  assert.equal(status.configured, true);
+  assert.equal(status.region, 'us');
 
   await scraperApi.scrapeGame('crystal-caverns');
   const scrapeState = await scraperApi.getScrapeState('crystal-caverns');

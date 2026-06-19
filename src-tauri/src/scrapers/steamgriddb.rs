@@ -93,12 +93,20 @@ impl SteamGridDbClient {
     }
 }
 
+/// Shipped default SteamGridDB API key, used so cover-art lookups work out of
+/// the box without any setup. A user-supplied key (Settings) and the compile-time
+/// `FUSION_LAUNCHER_STEAMGRIDDB_KEY` override both take precedence over it.
+/// SteamGridDB keys are read-only and rate-limited, so embedding one is low-risk;
+/// it is intentionally visible in the source and binary.
+const DEFAULT_STEAMGRIDDB_KEY: &str = "a31a7fa4ab550eefb2686264ba845a0d";
+
 pub fn resolve_api_key(user_key: Option<&str>) -> Option<ResolvedApiKey> {
     resolve_api_key_values(
         user_key,
         first_non_empty(&[
             option_env!("FUSION_LAUNCHER_STEAMGRIDDB_KEY"),
             option_env!("RETROHYDRA_STEAMGRIDDB_KEY"),
+            Some(DEFAULT_STEAMGRIDDB_KEY),
         ]),
     )
 }

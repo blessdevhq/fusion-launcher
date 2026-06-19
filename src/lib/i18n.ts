@@ -213,6 +213,11 @@ export const en = {
     sourcesPanel: {
       title: 'Community and personal sources',
       copy: 'Connect a community URL or import a local JSON file. Unknown sources should be checked before connecting.',
+      addTitle: 'Add a source',
+      addCopy: 'Paste a source URL or JSON — a community/personal repository or a game manifest. The format is detected automatically; nothing is downloaded, games just appear in your library.',
+      addButton: 'Add source',
+      adding: 'Adding source...',
+      added: 'Source added. Its games are now in your library.',
       template: 'Template',
       templateTitle: 'Fill in template source URL',
       importJsonTitle: 'Import source JSON',
@@ -224,8 +229,8 @@ export const en = {
       executableRequiresTrust: 'Executable files require a trusted source',
       manifest: {
         title: 'Install from manifest',
-        copy: 'Load a JSON manifest by URL or paste the JSON directly. The manifest can provide an emulator bundle; games without a real magnet are imported locally.',
-        placeholder: 'https://example.com/manifest.json or paste manifest JSON',
+        copy: 'Paste a manifest URL or the JSON itself. Load it, choose a game, then install everything the manifest provides.',
+        placeholder: 'https://example.com/manifest.json or paste JSON',
         load: 'Load',
         gamesTitle: 'Games in manifest',
         empty: 'This manifest has no games.',
@@ -233,13 +238,18 @@ export const en = {
         install: 'Install',
         installing: 'Installing...',
         installed: 'Installed',
-        needsAttention: 'Needs attention'
+        needsAttention: 'Needs attention',
+        addSource: 'Add source',
+        addingSource: 'Adding source...',
+        sourceAdded: 'Source added. Its games are now in your library — install any of them whenever you want.'
       }
     },
     storage: {
       title: 'Storage',
-      copy: 'Choose the folder for downloaded games and inspect local desktop-build paths.',
+      copy: 'Choose the library folder for emulators, games, and system files, and inspect local desktop-build paths.',
       downloadFolder: 'Downloads folder',
+      libraryFolder: 'Library folder',
+      browse: 'Browse',
       appData: 'App data',
       logs: 'Logs'
     },
@@ -313,14 +323,14 @@ export const en = {
       searchPlaceholder: 'Search games, collections, friends...',
       refreshTitle: 'Refresh',
       settingsTitle: 'Open settings',
-      notificationsTitle: 'Open notifications',
+      notificationsTitle: 'Open activity center',
       notifications: {
-        title: 'Notifications',
-        subtitle: 'Launcher news and update status',
+        title: 'Activity center',
+        subtitle: 'Launcher updates and recent activity',
         updateTitle: 'Launcher update',
         activityTitle: 'Recent activity',
-        empty: 'No notifications yet.',
-        unread: 'Unread notifications',
+        empty: 'No activity yet.',
+        unread: 'Unread activity',
         availableBadge: 'Update ready',
         releaseNotes: 'Release notes',
         updateIdle: 'Open this panel to check for launcher updates.'
@@ -347,16 +357,6 @@ export const en = {
       needsSetup: 'Needs setup',
       recentlyAdded: 'Recently added'
     },
-    explore: {
-      eyebrow: 'Activity',
-      title: 'What is new',
-      description: 'Source, library, and download events',
-      empty: 'No activity yet.',
-      libraryStats: 'Library stats',
-      games: 'Games',
-      ready: 'Ready',
-      downloads: 'Downloads'
-    },
     library: {
       eyebrow: 'Library',
       title: 'All your games',
@@ -381,8 +381,6 @@ export const en = {
       retry: 'Retry',
       play: 'Play',
       cancel: 'Cancel',
-      path: 'Path',
-      copyPath: 'Copy path',
       openFolder: 'Open folder',
       deleteFiles: 'Delete files',
       deleteConfirm: (title: string) => `Delete downloaded files for ${title}?`,
@@ -400,9 +398,7 @@ export const en = {
     nav: {
       home: 'Home',
       library: 'Library',
-      explore: 'Activity',
       downloads: 'Downloads',
-      collections: 'Collections',
       settings: 'Settings'
     },
     stats: {
@@ -421,7 +417,7 @@ export const en = {
     },
     hero: {
       emptyTitle: 'Library is empty',
-      emptyCopy: 'Open settings, connect a source, or restore the built-in demo library.',
+      emptyCopy: 'Open settings or install a game from a manifest.',
       openSettings: 'Open settings',
       status: 'Status',
       source: 'Source',
@@ -440,9 +436,9 @@ export const en = {
   },
   onboarding: {
     messages: {
-      builtInDemoMissing: 'Built-in NES demo was not found after repository setup.',
-      playableReady: 'Playable demo is ready.',
-      noPlayableDemo: 'No playable demo game is connected.',
+      builtInDemoMissing: 'Installed manifest game was not found after setup.',
+      playableReady: 'Game is ready to launch.',
+      noPlayableDemo: 'No ready game is connected yet.',
       launched: (title: string) => `Launched ${title}.`,
       localJsonDesktopOnly: 'Local JSON import is available in the desktop build.',
       fileBrowseDesktopOnly: 'File browsing is available in the desktop build. Paste a path for preview.',
@@ -450,34 +446,34 @@ export const en = {
     },
     firstRun: 'First run',
     title: 'Set up Fusion Launcher before you play',
-    copy: 'Connect a source and set up one matching emulator. Commercial ROMs, BIOS, firmware, and keys are not bundled.',
+    copy: 'Install one game from a manifest and set up a matching emulator. Commercial ROMs, BIOS, firmware, and keys are not bundled.',
     stepperLabel: 'First run setup steps',
     continue: 'Continue',
     steps: {
       welcome: 'Welcome',
-      source: 'Source',
+      source: 'Manifest',
       metadata: 'Metadata',
       emulator: 'Emulator',
       ready: 'Ready'
     },
     stepDetails: {
       welcome: 'Language and setup overview',
-      source: 'Connect demo, community, or local JSON',
+      source: 'Load and install from a manifest',
       metadata: 'Choose how game metadata is filled',
       emulator: 'Install or select one matching emulator',
       ready: 'Check readiness and open launcher'
     },
     welcome: {
       title: 'Start with the basics',
-      copy: 'Fusion Launcher first connects a game source, then chooses how metadata fills game cards, then sets up a matching emulator for launch.'
+      copy: 'Fusion Launcher first installs a game from a manifest, then chooses how metadata fills game cards, then sets up a matching emulator for launch.'
     },
     sourceStep: {
-      title: 'Choose where games come from',
-      copy: 'Use the built-in demo source for a safe first run, or connect a community URL or local source JSON.',
-      demoCopy: 'The built-in source contains first-party demo content and is the fastest way to verify that launching works.',
-      useDemo: 'Use demo source',
-      connected: (count: number) => `Source connected / ${count} games found`,
-      notConnected: 'Connect a source before configuring emulators.'
+      title: 'Install from a manifest',
+      copy: 'Paste a manifest URL or JSON, load it, then install one game. The manifest can include the ROM and emulator bundle.',
+      demoCopy: 'The manifest is the only first-run source path.',
+      useDemo: 'Use manifest',
+      connected: (count: number) => `Manifest installed / ${count} games found`,
+      notConnected: 'Install a game from a manifest before configuring emulators.'
     },
     metadataStep: {
       title: 'Choose metadata strategy',
@@ -485,8 +481,8 @@ export const en = {
       sourcesTitle: 'Where metadata can come from',
       sources: [
         {
-          title: 'Source JSON',
-          copy: 'The connected catalog can include titles, descriptions, images, genres, and launch hints.'
+          title: 'Manifest JSON',
+          copy: 'The installed manifest can include titles, descriptions, images, genres, and launch hints.'
         },
         {
           title: 'ScreenScraper',
@@ -504,8 +500,8 @@ export const en = {
       strategyTitle: 'What should Fusion Launcher use first?',
       strategies: {
         source: {
-          title: 'Use source metadata',
-          copy: 'Recommended for the first run. Use the connected catalog now and improve games later if needed.',
+          title: 'Use manifest metadata',
+          copy: 'Recommended for the first run. Use the manifest catalog now and improve games later if needed.',
           badge: 'Recommended'
         },
         screenscraper: {
@@ -538,8 +534,8 @@ export const en = {
     emulatorStep: {
       title: 'Set up a matching emulator',
       copy: 'Only one ready emulator is required to enter the launcher. Other platforms can be configured later from Settings.',
-      needsSource: 'Connect a source first so Fusion Launcher can show only the emulator profiles your library needs.',
-      noCatalog: 'The source is connected, but the catalog is empty.',
+      needsSource: 'Install a manifest game first so Fusion Launcher can show only the emulator profiles your library needs.',
+      noCatalog: 'The manifest was installed, but the catalog is empty.',
       noProfiles: 'No supported setup profile was found for this catalog.',
       autoDetail: (name: string) => `${name} can be installed automatically for this platform.`,
       manualDetail: (name: string) => `${name} requires selecting an executable you already have installed.`,
@@ -549,49 +545,49 @@ export const en = {
       title: 'Launcher is ready',
       copy: 'The required setup is complete. Storage, diagnostics, metadata services, and extra emulators stay available in Settings.',
       catalog: 'Catalog',
-      sourceReady: 'A source is connected.',
-      catalogReady: 'Games are available in the catalog.',
-      catalogMissing: 'The connected source has no catalog entries.',
+      sourceReady: 'A manifest game is installed.',
+      catalogReady: 'Manifest games are available in the catalog.',
+      catalogMissing: 'The installed manifest has no catalog entries.',
       metadataReady: 'Metadata strategy is selected.',
       metadataMissing: 'Choose how Fusion Launcher should fill metadata.',
       emulatorReady: 'At least one matching emulator is ready.',
       emulatorMissing: 'Set up one emulator for a platform in the catalog.',
-      demoOptional: 'Optional: install the demo cartridge image to test launch immediately.',
-      fixSource: 'Fix source',
+      demoOptional: 'Optional: open game details to finish any remaining imports.',
+      fixSource: 'Fix manifest',
       fixMetadata: 'Fix metadata',
       fixEmulator: 'Fix emulator',
       openLauncher: 'Open launcher'
     },
-    builtInDemo: 'Built-in NES demo',
+    builtInDemo: 'Manifest install',
     withMesen: (version: string) => `with Mesen2 ${version}`,
     play: 'Play',
-    setupDemo: 'Set up demo',
+    setupDemo: 'Set up manifest',
     setup: {
-      source: 'Source',
-      sourceDetail: 'Built-in demo library connected',
+      source: 'Manifest',
+      sourceDetail: 'Manifest game installed',
       metadata: 'Metadata',
       metadataDetail: 'Metadata and artwork strategy selected',
       emulator: 'Emulator',
       emulatorDetail: 'Mesen2 auto setup',
-      demoRom: 'Demo image',
-      demoRomDetail: 'Built-in demo cartridge image',
+      demoRom: 'Game file',
+      demoRomDetail: 'Manifest game file',
       ready: 'Ready',
       readyDetail: 'After setup, launch should complete without errors'
     },
     sourceCard: {
-      title: 'Community or personal source',
-      copy: 'Connect a community URL or local JSON.',
-      sourceUrl: 'Source URL',
+      title: 'Manifest',
+      copy: 'Paste a manifest URL or JSON.',
+      sourceUrl: 'Manifest URL',
       jsonFile: 'JSON file'
     },
-    manualTools: 'Manual emulator and demo tools',
+    manualTools: 'Manual emulator and manifest tools',
     manualEmulator: 'Manual emulator setup',
     expected: (file: string) => `Expected: ${file}`,
     saveEmulator: 'Save emulator',
-    demoTools: 'Demo tools',
-    builtInDemoButton: 'Built-in demo',
-    checkDemo: 'Check demo',
-    downloadDemo: 'Download demo',
+    demoTools: 'Manifest tools',
+    builtInDemoButton: 'Manifest',
+    checkDemo: 'Check manifest',
+    downloadDemo: 'Install game',
     preview: {
       games: (count: number) => `${count} games`,
       systemFiles: (count: number) => `${count} system files`,
@@ -942,6 +938,11 @@ export const ru: UiText = {
     sourcesPanel: {
       title: 'Сообщество и личные источники',
       copy: 'Подключи URL сообщества или импортируй локальный JSON. Неизвестные источники стоит проверить перед подключением.',
+      addTitle: 'Добавить источник',
+      addCopy: 'Вставь URL или JSON источника — репозиторий сообщества/личный или манифест игр. Формат определяется автоматически; ничего не качается, игры просто появляются в библиотеке.',
+      addButton: 'Добавить источник',
+      adding: 'Добавляем источник...',
+      added: 'Источник добавлен. Его игры теперь в библиотеке.',
       template: 'Шаблон',
       templateTitle: 'Подставить шаблон source URL',
       importJsonTitle: 'Импортировать JSON источника',
@@ -953,8 +954,8 @@ export const ru: UiText = {
       executableRequiresTrust: 'Исполняемые файлы требуют доверенного источника',
       manifest: {
         title: 'Установка из манифеста',
-        copy: 'Загрузи JSON-манифест и установи игру напрямую. Манифест содержит ROM и, при наличии, ссылку на эмулятор.',
-        placeholder: 'https://example.com/manifest.json or paste manifest JSON',
+        copy: 'Вставь URL манифеста или сам JSON. Загрузи его, выбери игру и установи все, что дает манифест.',
+        placeholder: 'https://example.com/manifest.json или JSON манифеста',
         load: 'Загрузить',
         gamesTitle: 'Игры в манифесте',
         empty: 'В этом манифесте нет игр.',
@@ -962,13 +963,18 @@ export const ru: UiText = {
         install: 'Установить',
         installing: 'Установка...',
         installed: 'Установлено',
-        needsAttention: 'Требует внимания'
+        needsAttention: 'Требует внимания',
+        addSource: 'Добавить источник',
+        addingSource: 'Добавляем источник...',
+        sourceAdded: 'Источник добавлен. Его игры теперь в библиотеке — устанавливай любую когда захочешь.'
       }
     },
     storage: {
       title: 'Хранилище',
-      copy: 'Выбери папку для скачанных игр и проверь локальные пути desktop-сборки.',
+      copy: 'Выбери папку библиотеки для эмуляторов, игр и системных файлов и проверь локальные пути desktop-сборки.',
       downloadFolder: 'Папка загрузок',
+      libraryFolder: 'Папка библиотеки',
+      browse: 'Обзор',
       appData: 'Данные приложения',
       logs: 'Логи'
     },
@@ -1042,14 +1048,14 @@ export const ru: UiText = {
       searchPlaceholder: 'Поиск игр, коллекций, друзей...',
       refreshTitle: 'Обновить',
       settingsTitle: 'Открыть настройки',
-      notificationsTitle: 'Открыть уведомления',
+      notificationsTitle: 'Открыть центр активности',
       notifications: {
-        title: 'Уведомления',
-        subtitle: 'Новости лаунчера и статус обновлений',
+        title: 'Центр активности',
+        subtitle: 'Обновления лаунчера и последние события',
         updateTitle: 'Обновление лаунчера',
         activityTitle: 'Последние события',
-        empty: 'Уведомлений пока нет.',
-        unread: 'Непрочитанные уведомления',
+        empty: 'Событий пока нет.',
+        unread: 'Новые события',
         availableBadge: 'Обновление готово',
         releaseNotes: 'Заметки релиза',
         updateIdle: 'Открой эту панель, чтобы проверить обновления лаунчера.'
@@ -1076,16 +1082,6 @@ export const ru: UiText = {
       needsSetup: 'Нужна настройка',
       recentlyAdded: 'Недавно добавленные'
     },
-    explore: {
-      eyebrow: 'Лента',
-      title: 'Что нового',
-      description: 'События источников, библиотеки и загрузок',
-      empty: 'Событий пока нет.',
-      libraryStats: 'Статистика библиотеки',
-      games: 'Игры',
-      ready: 'Готово',
-      downloads: 'Загрузки'
-    },
     library: {
       eyebrow: 'Библиотека',
       title: 'Все твои игры',
@@ -1110,8 +1106,6 @@ export const ru: UiText = {
       retry: 'Повторить',
       play: 'Играть',
       cancel: 'Отменить',
-      path: 'Путь',
-      copyPath: 'Копировать путь',
       openFolder: 'Открыть папку',
       deleteFiles: 'Удалить файлы',
       deleteConfirm: (title: string) => `Удалить скачанные файлы для ${title}?`,
@@ -1129,9 +1123,7 @@ export const ru: UiText = {
     nav: {
       home: 'Главная',
       library: 'Библиотека',
-      explore: 'Лента',
       downloads: 'Загрузки',
-      collections: 'Коллекции',
       settings: 'Настройки'
     },
     stats: {
@@ -1150,7 +1142,7 @@ export const ru: UiText = {
     },
     hero: {
       emptyTitle: 'Библиотека пока пустая',
-      emptyCopy: 'Открой настройки, подключи источник или восстанови встроенную demo-библиотеку.',
+      emptyCopy: 'Открой настройки или установи игру из манифеста.',
       openSettings: 'Открыть настройки',
       status: 'Статус',
       source: 'Источник',
@@ -1169,9 +1161,9 @@ export const ru: UiText = {
   },
   onboarding: {
     messages: {
-      builtInDemoMissing: 'Встроенная NES demo не найдена после настройки источника.',
-      playableReady: 'Playable demo готова.',
-      noPlayableDemo: 'Подключенной playable demo нет.',
+      builtInDemoMissing: 'Игра из манифеста не найдена после настройки.',
+      playableReady: 'Игра готова к запуску.',
+      noPlayableDemo: 'Готовая игра пока не подключена.',
       launched: (title: string) => `Запущено: ${title}.`,
       localJsonDesktopOnly: 'Импорт локального JSON доступен в desktop-сборке.',
       fileBrowseDesktopOnly: 'Выбор файла доступен в desktop-сборке. Для preview вставь путь вручную.',
@@ -1179,34 +1171,34 @@ export const ru: UiText = {
     },
     firstRun: 'Первый запуск',
     title: 'Настрой Fusion Launcher перед запуском',
-    copy: 'Подключи источник и настрой один подходящий эмулятор. Коммерческие ROM, BIOS, firmware и keys не входят в поставку.',
+    copy: 'Установи одну игру из манифеста и настрой подходящий эмулятор. Коммерческие ROM, BIOS, firmware и keys не входят в поставку.',
     stepperLabel: 'Шаги первого запуска',
     continue: 'Продолжить',
     steps: {
       welcome: 'Старт',
-      source: 'Источник',
+      source: 'Манифест',
       metadata: 'Метаданные',
       emulator: 'Эмулятор',
       ready: 'Готово'
     },
     stepDetails: {
       welcome: 'Язык и общий план настройки',
-      source: 'Demo, URL сообщества или локальный JSON',
+      source: 'Загрузка и установка из манифеста',
       metadata: 'Выбор источников метаданных',
       emulator: 'Установка или выбор подходящего эмулятора',
       ready: 'Проверка готовности и вход в лаунчер'
     },
     welcome: {
       title: 'Начнем с базовой настройки',
-      copy: 'Fusion Launcher сначала подключает источник игр, затем выбирает как заполнять карточки метаданными, а после настраивает подходящий эмулятор для запуска.'
+      copy: 'Fusion Launcher сначала устанавливает игру из манифеста, затем выбирает как заполнять карточки метаданными, а после настраивает подходящий эмулятор для запуска.'
     },
     sourceStep: {
-      title: 'Выбери источник игр',
-      copy: 'Используй встроенный demo-источник для безопасного первого запуска или подключи URL сообщества либо локальный JSON.',
-      demoCopy: 'Встроенный источник содержит first-party demo-контент и быстрее всего проверяет, что запуск работает.',
-      useDemo: 'Использовать demo',
-      connected: (count: number) => `Источник подключен / игр: ${count}`,
-      notConnected: 'Сначала подключи источник, потом настраивай эмуляторы.'
+      title: 'Установи из манифеста',
+      copy: 'Вставь URL манифеста или JSON, нажми "Загрузить" и установи одну игру. Манифест может содержать ROM и ссылку на эмулятор.',
+      demoCopy: 'Манифест - единственный путь первого запуска.',
+      useDemo: 'Использовать манифест',
+      connected: (count: number) => `Манифест установлен / игр: ${count}`,
+      notConnected: 'Сначала установи игру из манифеста, потом настраивай эмуляторы.'
     },
     metadataStep: {
       title: 'Выбери стратегию метаданных',
@@ -1214,8 +1206,8 @@ export const ru: UiText = {
       sourcesTitle: 'Откуда берутся метаданные',
       sources: [
         {
-          title: 'Source JSON',
-          copy: 'Подключенный каталог может уже содержать названия, описания, изображения, жанры и подсказки запуска.'
+          title: 'Manifest JSON',
+          copy: 'Установленный манифест может уже содержать названия, описания, изображения, жанры и подсказки запуска.'
         },
         {
           title: 'ScreenScraper',
@@ -1233,8 +1225,8 @@ export const ru: UiText = {
       strategyTitle: 'Что Fusion Launcher использует первым?',
       strategies: {
         source: {
-          title: 'Использовать метаданные источника',
-          copy: 'Рекомендуется для первого запуска. Используй подключенный каталог сейчас и улучшай игры позже при необходимости.',
+          title: 'Использовать метаданные манифеста',
+          copy: 'Рекомендуется для первого запуска. Используй каталог манифеста сейчас и улучшай игры позже при необходимости.',
           badge: 'Рекомендуется'
         },
         screenscraper: {
@@ -1267,8 +1259,8 @@ export const ru: UiText = {
     emulatorStep: {
       title: 'Настрой подходящий эмулятор',
       copy: 'Для входа в лаунчер достаточно одного готового эмулятора. Остальные платформы можно настроить позже в Settings.',
-      needsSource: 'Сначала подключи источник, чтобы Fusion Launcher показал только нужные профили эмуляторов.',
-      noCatalog: 'Источник подключен, но каталог пуст.',
+      needsSource: 'Сначала установи игру из манифеста, чтобы Fusion Launcher показал только нужные профили эмуляторов.',
+      noCatalog: 'Манифест установлен, но каталог пуст.',
       noProfiles: 'Для этого каталога не найден поддерживаемый профиль настройки.',
       autoDetail: (name: string) => `${name} можно установить автоматически для этой платформы.`,
       manualDetail: (name: string) => `${name} требует выбрать уже установленный executable.`,
@@ -1278,49 +1270,49 @@ export const ru: UiText = {
       title: 'Лаунчер готов',
       copy: 'Обязательная настройка завершена. Storage, diagnostics, metadata-сервисы и дополнительные эмуляторы останутся в Settings.',
       catalog: 'Каталог',
-      sourceReady: 'Источник подключен.',
-      catalogReady: 'Игры доступны в каталоге.',
-      catalogMissing: 'В подключенном источнике нет игр.',
+      sourceReady: 'Игра из манифеста установлена.',
+      catalogReady: 'Игры из манифеста доступны в каталоге.',
+      catalogMissing: 'В установленном манифесте нет игр.',
       metadataReady: 'Стратегия метаданных выбрана.',
       metadataMissing: 'Выбери, как Fusion Launcher будет заполнять метаданные.',
       emulatorReady: 'Хотя бы один подходящий эмулятор готов.',
       emulatorMissing: 'Настрой один эмулятор для платформы из каталога.',
-      demoOptional: 'Опционально: установи demo cartridge image, чтобы сразу проверить запуск.',
-      fixSource: 'Исправить источник',
+      demoOptional: 'Опционально: открой детали игры, чтобы завершить оставшийся импорт.',
+      fixSource: 'Исправить манифест',
       fixMetadata: 'Исправить метаданные',
       fixEmulator: 'Исправить эмулятор',
       openLauncher: 'Открыть лаунчер'
     },
-    builtInDemo: 'Встроенная NES demo',
+    builtInDemo: 'Установка из манифеста',
     withMesen: (version: string) => `с Mesen2 ${version}`,
     play: 'Играть',
-    setupDemo: 'Настроить demo',
+    setupDemo: 'Настроить манифест',
     setup: {
-      source: 'Источник',
-      sourceDetail: 'Встроенная demo-библиотека подключена',
+      source: 'Манифест',
+      sourceDetail: 'Игра из манифеста установлена',
       metadata: 'Метаданные',
       metadataDetail: 'Стратегия метаданных и artwork выбрана',
       emulator: 'Эмулятор',
       emulatorDetail: 'Автонастройка Mesen2',
-      demoRom: 'Demo image',
-      demoRomDetail: 'Встроенный demo cartridge image',
+      demoRom: 'Файл игры',
+      demoRomDetail: 'Файл игры из манифеста',
       ready: 'Готово',
       readyDetail: 'После настройки запуск должен пройти без ошибок'
     },
     sourceCard: {
-      title: 'Community или личный источник',
-      copy: 'Подключи URL сообщества или локальный JSON.',
-      sourceUrl: 'Source URL',
+      title: 'Манифест',
+      copy: 'Вставь URL манифеста или JSON.',
+      sourceUrl: 'URL манифеста',
       jsonFile: 'JSON file'
     },
-    manualTools: 'Ручные инструменты эмулятора и demo',
+    manualTools: 'Ручные инструменты эмулятора и манифеста',
     manualEmulator: 'Ручная настройка эмулятора',
     expected: (file: string) => `Expected: ${file}`,
     saveEmulator: 'Сохранить эмулятор',
-    demoTools: 'Demo-инструменты',
-    builtInDemoButton: 'Встроенная demo',
-    checkDemo: 'Проверить demo',
-    downloadDemo: 'Скачать demo',
+    demoTools: 'Инструменты манифеста',
+    builtInDemoButton: 'Манифест',
+    checkDemo: 'Проверить манифест',
+    downloadDemo: 'Установить игру',
     preview: {
       games: (count: number) => `${count} games`,
       systemFiles: (count: number) => `${count} system files`,

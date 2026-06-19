@@ -101,6 +101,72 @@ pub async fn install_game_from_manifest(
     }
 }
 
+/// Register a manifest as a library source WITHOUT installing any game. The
+/// manifest's catalog becomes browsable (its games show as available-to-install)
+/// and each game's emulator bundle is persisted so a later on-demand install
+/// pulls it in exactly as a direct manifest install would. First-run onboarding
+/// uses this: add a source, then install games whenever the user wants — nothing
+/// is downloaded here.
+#[tauri::command]
+pub async fn add_manifest_source(
+    state: State<'_, AppState>,
+    url: String,
+) -> Result<crate::schema::RepositorySummary, String> {
+    add_manifest_source_inner(&state, &url).await
+}
+
+/// Reusable body of [`add_manifest_source`], also called by the unified
+/// `add_source` command after it detects the input is a manifest.
+pub(crate) async fn add_manifest_source_inner(
+    state: &AppState,
+    url: &str,
+) -> Result<crate::schema::RepositorySummary, String> {
+    let manifest = crate::manifest::fetch_manifest_inner(url)
+        .await
+        .map_err(|error| error.to_string())?;
+    let source_url = crate::manifest::manifest_source_url(url, &manifest);
+    let schema = manifest.to_repository_schema();
+
+    let summary = {
+        let mut store = lock_store(state)?;
+        store.store_repository(&source_url, &schema)?
+    };
+
+    // Persist every game's emulator bundle so installing it later from the
+    // library pulls the manifest's core_bundle_url, just like a direct install.
+    for game in &manifest.games {
+        let Some(bundle_url) = game.assets.core_bundle_url.as_deref() else {
+            continue;
+        };
+        let bundle_url = bundle_url.trim();
+        if bundle_url.is_empty() {
+            continue;
+        }
+        let stored_game_id = crate::security::global_id(&schema.metadata.id, &game.title_id);
+        persist_manifest_emulator_bundle(
+            state,
+            &stored_game_id,
+            &PersistedEmulatorBundle {
+                url: bundle_url.to_string(),
+                sha256: game.assets.core_bundle_sha256.clone(),
+                asset_id: Some(crate::security::global_id(
+                    &schema.metadata.id,
+                    &game.emulator_asset_id(),
+                )),
+                executable: non_empty_executable(&game.launch_config.executable),
+            },
+        )?;
+    }
+
+    crate::logging::log_event(
+        &state.data_dir,
+        "manifest_source_added",
+        &[("repository_id", summary.id.as_str())],
+    );
+
+    Ok(summary)
+}
+
 /// Import a parsed [`Manifest`] into the store and install one of its games.
 /// Separated from the command so it can be unit-tested and reused with an
 /// already-fetched manifest.
@@ -224,6 +290,7 @@ fn adopt_bundled_system_files(
     emulator_asset_id: Option<&str>,
 ) -> Result<(), String> {
     if let Some(profile) = crate::setup_profiles::get_default_platform_setup_profile(platform) {
+        let library_root = crate::commands::library_root_for_app_state(state);
         let store = lock_store(state)?;
         let install_dir = emulator_asset_id
             .and_then(|asset_id| {
@@ -249,10 +316,11 @@ fn adopt_bundled_system_files(
                     .flatten()
                     .and_then(|path| path.parent().map(Path::to_path_buf))
             })
-            .unwrap_or_else(|| state.data_dir.join("Emulators").join(platform));
+            .unwrap_or_else(|| library_root.join("Emulators").join(platform));
         let _ = crate::commands::adopt_bundled_profile_system_files(
             &store,
             &state.data_dir,
+            &library_root,
             &profile,
             &install_dir,
         );
@@ -511,13 +579,18 @@ async fn install_manifest_emulator(
     // emulator can be valid, but it cannot expose keys/BIOS bundled in this
     // manifest archive because the archive was never extracted.
     let install_dir = manifest_emulator_install_dir(state, platform, &profile_id, target_dir);
+    let library_root = crate::commands::library_root_for_app_state(state);
     let cached = {
         let store = lock_store(state)?;
         if let Some(path) = store.get_emulator_exe_path(platform, None)? {
             if target_dir
                 .map(|_| path_is_inside(&install_dir, &path))
                 .unwrap_or_else(|| {
-                    is_managed_manifest_emulator_path(&state.data_dir, platform, &path)
+                    is_managed_manifest_emulator_path(
+                        &[state.data_dir.as_path(), library_root.as_path()],
+                        platform,
+                        &path,
+                    )
                 })
             {
                 let version = store
@@ -591,15 +664,20 @@ async fn install_manifest_emulator(
     })
 }
 
-fn is_managed_manifest_emulator_path(data_dir: &Path, platform: &str, exe_path: &Path) -> bool {
-    let install_dir = data_dir.join("Emulators").join(platform);
-    let Ok(install_dir) = fs::canonicalize(install_dir) else {
-        return false;
-    };
+/// True when `exe_path` lives under `<root>/Emulators/<platform>` for any of the
+/// supplied content roots. Multiple roots are accepted so installs made before
+/// the library root moved (old Roaming `data_dir`) keep counting as managed
+/// alongside the current library root.
+fn is_managed_manifest_emulator_path(roots: &[&Path], platform: &str, exe_path: &Path) -> bool {
     let Ok(exe_path) = fs::canonicalize(exe_path) else {
         return false;
     };
-    exe_path.starts_with(install_dir)
+    roots.iter().any(|root| {
+        let install_dir = root.join("Emulators").join(platform);
+        fs::canonicalize(install_dir)
+            .map(|install_dir| exe_path.starts_with(&install_dir))
+            .unwrap_or(false)
+    })
 }
 
 fn emulator_profile_install_dir(
@@ -610,8 +688,7 @@ fn emulator_profile_install_dir(
     target_dir
         .map(|dir| dir.join(crate::downloads::safe_segment(&profile.id)))
         .unwrap_or_else(|| {
-            state
-                .data_dir
+            crate::commands::library_root_for_app_state(state)
                 .join("Emulators")
                 .join(&profile.platform)
                 .join(&profile.id)
@@ -627,8 +704,7 @@ fn manifest_emulator_install_dir(
     target_dir
         .map(|dir| dir.join(crate::downloads::safe_segment(profile_id)))
         .unwrap_or_else(|| {
-            state
-                .data_dir
+            crate::commands::library_root_for_app_state(state)
                 .join("Emulators")
                 .join(platform)
                 .join(profile_id)
@@ -742,6 +818,16 @@ async fn install_game_inner(
     // only AFTER the archive is downloaded and extracted, and a missing local
     // copy of the keys never blocks the install.
     let emulator_bundle = manifest_emulator_override(state, game_id)?;
+    // Group the emulator/core-bundle download under this game install so the
+    // Downloads view shows them together instead of as two unrelated rows. The
+    // link is declared upfront (before the download starts) so enrichment can
+    // tag the row as soon as it appears.
+    if let Some(asset_id) = emulator_bundle
+        .as_ref()
+        .and_then(|bundle| bundle.asset_id.as_deref())
+    {
+        lock_store(state)?.set_download_parent(asset_id, game_id)?;
+    }
     if game.platform == "switch" {
         if let Some(bundle) = emulator_bundle.clone() {
             install_emulator_internal(
@@ -785,9 +871,10 @@ async fn install_game_inner(
     emit_progress(app, game_id, "emulator", "Emulator ready", 25);
 
     emit_progress(app, game_id, "system_files", "Checking system files...", 30);
+    let content_dir = commands::library_root_for_app_state(state);
     let setup = {
         let store = lock_store(state)?;
-        commands::build_game_setup_state(&store, &state.data_dir, &game)?
+        commands::build_game_setup_state(&store, &content_dir, &game)?
     };
     let missing = missing_system_files(&setup);
     if !missing.is_empty() {
@@ -832,9 +919,10 @@ async fn install_game_inner(
     emit_progress(app, game_id, "game", "Game downloaded", 90);
 
     emit_progress(app, game_id, "verify", "Verifying launch readiness...", 95);
+    let final_content_dir = commands::library_root_for_app_state(state);
     let final_setup = {
         let store = lock_store(state)?;
-        commands::build_game_setup_state(&store, &state.data_dir, &game)?
+        commands::build_game_setup_state(&store, &final_content_dir, &game)?
     };
     if final_setup.launch.status != "ready" {
         return Err(format!(
@@ -975,7 +1063,8 @@ async fn download_emulator_archive(
     expected_sha256: Option<&str>,
     display_name: &str,
 ) -> Result<PathBuf, String> {
-    let temp_dir = commands::temp_root(&state.data_dir).join("emulators");
+    let temp_dir =
+        commands::temp_root(&commands::library_root_for_app_state(state)).join("emulators");
     tokio::fs::create_dir_all(&temp_dir)
         .await
         .map_err(|error| format!("Failed to create emulator temp folder: {error}"))?;
@@ -1129,22 +1218,37 @@ mod tests {
         std::fs::write(&external, b"exe").unwrap();
 
         assert!(is_managed_manifest_emulator_path(
-            dir.path(),
+            &[dir.path()],
             "switch",
             &managed
         ));
         assert!(!is_managed_manifest_emulator_path(
-            dir.path(),
+            &[dir.path()],
             "switch",
             &external
         ));
         assert!(!is_managed_manifest_emulator_path(
-            dir.path(),
+            &[dir.path()],
             "switch",
             &dir.path()
                 .join("Emulators")
                 .join("switch")
                 .join("missing.exe")
+        ));
+
+        // A second (legacy) root is also honoured.
+        let legacy = tempfile::tempdir().unwrap();
+        let legacy_exe = legacy
+            .path()
+            .join("Emulators")
+            .join("switch")
+            .join("eden.exe");
+        std::fs::create_dir_all(legacy_exe.parent().unwrap()).unwrap();
+        std::fs::write(&legacy_exe, b"exe").unwrap();
+        assert!(is_managed_manifest_emulator_path(
+            &[dir.path(), legacy.path()],
+            "switch",
+            &legacy_exe
         ));
     }
 

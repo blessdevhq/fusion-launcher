@@ -52,6 +52,21 @@ export function createGameArt(game: Pick<CatalogGame, 'id' | 'title' | 'platform
   };
 }
 
+export function selectGameArtImageUrl(
+  game: Pick<CatalogGame, 'artwork' | 'coverImageUrl'>,
+  mode: 'poster' | 'hero'
+): string | null {
+  const cover = firstUsableImageUrl(game.artwork?.cover, game.coverImageUrl);
+  if (mode === 'hero') {
+    return firstUsableImageUrl(game.artwork?.hero, cover);
+  }
+  return firstUsableImageUrl(cover, game.artwork?.hero);
+}
+
+function firstUsableImageUrl(...urls: Array<string | null | undefined>) {
+  return urls.find((url) => url && !url.includes('...')) ?? null;
+}
+
 export function hashString(input: string): number {
   let hash = 2166136261;
   for (let index = 0; index < input.length; index += 1) {

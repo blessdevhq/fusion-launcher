@@ -52,6 +52,96 @@ pub fn preview_builtin_demo_repository(
     Ok(preview)
 }
 
+/// Unified source preview: accepts a manifest (URL or inline JSON) OR a
+/// repository-schema URL, auto-detects which, and returns a uniform preview.
+/// A manifest is mapped onto a `RepositorySchema` first so both formats reuse
+/// the same preview builder. Detection tries the manifest parse first; a
+/// repository schema lacks the manifest's required fields, so it falls through.
+#[tauri::command]
+pub async fn preview_source(
+    input: String,
+    state: State<'_, AppState>,
+) -> Result<RepositoryPreview, String> {
+    let trimmed = input.trim();
+    match crate::manifest::fetch_manifest_inner(trimmed).await {
+        Ok(manifest) => {
+            let source_url = crate::manifest::manifest_source_url(trimmed, &manifest);
+            let preview = build_repository_preview(&source_url, &manifest.to_repository_schema());
+            logging::log_event(
+                &state.data_dir,
+                "source_previewed",
+                &[("kind", "manifest"), ("repository_id", preview.id.as_str())],
+            );
+            Ok(preview)
+        }
+        Err(manifest_error) => {
+            let allow_dev_http = cfg!(debug_assertions);
+            match fetch_repository_schema(trimmed, allow_dev_http).await {
+                Ok(repo) => {
+                    let preview = build_repository_preview(trimmed, &repo);
+                    logging::log_event(
+                        &state.data_dir,
+                        "source_previewed",
+                        &[("kind", "repository"), ("repository_id", preview.id.as_str())],
+                    );
+                    Ok(preview)
+                }
+                Err(repo_error) => {
+                    Err(unrecognized_source_error(&manifest_error.to_string(), &repo_error))
+                }
+            }
+        }
+    }
+}
+
+/// Unified add-source: detects whether the input is a manifest or a repository
+/// schema and registers it as a library source WITHOUT installing any game.
+#[tauri::command]
+pub async fn add_source(
+    app: tauri::AppHandle,
+    input: String,
+    state: State<'_, AppState>,
+) -> Result<RepositorySummary, String> {
+    let trimmed = input.trim();
+    let summary = match crate::manifest::fetch_manifest_inner(trimmed).await {
+        Ok(_) => crate::orchestrator::add_manifest_source_inner(&state, trimmed).await?,
+        Err(manifest_error) => {
+            let allow_dev_http = cfg!(debug_assertions);
+            match fetch_repository_schema(trimmed, allow_dev_http).await {
+                Ok(repo) => {
+                    let summary = {
+                        let mut store = lock_store(&state)?;
+                        store.store_repository(trimmed, &repo)?
+                    };
+                    logging::log_event(
+                        &state.data_dir,
+                        "repository_connected",
+                        &[("url", trimmed), ("repository_id", summary.id.as_str())],
+                    );
+                    summary
+                }
+                Err(repo_error) => {
+                    return Err(unrecognized_source_error(
+                        &manifest_error.to_string(),
+                        &repo_error,
+                    ));
+                }
+            }
+        }
+    };
+
+    // Fire-and-forget: pull in cover art for the freshly added games in the
+    // background. No-op when no SteamGridDB key is available.
+    crate::scraper::auto_scrape_missing_artwork(app, state.inner().clone());
+    Ok(summary)
+}
+
+fn unrecognized_source_error(manifest_error: &str, repo_error: &str) -> String {
+    format!(
+        "This does not look like a valid manifest or source.\nManifest: {manifest_error}\nSource: {repo_error}"
+    )
+}
+
 #[tauri::command]
 pub async fn connect_repository(
     url: String,
@@ -112,8 +202,9 @@ pub fn connect_builtin_demo_repository(
 
 #[tauri::command]
 pub fn repair_library(state: State<'_, AppState>) -> Result<RepairLibraryReport, String> {
+    let content_dir = library_root_for_app_state(&state);
     let mut store = lock_store(&state)?;
-    repair_library_state(&mut store, &state.data_dir)
+    repair_library_state(&mut store, &content_dir)
 }
 
 #[tauri::command]

@@ -49,6 +49,27 @@ struct BatchProgressEvent {
     current_game_id: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+struct SteamGridDbArtworkResult {
+    cover: bool,
+    hero: bool,
+    logo: bool,
+}
+
+impl SteamGridDbArtworkResult {
+    fn has_any(self) -> bool {
+        self.cover || self.hero || self.logo
+    }
+
+    fn added_message(self) -> &'static str {
+        if self.cover {
+            "SteamGridDB cover artwork added."
+        } else {
+            "SteamGridDB artwork added, but no cover image was available."
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct LibraryScrapeRuntime {
     cancel: Arc<AtomicBool>,
@@ -105,16 +126,14 @@ pub async fn scrape_game(app: AppHandle, state: AppState, game_id: String) -> Re
     let system_id = match system_id_for_platform(&game.platform) {
         Some(system_id) => system_id,
         None => {
-            set_state(
-                &state,
+            return scrape_steamgriddb_artwork_only(
                 &app,
-                &game.id,
-                "skipped",
-                None,
-                &[],
-                Some("ScreenScraper system mapping is not configured for this platform."),
-            )?;
-            return Ok(());
+                &state,
+                &game,
+                "ScreenScraper system mapping is not configured for this platform.",
+                false,
+            )
+            .await;
         }
     };
 
@@ -123,16 +142,14 @@ pub async fn scrape_game(app: AppHandle, state: AppState, game_id: String) -> Re
     let credentials = match load_credentials(&state)? {
         Some(credentials) => credentials,
         None => {
-            set_state(
-                &state,
+            return scrape_steamgriddb_artwork_only(
                 &app,
-                &game.id,
-                "skipped",
-                None,
-                &[],
-                Some("ScreenScraper credentials are not configured."),
-            )?;
-            return Err("ScreenScraper credentials are not configured.".to_string());
+                &state,
+                &game,
+                "ScreenScraper credentials are not configured.",
+                true,
+            )
+            .await;
         }
     };
     let options = load_options(&state)?;
@@ -153,7 +170,7 @@ pub async fn scrape_game(app: AppHandle, state: AppState, game_id: String) -> Re
                 )?;
             } else if let Some(entry) = hash_and_check_cache(&app, &state, &game, &path).await? {
                 mark_ready_from_cache(&state, &app, &game.id, &entry)?;
-                let _ = enrich_artwork_steamgriddb(&app, &state, &game).await;
+                let _ = enrich_artwork_steamgriddb(&app, &state, &game, false).await;
                 return Ok(());
             } else {
                 hash_cache_key = load_crc32(&state, &game.id)?;
@@ -166,7 +183,7 @@ pub async fn scrape_game(app: AppHandle, state: AppState, game_id: String) -> Re
         consume_request(&state)?;
         if let Some(payload) = client.by_hash(system_id, crc32).await? {
             persist_ready(&state, &app, &game.id, crc32, &payload, "hash")?;
-            let _ = enrich_artwork_steamgriddb(&app, &state, &game).await;
+            let _ = enrich_artwork_steamgriddb(&app, &state, &game, false).await;
             return Ok(());
         }
     }
@@ -206,7 +223,7 @@ pub async fn apply_override(
         )?;
     }
     emit_metadata(&app, "metadata:ready", &game_id, "ready");
-    let _ = enrich_artwork_steamgriddb(&app, &state, &game).await;
+    let _ = enrich_artwork_steamgriddb(&app, &state, &game, false).await;
     Ok(())
 }
 
@@ -438,6 +455,34 @@ pub fn scrape_library(app: AppHandle, state: AppState) -> Result<LibraryScrapeSt
     get_library_scrape_status(&state)
 }
 
+/// Background cover backfill: queues catalog games that still have no cover art
+/// and starts the scrape worker. No-op when no SteamGridDB key (built-in or
+/// user-supplied) is available — covers come from SteamGridDB, so without a key
+/// there is nothing to fetch and we would only spend ScreenScraper quota for no
+/// visible result. Capped so a large catalog never kicks off a giant scrape on
+/// its own. Safe to call repeatedly: already-scraped games are skipped.
+pub fn auto_scrape_missing_artwork(app: AppHandle, state: AppState) {
+    const AUTO_COVER_SCRAPE_CAP: usize = 80;
+
+    if load_steamgriddb_key(&state).ok().flatten().is_none() {
+        return;
+    }
+
+    let marked = {
+        let Ok(store) = state.store.lock() else {
+            return;
+        };
+        store
+            .mark_games_missing_artwork_pending_for_scrape(AUTO_COVER_SCRAPE_CAP)
+            .unwrap_or(0)
+    };
+    if marked == 0 {
+        return;
+    }
+
+    start_library_scrape_worker(app, state);
+}
+
 pub fn cancel_library_scrape(state: &AppState) -> Result<LibraryScrapeStatus, String> {
     state.library_scrape.cancel();
     get_library_scrape_status(state)
@@ -468,7 +513,7 @@ async fn scrape_by_name(
     let name_cache_key = metadata_name_key(&game.platform, &game.title);
     if let Some(entry) = cache_by_key(&state, &name_cache_key)? {
         mark_ready_from_cache(&state, &app, &game.id, &entry)?;
-        let _ = enrich_artwork_steamgriddb(&app, &state, &game).await;
+        let _ = enrich_artwork_steamgriddb(&app, &state, &game, false).await;
         return Ok(());
     }
 
@@ -509,7 +554,7 @@ async fn scrape_by_name(
         .unwrap_or_else(|| payload_from_candidate(candidate));
     let cache_key = hash_cache_key.as_deref().unwrap_or(&name_cache_key);
     persist_ready(&state, &app, &game.id, cache_key, &payload, "name")?;
-    let _ = enrich_artwork_steamgriddb(&app, &state, &game).await;
+    let _ = enrich_artwork_steamgriddb(&app, &state, &game, false).await;
     Ok(())
 }
 
@@ -566,26 +611,34 @@ async fn enrich_artwork_steamgriddb(
     app: &AppHandle,
     state: &AppState,
     game: &CatalogGameView,
-) -> Result<bool, String> {
+    force_refresh: bool,
+) -> Result<SteamGridDbArtworkResult, String> {
     // Skip games that already have fresh SteamGridDB artwork: re-scrapes, batch
     // re-runs and the ScreenScraper cache-hit path would otherwise burn the daily
     // request budget on art we already cached (TTL on metadata_cache drives refresh).
-    if steamgriddb_cache_is_fresh(state, &game.id)? {
-        return Ok(false);
+    if !force_refresh {
+        if let Some(result) = steamgriddb_cached_artwork_result(state, &game.id)? {
+            return Ok(result);
+        }
     }
     let Some(resolved_key) = load_steamgriddb_key(state)? else {
-        return Ok(false);
+        return Ok(SteamGridDbArtworkResult::default());
     };
     let client = SteamGridDbClient::new(resolved_key.key)?;
     let Some(sgdb_game) = find_steamgriddb_game(state, &client, game).await? else {
-        return Ok(false);
+        return Ok(SteamGridDbArtworkResult::default());
     };
 
     let hero = fetch_steamgriddb_asset(state, || client.best_hero(sgdb_game.id)).await;
     let logo = fetch_steamgriddb_asset(state, || client.best_logo(sgdb_game.id)).await;
     let grid = fetch_steamgriddb_asset(state, || client.best_grid(sgdb_game.id)).await;
-    if hero.is_none() && logo.is_none() && grid.is_none() {
-        return Ok(false);
+    let result = SteamGridDbArtworkResult {
+        cover: grid.is_some(),
+        hero: hero.is_some(),
+        logo: logo.is_some(),
+    };
+    if !result.has_any() {
+        return Ok(result);
     }
 
     let payload = steamgriddb::payload_from_artwork(&sgdb_game, hero, logo, grid);
@@ -606,12 +659,106 @@ async fn enrich_artwork_steamgriddb(
                 &current.status,
                 current.match_kind.as_deref(),
                 &current.candidates,
-                Some("SteamGridDB hero/logo added."),
+                Some(result.added_message()),
             )?;
         }
     }
     emit_metadata(app, "metadata:ready", &game.id, "ready");
-    Ok(true)
+    Ok(result)
+}
+
+async fn scrape_steamgriddb_artwork_only(
+    app: &AppHandle,
+    state: &AppState,
+    game: &CatalogGameView,
+    blocked_message: &str,
+    error_without_steamgriddb: bool,
+) -> Result<(), String> {
+    if load_steamgriddb_key(state)?.is_none() {
+        let message = format!("{blocked_message} Configure SteamGridDB to fetch artwork only.");
+        set_state(state, app, &game.id, "skipped", None, &[], Some(&message))?;
+        if error_without_steamgriddb {
+            return Err(message);
+        }
+        return Ok(());
+    }
+
+    if let Some(result) = steamgriddb_cached_artwork_result(state, &game.id)? {
+        let message = if result.cover {
+            "SteamGridDB cover artwork is already cached. ScreenScraper credentials are required for descriptions and release metadata."
+        } else {
+            "SteamGridDB artwork is already cached, but no cover image is available. ScreenScraper credentials are required for descriptions and release metadata."
+        };
+        set_state(
+            state,
+            app,
+            &game.id,
+            "ready",
+            Some("artwork"),
+            &[],
+            Some(message),
+        )?;
+        emit_metadata(app, "metadata:ready", &game.id, "ready");
+        return Ok(());
+    }
+
+    set_state(
+        state,
+        app,
+        &game.id,
+        "fetching",
+        Some("artwork"),
+        &[],
+        Some("Fetching SteamGridDB artwork. ScreenScraper metadata is unavailable."),
+    )?;
+
+    match enrich_artwork_steamgriddb(app, state, game, true).await {
+        Ok(result) if result.has_any() => {
+            let message = if result.cover {
+                "SteamGridDB cover artwork added. ScreenScraper credentials are required for descriptions and release metadata."
+            } else {
+                "SteamGridDB artwork added, but no cover image was available. ScreenScraper credentials are required for descriptions and release metadata."
+            };
+            set_state(
+                state,
+                app,
+                &game.id,
+                "ready",
+                Some("artwork"),
+                &[],
+                Some(message),
+            )?;
+            emit_metadata(app, "metadata:ready", &game.id, "ready");
+            Ok(())
+        }
+        Ok(_) => {
+            let message =
+                format!("{blocked_message} SteamGridDB did not find artwork for this game.");
+            set_state(
+                state,
+                app,
+                &game.id,
+                "skipped",
+                Some("artwork"),
+                &[],
+                Some(&message),
+            )?;
+            Ok(())
+        }
+        Err(error) => {
+            let message = format!("SteamGridDB artwork lookup failed: {error}");
+            set_state(
+                state,
+                app,
+                &game.id,
+                "failed",
+                Some("artwork"),
+                &[],
+                Some(&message),
+            )?;
+            Err(message)
+        }
+    }
 }
 
 async fn find_steamgriddb_game(
@@ -868,14 +1015,33 @@ fn load_credentials(state: &AppState) -> Result<Option<Credentials>, String> {
     }
 }
 
-fn steamgriddb_cache_is_fresh(state: &AppState, game_id: &str) -> Result<bool, String> {
+fn steamgriddb_cached_artwork_result(
+    state: &AppState,
+    game_id: &str,
+) -> Result<Option<SteamGridDbArtworkResult>, String> {
     let store = state
         .store
         .lock()
         .map_err(|_| "Store lock poisoned.".to_string())?;
     Ok(store
         .get_metadata_by_key(&steamgriddb_cache_key(game_id), STEAMGRIDDB_PROVIDER)?
-        .is_some())
+        .map(|entry| SteamGridDbArtworkResult {
+            cover: entry
+                .payload
+                .cover
+                .as_deref()
+                .is_some_and(|value| !value.trim().is_empty()),
+            hero: entry
+                .payload
+                .hero
+                .as_deref()
+                .is_some_and(|value| !value.trim().is_empty()),
+            logo: entry
+                .payload
+                .logo
+                .as_deref()
+                .is_some_and(|value| !value.trim().is_empty()),
+        }))
 }
 
 fn load_steamgriddb_key(state: &AppState) -> Result<Option<ResolvedApiKey>, String> {

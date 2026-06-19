@@ -221,7 +221,30 @@ export const previewApi = {
     const game = catalog.find((item) => item.id === gameId);
     if (!game) throw new Error(`Unknown preview game: ${gameId}`);
     if (!scraperStatus.configured) {
-      scrapeStates[gameId] = scrapeState(gameId, 'skipped', null, [], 'ScreenScraper credentials are not configured.');
+      if (!steamgriddbStatus.configured) {
+        scrapeStates[gameId] = scrapeState(
+          gameId,
+          'skipped',
+          null,
+          [],
+          'ScreenScraper credentials are not configured. Configure SteamGridDB to fetch artwork only.'
+        );
+        return;
+      }
+      Object.assign(game, {
+        artwork: {
+          ...(game.artwork ?? {}),
+          cover: game.artwork?.cover ?? game.coverImageUrl ?? 'https://blessdevhq.github.io/fusion-launcher/fusion/og-image.png',
+          hero: game.artwork?.hero ?? 'https://blessdevhq.github.io/fusion-launcher/fusion/og-image.png'
+        }
+      });
+      scrapeStates[gameId] = scrapeState(
+        gameId,
+        'ready',
+        'artwork',
+        [],
+        'SteamGridDB cover artwork added. ScreenScraper credentials are required for descriptions and release metadata.'
+      );
       return;
     }
     const matchKind = game.contentMode === 'metadata_only' ? 'name' : 'hash';

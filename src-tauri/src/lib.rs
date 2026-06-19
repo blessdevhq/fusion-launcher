@@ -34,7 +34,11 @@ use torrent::TorrentManager;
 #[derive(Clone)]
 pub struct AppState {
     pub store: Arc<Mutex<RepositoryStore>>,
+    /// Roaming AppData: SQLite DB, logs, and config live here.
     pub data_dir: PathBuf,
+    /// Default root for large managed content (Emulators/Games/System/Temp),
+    /// `AppData\Local` unless overridden by the `library_root` config key.
+    pub local_data_dir: PathBuf,
     /// `None` when the torrent engine failed to start this session. Direct HTTP
     /// downloads keep working.
     pub torrents: Option<TorrentManager>,
@@ -68,11 +72,26 @@ pub fn run() {
                 .app_data_dir()
                 .map_err(|error| setup_error(error.to_string()))?;
             std::fs::create_dir_all(&data_dir).map_err(|error| setup_error(error.to_string()))?;
+            let local_data_dir = app
+                .path()
+                .app_local_data_dir()
+                .map_err(|error| setup_error(error.to_string()))?;
+            std::fs::create_dir_all(&local_data_dir)
+                .map_err(|error| setup_error(error.to_string()))?;
             let database_path = prepare_database_path(&data_dir).map_err(setup_error)?;
             logging::initialize(&data_dir);
             let mut repository_store =
                 RepositoryStore::open(&database_path).map_err(setup_error)?;
-            match commands::repair_library_state(&mut repository_store, &data_dir) {
+            // Large content lives under the library root: the `library_root`
+            // config override if set, else `AppData\Local`. The DB/logs/config
+            // stay in Roaming (`data_dir`).
+            let library_root = repository_store
+                .get_config("library_root")
+                .ok()
+                .flatten()
+                .map(PathBuf::from)
+                .unwrap_or_else(|| local_data_dir.clone());
+            match commands::repair_library_state(&mut repository_store, &library_root) {
                 Ok(report) if report.repaired => {
                     logging::log_event(
                         &data_dir,
@@ -98,7 +117,7 @@ pub fn run() {
             // download, so this rarely fails; direct HTTP downloads and the rest
             // of the app work regardless.
             let torrents = match tauri::async_runtime::block_on(TorrentManager::new(
-                data_dir.clone(),
+                library_root.clone(),
                 Arc::clone(&store),
                 app.handle().clone(),
             )) {
@@ -113,19 +132,28 @@ pub fn run() {
                 }
             };
 
-            app.manage(AppState {
+            let app_state = AppState {
                 store,
                 data_dir,
+                local_data_dir,
                 torrents,
                 running_games: Arc::new(Mutex::new(HashMap::new())),
                 library_scrape: scraper::LibraryScrapeRuntime::new(),
-            });
+            };
+            app.manage(app_state.clone());
+
+            // Background cover backfill: fill in missing cover art for catalog
+            // games on launch. No-op without a SteamGridDB key, and capped so a
+            // large catalog never triggers a giant scrape.
+            scraper::auto_scrape_missing_artwork(app.handle().clone(), app_state);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             commands::preview_repository,
             commands::preview_repository_file,
             commands::preview_builtin_demo_repository,
+            commands::preview_source,
+            commands::add_source,
             commands::connect_repository,
             commands::connect_repository_file,
             commands::connect_builtin_demo_repository,
@@ -168,6 +196,8 @@ pub fn run() {
             commands::trust_executable,
             commands::get_download_root,
             commands::set_download_root,
+            commands::get_library_root,
+            commands::set_library_root,
             commands::remove_game,
             commands::remove_download,
             commands::redownload_asset,
@@ -182,6 +212,7 @@ pub fn run() {
             manifest::fetch_manifest,
             orchestrator::install_game,
             orchestrator::install_game_from_manifest,
+            orchestrator::add_manifest_source,
             orchestrator::install_emulator,
             orchestrator::get_emulator_status,
             orchestrator::get_emulator_install_status,

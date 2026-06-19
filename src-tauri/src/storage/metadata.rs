@@ -389,6 +389,48 @@ impl RepositoryStore {
         Ok(game_ids.len())
     }
 
+    /// Queue catalog games that are still missing cover art and have never been
+    /// scraped, capped at `limit` so a huge catalog never triggers a giant batch.
+    /// Used by the background cover backfill (auto-scrape) at startup and after a
+    /// source is added.
+    pub fn mark_games_missing_artwork_pending_for_scrape(
+        &self,
+        limit: usize,
+    ) -> Result<usize, String> {
+        let mut statement = self
+            .conn
+            .prepare(
+                r#"
+            SELECT g.id
+            FROM catalog_games g
+            LEFT JOIN scrape_state s ON s.game_id = g.id
+            WHERE (g.cover_image_url IS NULL OR TRIM(g.cover_image_url) = '')
+              AND (g.artwork_json IS NULL OR g.artwork_json NOT LIKE '%"cover":"%')
+              AND (s.game_id IS NULL OR s.status = 'pending')
+            ORDER BY g.title
+            LIMIT ?1
+            "#,
+            )
+            .map_err(|error| error.to_string())?;
+        let game_ids = statement
+            .query_map([limit as i64], |row| row.get::<_, String>(0))
+            .map_err(|error| error.to_string())?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(|error| error.to_string())?;
+
+        for game_id in &game_ids {
+            self.set_scrape_state(
+                game_id,
+                "pending",
+                None,
+                &[],
+                Some("Queued for automatic cover art."),
+            )?;
+        }
+
+        Ok(game_ids.len())
+    }
+
     pub fn list_pending_scrape_game_ids(&self) -> Result<Vec<String>, String> {
         let mut statement = self
             .conn

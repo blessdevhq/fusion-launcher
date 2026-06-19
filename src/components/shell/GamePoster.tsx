@@ -5,7 +5,7 @@ import { motion } from 'framer-motion';
 import { Download, Play, RotateCw, ShieldAlert } from 'lucide-react';
 import { useI18n } from '../I18nProvider';
 import { displayProductText } from '../../lib/brandText.ts';
-import { createGameArt } from '../../lib/gameArt.ts';
+import { createGameArt, selectGameArtImageUrl } from '../../lib/gameArt.ts';
 import { PLATFORM_LABELS } from '../../types/platform.ts';
 import type { GameLibraryItem, PrimaryGameAction } from '../../lib/libraryStatus.ts';
 import type { CatalogGame } from '../../types/repository.ts';
@@ -109,9 +109,7 @@ export function GameArt({
   hero?: boolean;
 }) {
   const generated = createGameArt(game);
-  const imageUrl = hero
-    ? game.artwork?.hero ?? game.coverImageUrl ?? game.artwork?.cover
-    : game.artwork?.cover ?? game.coverImageUrl;
+  const imageUrl = selectGameArtImageUrl(game, hero ? 'hero' : 'poster');
   const [imageFailed, setImageFailed] = useState(false);
 
   useEffect(() => {

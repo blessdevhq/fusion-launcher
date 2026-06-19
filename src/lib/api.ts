@@ -95,6 +95,12 @@ const previewHandlers: Record<string, PreviewHandler> = {
   fetch_manifest: () =>
     Promise.reject(new Error('Manifest fetching is available in the desktop app.')),
   install_game_from_manifest: ({ titleId }) => previewApi.installGame(String(titleId ?? '')),
+  add_manifest_source: () =>
+    Promise.reject(new Error('Adding a manifest source is available in the desktop app.')),
+  preview_source: () =>
+    Promise.reject(new Error('Previewing a source is available in the desktop app.')),
+  add_source: () =>
+    Promise.reject(new Error('Adding a source is available in the desktop app.')),
   install_emulator: ({ platform }) => previewApi.installEmulator(String(platform ?? '')),
   get_emulator_status: ({ platform }) => previewApi.getEmulatorStatus(String(platform ?? '')),
   get_emulator_install_status: ({ platform }) => previewApi.getEmulatorStatus(String(platform ?? '')),
@@ -283,6 +289,15 @@ export const api = {
   installGameFromManifest(url: string, titleId: string) {
     return call<InstallResult>('install_game_from_manifest', { url, titleId });
   },
+  addManifestSource(url: string) {
+    return call<RepositorySummary>('add_manifest_source', { url });
+  },
+  previewSource(input: string) {
+    return call<RepositoryPreview>('preview_source', { input });
+  },
+  addSource(input: string) {
+    return call<RepositorySummary>('add_source', { input });
+  },
   installEmulator(platform: string) {
     return call<EmulatorInstallResult>('install_emulator', { platform });
   },
@@ -336,6 +351,12 @@ export const api = {
   },
   setDownloadRoot(path: string) {
     return call<string>('set_download_root', { path });
+  },
+  getLibraryRoot() {
+    return call<string>('get_library_root');
+  },
+  setLibraryRoot(path: string) {
+    return call<string>('set_library_root', { path });
   },
   removeGame(gameId: string, deleteFiles: boolean) {
     return call<boolean>('remove_game', { gameId, deleteFiles });
