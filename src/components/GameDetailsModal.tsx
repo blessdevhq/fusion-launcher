@@ -135,7 +135,10 @@ export function GameDetailsModal({
     let cleanup: (() => void) | undefined;
     void Promise.all([
       listen<{ gameId: string }>('metadata:ready', (event) => {
-        if (event.payload.gameId === game.id) void loadScrapeState();
+        if (event.payload.gameId === game.id) {
+          void loadScrapeState();
+          void onRefresh();
+        }
       }),
       listen<{ gameId: string }>('metadata:state', (event) => {
         if (event.payload.gameId === game.id) void loadScrapeState();
@@ -591,7 +594,7 @@ export function GameDetailsModal({
                 <div key={item.id} className="flex items-center justify-between gap-3 rounded-md bg-black/22 px-3 py-2 text-sm">
                   <div className="min-w-0">
                     <div className="truncate font-semibold">{item.label}</div>
-                    <div className="mt-1 truncate text-xs text-white/38">
+                    <div className="mt-1 truncate select-text text-xs text-white/38">
                       {assetKindLabel(item.assetKind, t)} / {item.status === 'ready' ? item.installedPath ?? t.common.ready : item.message ?? t.common.missing}
                     </div>
                   </div>
@@ -615,7 +618,7 @@ export function GameDetailsModal({
                 <div key={item.asset.id} className="flex items-center justify-between gap-3 rounded-md bg-black/22 px-3 py-2 text-sm">
                   <div className="min-w-0">
                     <div className="truncate font-semibold">{item.asset.displayName}</div>
-                    <div className="mt-1 text-xs text-white/38">
+                    <div className="mt-1 select-text text-xs text-white/38">
                       {item.asset.assetKind} / {requirementStatusLabel(item.status, t)}
                     </div>
                   </div>
@@ -661,7 +664,7 @@ export function GameDetailsModal({
             )}
 
             {statusMessage && (
-              <div className="mb-4 rounded-md border border-amber-300/24 bg-amber-300/10 px-3 py-2 text-sm text-amber-100">
+              <div className="mb-4 rounded-md border border-amber-300/24 bg-amber-300/10 px-3 py-2 select-text text-sm text-amber-100">
                 {statusMessage}
               </div>
             )}
@@ -1167,7 +1170,7 @@ function SetupRow({
     <div data-testid={testId} className="flex items-center justify-between gap-3 rounded-md bg-black/22 px-3 py-2 text-sm">
       <div className="min-w-0">
         <div className="truncate font-semibold">{label}</div>
-        <div className="mt-1 truncate text-xs text-white/38">{detail}</div>
+        <div className="mt-1 truncate select-text text-xs text-white/38">{detail}</div>
       </div>
       <div className="flex shrink-0 items-center gap-2">
         {actionLabel && onAction && (

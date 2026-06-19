@@ -3,6 +3,7 @@ import { motion } from 'framer-motion';
 import { Search, X } from 'lucide-react';
 import { useI18n } from '@/components/I18nProvider';
 import { GamePoster } from '@/components/shell/GamePoster';
+import { CollectionsPanel, collectionIdForTarget, type CollectionTarget } from '@/components/shell/CockpitPanels';
 import type { GameLibraryItem, LibraryFilter, LibrarySort } from '@/lib/libraryStatus';
 import type { CatalogGame } from '@/types/repository';
 import { FILTERS, SORTS } from './constants';
@@ -23,6 +24,7 @@ export function LibraryScreen({
   onFilterChange,
   onQueryChange,
   onSortChange,
+  onOpenCollection,
   onPrimaryAction,
   onOpenDetails,
   onFocus
@@ -37,6 +39,7 @@ export function LibraryScreen({
   onFilterChange: (filter: LibraryFilter) => void;
   onQueryChange: (query: string) => void;
   onSortChange: (sort: LibrarySort) => void;
+  onOpenCollection: (target: CollectionTarget) => void;
   onPrimaryAction: (item: GameLibraryItem) => void;
   onOpenDetails: (game: CatalogGame) => void;
   onFocus: (focusId: string) => void;
@@ -69,10 +72,19 @@ export function LibraryScreen({
   }, [items.length, visibleCount]);
 
   const renderedItems = items.slice(0, visibleCount);
+  const activeCollectionId = collectionIdForTarget({ filter, query, sort });
 
   return (
     <motion.section initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="rh-screen rh-panel" data-testid="library-screen">
       <ScreenHeader eyebrow={t.dashboard.library.eyebrow} title={t.dashboard.library.title} description={t.dashboard.library.description(items.length, totalCount)} />
+      <div className="rh-library-collections">
+        <CollectionsPanel
+          items={allItems}
+          activeCollectionId={activeCollectionId}
+          onOpenCollection={onOpenCollection}
+          onFocus={onFocus}
+        />
+      </div>
       <div className="rh-library-toolbar">
         <div className="rh-library-search">
           <Search className="h-4 w-4 text-white/42" />

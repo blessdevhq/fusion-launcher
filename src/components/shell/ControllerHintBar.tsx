@@ -20,14 +20,6 @@ const VIEW_HINTS: Record<LauncherView, Array<{ key: string; label: HintLabel; to
     { key: 'A', label: 'action', tone: 'primary' },
     { key: 'B', label: 'home', tone: 'quiet' },
     { key: 'X', label: 'retry', tone: 'cool' }
-  ],
-  explore: [
-    { key: 'A', label: 'open', tone: 'primary' },
-    { key: 'B', label: 'home', tone: 'quiet' }
-  ],
-  collections: [
-    { key: 'A', label: 'open', tone: 'primary' },
-    { key: 'B', label: 'home', tone: 'quiet' }
   ]
 };
 

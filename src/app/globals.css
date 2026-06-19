@@ -22,6 +22,7 @@
   --rh-warning: #ffb84b;
   --rh-danger: #ff5c5c;
   --rh-info: #4b6bff;
+  --rh-titlebar-height: 34px;
   --rh-radius-sm: 8px;
   --rh-radius-md: 12px;
   --rh-radius-card: 16px;
@@ -44,16 +45,31 @@ body {
   background: var(--rh-bg);
   color: var(--rh-text);
   font-family: Inter, "SF Pro Display", Manrope, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 button,
 input,
-select {
+select,
+textarea {
   font: inherit;
 }
 
 button {
   letter-spacing: 0;
+}
+
+input,
+textarea,
+select,
+[contenteditable="true"],
+.select-text,
+.select-text *,
+.rh-selectable,
+.rh-selectable * {
+  -webkit-user-select: text;
+  user-select: text;
 }
 
 .rh-boot-loader {
@@ -515,6 +531,121 @@ button {
   overflow: hidden;
 }
 
+.rh-desktop-frame {
+  display: flex;
+  height: 100vh;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--rh-bg);
+  color: var(--rh-text);
+}
+
+.rh-desktop-titlebar {
+  position: relative;
+  z-index: 100;
+  display: grid;
+  height: var(--rh-titlebar-height);
+  min-height: var(--rh-titlebar-height);
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  border-bottom: 1px solid var(--rh-border-soft);
+  background:
+    linear-gradient(90deg, rgba(92, 230, 140, 0.09), transparent 34%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.012)),
+    rgba(10, 10, 11, 0.96);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.32);
+}
+
+.rh-desktop-titlebar::after {
+  content: "";
+  position: absolute;
+  inset-inline: 0;
+  bottom: -1px;
+  height: 1px;
+  pointer-events: none;
+  background: linear-gradient(90deg, rgba(92, 230, 140, 0.34), transparent 42%);
+}
+
+.rh-desktop-titlebar-brand {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 9px;
+  padding-left: 10px;
+  color: rgba(255, 255, 255, 0.78);
+  font-size: 12px;
+  font-weight: 750;
+  line-height: 1;
+}
+
+.rh-desktop-titlebar-brand span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rh-desktop-titlebar-icon {
+  height: 18px;
+  width: 18px;
+  flex-shrink: 0;
+  border-radius: 6px;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.13), 0 0 18px rgba(92, 230, 140, 0.18);
+}
+
+.rh-desktop-window-controls {
+  display: flex;
+  height: 100%;
+  align-items: stretch;
+}
+
+.rh-desktop-window-button {
+  display: grid;
+  height: 100%;
+  width: 46px;
+  place-items: center;
+  color: rgba(255, 255, 255, 0.62);
+  transition: background 150ms ease, color 150ms ease, box-shadow 150ms ease;
+}
+
+.rh-desktop-window-button:hover {
+  background: rgba(255, 255, 255, 0.075);
+  color: white;
+}
+
+.rh-desktop-window-button:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 1px rgba(92, 230, 140, 0.52);
+}
+
+.rh-desktop-window-close:hover {
+  background: rgba(255, 92, 92, 0.22);
+  color: white;
+}
+
+.rh-desktop-content {
+  position: relative;
+  min-height: 0;
+  flex: 1;
+  overflow: hidden;
+  background: var(--rh-bg);
+}
+
+.rh-desktop-content > main,
+.rh-desktop-content > .rh-app,
+.rh-desktop-content > .rh-onboarding-screen {
+  height: 100%;
+  min-height: 100%;
+}
+
+.rh-desktop-content .rh-app-grid {
+  height: 100%;
+}
+
+.rh-desktop-content .rh-onboarding-shell {
+  min-height: min(780px, calc(100vh - var(--rh-titlebar-height) - 80px));
+}
+
 .rh-topbar {
   position: absolute;
   z-index: 8;
@@ -572,15 +703,6 @@ button {
   color: rgba(255, 255, 255, 0.36);
 }
 
-.rh-clock {
-  min-width: 72px;
-  text-align: right;
-  color: rgba(255, 255, 255, 0.74);
-  font-size: 13px;
-  font-weight: 700;
-  text-shadow: 0 10px 22px rgba(0, 0, 0, 0.72);
-}
-
 .rh-notification-root {
   position: relative;
 }
@@ -609,8 +731,8 @@ button {
   right: 0;
   z-index: 22;
   display: grid;
-  width: min(430px, calc(100vw - 48px));
-  max-height: min(620px, calc(100vh - 112px));
+  width: min(500px, calc(100vw - 48px));
+  max-height: min(700px, calc(100vh - 112px));
   gap: 12px;
   overflow: hidden;
   border: 1px solid rgba(255, 255, 255, 0.12);
@@ -756,11 +878,21 @@ button {
 }
 
 .rh-notification-event {
+  width: 100%;
   gap: 10px;
   border: 1px solid rgba(255, 255, 255, 0.075);
   border-radius: var(--rh-radius-sm);
   background: rgba(255, 255, 255, 0.035);
   padding: 9px;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.rh-notification-event:hover {
+  border-color: rgba(92, 230, 140, 0.32);
+  background: rgba(255, 255, 255, 0.055);
 }
 
 .rh-notification-event-title {
@@ -1489,6 +1621,10 @@ button {
   gap: 12px;
 }
 
+.rh-library-collections {
+  margin-bottom: 18px;
+}
+
 .rh-mini-rail {
   min-width: 0;
   max-width: 100%;
@@ -1598,49 +1734,6 @@ button {
   overflow-x: hidden;
   overflow-y: auto;
   scrollbar-gutter: stable;
-}
-
-.rh-explore-layout {
-  display: grid;
-  min-height: 0;
-  flex: 1;
-  grid-template-columns: minmax(0, 1fr) 260px;
-  gap: 16px;
-}
-
-.rh-activity-list {
-  min-height: 0;
-  overflow-y: auto;
-  padding-right: 4px;
-}
-
-.rh-activity-list > * + * {
-  margin-top: 10px;
-}
-
-.rh-explore-stats {
-  align-self: start;
-  border: 1px solid var(--rh-border);
-  border-radius: var(--rh-radius-card);
-  background: rgba(255, 255, 255, 0.04);
-  padding: 16px;
-}
-
-.rh-activity-row {
-  display: flex;
-  width: 100%;
-  align-items: center;
-  gap: 10px;
-  border: 1px solid var(--rh-border-soft);
-  border-radius: var(--rh-radius-md);
-  background: rgba(255, 255, 255, 0.04);
-  padding: 10px;
-  text-align: left;
-}
-
-.rh-activity-row:hover {
-  border-color: rgba(92, 230, 140, 0.35);
-  background: rgba(255, 255, 255, 0.06);
 }
 
 .rh-filter-chip {
@@ -1851,33 +1944,6 @@ button {
   background: rgba(255, 255, 255, 0.08);
 }
 
-.rh-download-path {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: center;
-  gap: 8px;
-  margin-top: 8px;
-  color: rgba(255, 255, 255, 0.34);
-  font-size: 12px;
-  line-height: 1.35;
-}
-
-.rh-download-path span {
-  color: rgba(255, 255, 255, 0.42);
-  font-weight: 700;
-}
-
-.rh-download-path code {
-  min-width: 0;
-  overflow-x: auto;
-  white-space: nowrap;
-  border-radius: 6px;
-  background: rgba(0, 0, 0, 0.24);
-  padding: 5px 7px;
-  color: rgba(255, 255, 255, 0.58);
-  scrollbar-width: thin;
-}
-
 .rh-update-status {
   min-height: 54px;
   border: 1px solid var(--rh-border-soft);
@@ -1980,9 +2046,6 @@ button {
     width: 130px;
   }
 
-  .rh-explore-layout {
-    grid-template-columns: 1fr;
-  }
 }
 
 @media (max-width: 760px) {
@@ -2074,10 +2137,6 @@ button {
     right: auto;
     width: auto;
     max-height: calc(100vh - 92px);
-  }
-
-  .rh-clock {
-    display: none;
   }
 
   .rh-home-screen {

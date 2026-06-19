@@ -65,7 +65,7 @@ export function DiagnosticsSection({
                 </div>
                 <StatusChip tone={ready ? 'valid' : 'missing'} label={ready ? t.settings.statusChip.ready : t.settings.statusChip.missing} />
               </div>
-              <div className="mt-3 text-xs leading-5 text-white/[0.44]">{item?.message ?? t.settings.diagnostics.notRun}</div>
+              <div className="mt-3 select-text text-xs leading-5 text-white/[0.44]">{item?.message ?? t.settings.diagnostics.notRun}</div>
             </div>
           );
         })}

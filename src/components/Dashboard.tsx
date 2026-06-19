@@ -7,9 +7,7 @@ import { I18nProvider } from '@/components/I18nProvider';
 import { GameDetailsModal } from '@/components/GameDetailsModal';
 import { LaunchErrorModal } from '@/components/LaunchErrorModal';
 import { SettingsModal } from '@/components/SettingsModal';
-import { CollectionsScreen } from '@/components/dashboard/CollectionsScreen';
 import { DownloadsScreen } from '@/components/dashboard/DownloadsScreen';
-import { ExploreScreen } from '@/components/dashboard/ExploreScreen';
 import { HomeScreen } from '@/components/dashboard/HomeScreen';
 import { LibraryScreen } from '@/components/dashboard/LibraryScreen';
 import { TopChrome } from '@/components/dashboard/TopChrome';
@@ -108,10 +106,12 @@ export function Dashboard({
 
   const refreshLauncherData = useCallback(async () => {
     try {
-      const [nextLibraryStatuses, nextDownloads] = await Promise.all([
+      const [nextCatalog, nextLibraryStatuses, nextDownloads] = await Promise.all([
+        api.getCatalog(),
         api.getLibraryStatuses(),
         api.listTorrentDownloads()
       ]);
+      setCatalog(nextCatalog);
       setLibraryStatuses(nextLibraryStatuses);
       setDownloads(nextDownloads);
       setLauncherMessage(null);
@@ -120,7 +120,7 @@ export function Dashboard({
     } finally {
       setDataReady(true);
     }
-  }, [setDownloads, setLibraryStatuses]);
+  }, [setCatalog, setDownloads, setLibraryStatuses]);
 
   useEffect(() => {
     let cancelled = false;
@@ -429,11 +429,6 @@ export function Dashboard({
     setSelectedGameId(item.game.id);
   };
 
-  const copyDownloadPath = (downloadId: string) => {
-    const path = downloads.find((download) => download.gameId === downloadId)?.saveDir;
-    if (path) void navigator.clipboard?.writeText(path);
-  };
-
   const deleteDownload = async (downloadId: string) => {
     const record = downloads.find((download) => download.gameId === downloadId);
     const item = itemsByGameId.get(downloadId);
@@ -492,6 +487,12 @@ export function Dashboard({
         setNotificationsOpen(true);
         void installAppUpdate();
       }
+      if (value.startsWith('activity-event:')) {
+        if (itemsByGameId.has(gameId)) {
+          setSelectedGameId(gameId);
+          setNotificationsOpen(false);
+        }
+      }
       if (value === 'settings') {
         setNotificationsOpen(false);
         setSettingsOpen(true);
@@ -525,17 +526,12 @@ export function Dashboard({
         ));
       }
       if (downloadAction === 'cancel') void runAction(`cancel:${gameId}`, () => api.cancelDownload(gameId));
-      if (downloadAction === 'copy-path') copyDownloadPath(gameId);
       if (downloadAction === 'open-folder') void runAction(`open-folder:${gameId}`, () => api.openDownloadFolder(gameId));
       if (downloadAction === 'delete') void deleteDownload(gameId);
       if (downloadAction === 'play') {
         const item = itemsByGameId.get(gameId);
         if (item) void launchItem(item);
       }
-      return;
-    }
-    if (kind === 'activity') {
-      if (itemsByGameId.has(gameId)) setSelectedGameId(gameId);
       return;
     }
     if (kind === 'collection') {
@@ -557,7 +553,7 @@ export function Dashboard({
     }
     if (focusId === 'downloads:open') setActiveView('downloads');
     if (focusId === 'library:open') setActiveView('library');
-  }, [checkAppUpdate, copyDownloadPath, deleteDownload, executePrimaryAction, installAppUpdate, itemsByGameId, launchItem, openLibraryCollection, refreshAll, runAction, setActiveView, setSelectedGameId]);
+  }, [checkAppUpdate, deleteDownload, executePrimaryAction, installAppUpdate, itemsByGameId, launchItem, openLibraryCollection, refreshAll, runAction, setActiveView, setSelectedGameId]);
 
   useEffect(() => {
     document.querySelectorAll<HTMLElement>('[data-focus-active="true"]').forEach((element) => {
@@ -616,6 +612,12 @@ export function Dashboard({
           onNotificationsOpenChange={setNotificationsOpen}
           onCheckAppUpdate={checkAppUpdate}
           onInstallAppUpdate={installAppUpdate}
+          onOpenActivityEvent={(event) => {
+            if (event.gameId) {
+              setSelectedGameId(event.gameId);
+              setNotificationsOpen(false);
+            }
+          }}
         />
         {bannerMessage && <div className="rh-banner">{bannerMessage}</div>}
 
@@ -646,6 +648,7 @@ export function Dashboard({
             onFilterChange={setLibraryFilter}
             onQueryChange={setLibrarySearch}
             onSortChange={setLibrarySort}
+            onOpenCollection={openLibraryCollection}
             onPrimaryAction={(item) => void executePrimaryAction(item)}
             onOpenDetails={(game) => setSelectedGameId(game.id)}
             onFocus={setFocusedItemId}
@@ -675,25 +678,6 @@ export function Dashboard({
             onOpenFolder={(gameId) => runAction(`open-folder:${gameId}`, () => api.openDownloadFolder(gameId))}
             onDeleteFiles={deleteDownload}
             onPlay={(item) => void launchItem(item)}
-            onFocus={setFocusedItemId}
-          />
-        )}
-
-        {activeView === 'explore' && (
-          <ExploreScreen
-            events={activityEvents}
-            items={items}
-            onOpenEvent={(event) => {
-              if (event.gameId) setSelectedGameId(event.gameId);
-            }}
-            onFocus={setFocusedItemId}
-          />
-        )}
-
-        {activeView === 'collections' && (
-          <CollectionsScreen
-            items={items}
-            onOpenCollection={openLibraryCollection}
             onFocus={setFocusedItemId}
           />
         )}

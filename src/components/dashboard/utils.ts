@@ -98,10 +98,6 @@ export function formatSpeed(bytesPerSecond: number) {
   return `${(bytesPerSecond / 1024 / 1024).toFixed(2)} MB/s`;
 }
 
-export function formatClock(date: Date, locale: string) {
-  return date.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' });
-}
-
 export function filterCountLabel(filter: LibraryFilter, totalCount: number, allItems: GameLibraryItem[]) {
   if (filter === 'all') return totalCount;
   return filterLibraryItems(allItems, filter).length;

@@ -44,18 +44,18 @@ export function UpdateCheckPanel({
         </div>
       </div>
       <div className={`rh-update-status rh-update-status-${state.phase}`}>
-        {state.phase === 'idle' && t.settings.updates.checkIdle}
-        {state.phase === 'checking' && t.settings.updates.checking}
-        {state.phase === 'installing' && t.settings.updates.installing}
-        {state.phase === 'up-to-date' && t.settings.updates.upToDate(state.report?.currentVersion)}
+        {state.phase === 'idle' && <span className="select-text">{t.settings.updates.checkIdle}</span>}
+        {state.phase === 'checking' && <span className="select-text">{t.settings.updates.checking}</span>}
+        {state.phase === 'installing' && <span className="select-text">{t.settings.updates.installing}</span>}
+        {state.phase === 'up-to-date' && <span className="select-text">{t.settings.updates.upToDate(state.report?.currentVersion)}</span>}
         {state.phase === 'available' && (
           <div>
-            <div className="font-black text-white">{t.settings.updates.available(state.report?.version)}</div>
+            <div className="select-text font-black text-white">{t.settings.updates.available(state.report?.version)}</div>
             {state.report?.body && <div className="mt-1 text-white/50">{state.report.body}</div>}
             {state.report?.date && <div className="mt-1 text-white/[0.36]">{t.common.published} {state.report.date}</div>}
           </div>
         )}
-        {state.phase === 'error' && updateErrorText(state.error, locale)}
+        {state.phase === 'error' && <span className="select-text">{updateErrorText(state.error, locale)}</span>}
       </div>
     </div>
   );
@@ -75,7 +75,7 @@ export function HealthGroup({ title, items }: { title: string; items: HealthChec
             <span className={`mt-1 h-2 w-2 rounded-full ${healthToneClass(item.status)}`} />
             <div className="min-w-0 flex-1">
               <div className="truncate font-bold text-white/[0.82]">{item.label}</div>
-              <div className="mt-1 text-white/[0.42]">{item.message ?? healthStatusLabel(item.status, t)}</div>
+              <div className="mt-1 select-text text-white/[0.42]">{item.message ?? healthStatusLabel(item.status, t)}</div>
             </div>
             <span className="rounded-sm border border-white/10 px-2 py-1 uppercase text-white/[0.48]">{healthStatusLabel(item.status, t)}</span>
           </div>
@@ -106,7 +106,7 @@ export function PathCard({ label, value }: { label: string; value: string }) {
   return (
     <div className="min-w-0 rounded-sm border border-white/10 bg-white/[0.025] p-4">
       <div className="text-[10px] font-semibold text-white/[0.32]">{label}</div>
-      <div className="mt-2 truncate text-sm text-white/[0.62]">{value}</div>
+      <div className="mt-2 truncate select-text text-sm text-white/[0.62]">{value}</div>
     </div>
   );
 }

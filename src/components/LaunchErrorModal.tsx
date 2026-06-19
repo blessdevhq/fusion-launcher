@@ -47,7 +47,7 @@ export function LaunchErrorModal({
           </div>
           <div className="min-w-0 flex-1">
             <h2 className="text-xl font-black">{view.title}</h2>
-            <p className="mt-2 text-sm leading-6 text-white/62">{view.message}</p>
+            <p className="mt-2 select-text text-sm leading-6 text-white/62">{view.message}</p>
           </div>
           <button
             onClick={onClose}

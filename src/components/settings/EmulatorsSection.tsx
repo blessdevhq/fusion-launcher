@@ -122,7 +122,7 @@ export function EmulatorsSection({
                   <div className="text-xs leading-5 text-white/[0.50]">{detail}</div>
                   <div className="mt-1 text-xs text-white/[0.34]">{t.settings.emulators.expectedFile(executableHint)}</div>
                   {emulatorPath && (
-                    <div className="mt-2 truncate text-xs text-white/[0.48]" title={emulatorPath}>
+                    <div className="mt-2 truncate select-text text-xs text-white/[0.48]" title={emulatorPath}>
                       {emulatorPath}
                     </div>
                   )}

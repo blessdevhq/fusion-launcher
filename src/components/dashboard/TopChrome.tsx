@@ -4,7 +4,7 @@ import { useI18n } from '@/components/I18nProvider';
 import type { ActivityEvent } from '@/stores/launcherStore';
 import type { UpdatePanelPhase, UpdatePanelState } from './types';
 import { ActivityIcon } from './shared';
-import { displayActivityTitle, formatClock, formatEventTime, updateNotificationText } from './utils';
+import { displayActivityTitle, formatEventTime, updateNotificationText } from './utils';
 
 export function TopChrome({
   onRefresh,
@@ -17,7 +17,8 @@ export function TopChrome({
   activityEvents,
   onNotificationsOpenChange,
   onCheckAppUpdate,
-  onInstallAppUpdate
+  onInstallAppUpdate,
+  onOpenActivityEvent
 }: {
   onRefresh: () => void;
   onOpenSettings: () => void;
@@ -30,17 +31,12 @@ export function TopChrome({
   onNotificationsOpenChange: (open: boolean) => void;
   onCheckAppUpdate: () => Promise<void>;
   onInstallAppUpdate: () => Promise<void>;
+  onOpenActivityEvent: (event: ActivityEvent) => void;
 }) {
-  const [now, setNow] = useState(() => new Date());
   const [searchValue, setSearchValue] = useState('');
   const actionsRef = useRef<HTMLDivElement>(null);
   const updateCheckedFromPopoverRef = useRef(false);
-  const { locale, t } = useI18n();
-
-  useEffect(() => {
-    const timer = window.setInterval(() => setNow(new Date()), 30_000);
-    return () => window.clearInterval(timer);
-  }, []);
+  const { t } = useI18n();
 
   useEffect(() => {
     if (!notificationsOpen || updatePanel.phase !== 'idle' || updateCheckedFromPopoverRef.current) return;
@@ -121,6 +117,7 @@ export function TopChrome({
               onFocus={onFocus}
               onCheck={onCheckAppUpdate}
               onInstall={onInstallAppUpdate}
+              onOpenEvent={onOpenActivityEvent}
             />
           )}
         </div>
@@ -135,7 +132,6 @@ export function TopChrome({
         >
           <Settings className="h-4 w-4" />
         </button>
-        <div className="rh-clock">{formatClock(now, locale)}</div>
       </div>
     </header>
   );
@@ -146,19 +142,21 @@ function TopNotificationsPopover({
   events,
   onFocus,
   onCheck,
-  onInstall
+  onInstall,
+  onOpenEvent
 }: {
   state: UpdatePanelState;
   events: ActivityEvent[];
   onFocus: (focusId: string) => void;
   onCheck: () => Promise<void>;
   onInstall: () => Promise<void>;
+  onOpenEvent: (event: ActivityEvent) => void;
 }) {
   const { locale, t } = useI18n();
   const checking = state.phase === 'checking';
   const installing = state.phase === 'installing';
   const busy = checking || installing;
-  const visibleEvents = events.slice(0, 5);
+  const visibleEvents = events.slice(0, 12);
 
   return (
     <section
@@ -227,16 +225,28 @@ function TopNotificationsPopover({
       <div className="rh-notification-feed">
         {visibleEvents.length === 0 ? (
           <div className="rh-notification-empty">{t.dashboard.topbar.notifications.empty}</div>
-        ) : visibleEvents.map((event) => (
-          <div key={event.id} className="rh-notification-event">
-            <ActivityIcon tone={event.tone} />
-            <div className="min-w-0 flex-1">
-              <div className="rh-notification-event-title">{displayActivityTitle(event.title, t)}</div>
-              <div className="rh-notification-event-detail">{event.detail}</div>
-            </div>
-            <div className="rh-notification-event-time">{formatEventTime(event.timestamp, locale)}</div>
-          </div>
-        ))}
+        ) : visibleEvents.map((event) => {
+          const focusId = `top:activity-event:${encodeURIComponent(event.gameId ?? event.id)}`;
+
+          return (
+            <button
+              key={event.id}
+              type="button"
+              data-focus-id={focusId}
+              data-focus-zone="topbar"
+              onFocus={() => onFocus(focusId)}
+              onClick={() => onOpenEvent(event)}
+              className="rh-notification-event rh-focusable"
+            >
+              <ActivityIcon tone={event.tone} />
+              <div className="min-w-0 flex-1">
+                <div className="rh-notification-event-title">{displayActivityTitle(event.title, t)}</div>
+                <div className="rh-notification-event-detail">{event.detail}</div>
+              </div>
+              <div className="rh-notification-event-time">{formatEventTime(event.timestamp, locale)}</div>
+            </button>
+          );
+        })}
       </div>
     </section>
   );

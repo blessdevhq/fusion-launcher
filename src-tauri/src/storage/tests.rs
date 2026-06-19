@@ -92,6 +92,20 @@ fn artwork_payload(hero: &str, logo: &str, screenshot: &str) -> ScrapedGamePaylo
     }
 }
 
+fn cover_payload(cover: &str) -> ScrapedGamePayload {
+    ScrapedGamePayload {
+        provider: "steamgriddb".to_string(),
+        provider_game_id: Some("1".to_string()),
+        title: Some("Game".to_string()),
+        description: None,
+        cover: Some(cover.to_string()),
+        hero: None,
+        logo: None,
+        screenshots: Vec::new(),
+        metadata: empty_metadata(),
+    }
+}
+
 #[test]
 fn scraped_artwork_does_not_replace_source_artwork() {
     let mut view = catalog_view_with_artwork(Some(GameArtwork {
@@ -108,6 +122,65 @@ fn scraped_artwork_does_not_replace_source_artwork() {
     assert_eq!(artwork.hero.as_deref(), Some("source-hero"));
     assert_eq!(artwork.logo.as_deref(), Some("source-logo"));
     assert_eq!(artwork.screenshots, vec!["source-shot".to_string()]);
+}
+
+#[test]
+fn scraped_cover_replaces_placeholder_source_artwork() {
+    let mut view = catalog_view_with_artwork(Some(GameArtwork {
+        cover: Some("https://images.igdb.com/...png".to_string()),
+        hero: Some("https://images.igdb.com/...jpg".to_string()),
+        logo: None,
+        screenshots: Vec::new(),
+    }));
+    view.cover_image_url = Some("https://images.igdb.com/...png".to_string());
+
+    apply_payload(
+        &mut view,
+        &cover_payload("https://cdn2.steamgriddb.com/grid/real.png"),
+        false,
+    );
+
+    let artwork = view.artwork.unwrap();
+    assert_eq!(
+        artwork.cover.as_deref(),
+        Some("https://cdn2.steamgriddb.com/grid/real.png")
+    );
+    assert_eq!(
+        view.cover_image_url.as_deref(),
+        Some("https://cdn2.steamgriddb.com/grid/real.png")
+    );
+}
+
+#[test]
+fn placeholder_override_artwork_does_not_replace_scraped_cover() {
+    let mut view = catalog_view_with_artwork(Some(GameArtwork {
+        cover: Some("https://images.igdb.com/...png".to_string()),
+        hero: None,
+        logo: None,
+        screenshots: Vec::new(),
+    }));
+    view.cover_image_url = Some("https://images.igdb.com/...png".to_string());
+
+    apply_payload(
+        &mut view,
+        &cover_payload("https://cdn2.steamgriddb.com/grid/real.png"),
+        false,
+    );
+    apply_payload(
+        &mut view,
+        &cover_payload("https://images.igdb.com/...png"),
+        true,
+    );
+
+    let artwork = view.artwork.unwrap();
+    assert_eq!(
+        artwork.cover.as_deref(),
+        Some("https://cdn2.steamgriddb.com/grid/real.png")
+    );
+    assert_eq!(
+        view.cover_image_url.as_deref(),
+        Some("https://cdn2.steamgriddb.com/grid/real.png")
+    );
 }
 
 #[test]

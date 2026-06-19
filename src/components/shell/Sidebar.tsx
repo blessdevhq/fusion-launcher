@@ -1,15 +1,13 @@
 'use client';
 
-import { Compass, Database, Download, FolderHeart, Home, Library, Settings, type LucideIcon } from 'lucide-react';
+import { Database, Download, Home, Library, Settings, type LucideIcon } from 'lucide-react';
 import { useI18n } from '../I18nProvider';
 import type { LauncherView } from '../../stores/launcherStore.ts';
 
 const NAV_ITEMS: Array<{ id: LauncherView; icon: LucideIcon }> = [
   { id: 'home', icon: Home },
   { id: 'library', icon: Library },
-  { id: 'explore', icon: Compass },
-  { id: 'downloads', icon: Download },
-  { id: 'collections', icon: FolderHeart }
+  { id: 'downloads', icon: Download }
 ];
 
 interface SidebarProps {

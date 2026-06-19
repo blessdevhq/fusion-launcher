@@ -8,7 +8,7 @@ import type {
   TorrentDownloadRecord
 } from '../types/repository.ts';
 
-export type LauncherView = 'home' | 'library' | 'explore' | 'downloads' | 'collections';
+export type LauncherView = 'home' | 'library' | 'downloads';
 
 export interface ActivityEvent {
   id: string;

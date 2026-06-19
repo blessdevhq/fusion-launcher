@@ -25,8 +25,8 @@ npm run mvp:release:windows
 `npm run mvp:smoke` validates the preview runtime path from source preview to
 catalog, built-in demo setup, user-provided game import, download, launch, and
 health diagnostics. `npm run mvp:visual` starts a local Next preview/dev server,
-checks the console-launcher Home, Library search, Game Setup, import flow,
-Collections, Downloads, and Settings Sources screens, and writes screenshots to
+checks the console-launcher Home, Library search and collections, Game Setup,
+import flow, Downloads, and Settings Sources screens, and writes screenshots to
 `.tmp/mvp-visual`.
 
 `npm run mvp:release:windows` builds an NSIS package and then runs

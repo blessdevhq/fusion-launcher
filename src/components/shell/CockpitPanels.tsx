@@ -176,10 +176,12 @@ export function HomeRailsPanel({
 
 export function CollectionsPanel({
   items,
+  activeCollectionId = 'all',
   onOpenCollection,
   onFocus
 }: {
   items: GameLibraryItem[];
+  activeCollectionId?: string | null;
   onOpenCollection: (target: CollectionTarget) => void;
   onFocus: (focusId: string) => void;
 }) {
@@ -194,9 +196,8 @@ export function CollectionsPanel({
     label: string;
     count: number;
     icon: LucideIcon;
-    active?: boolean;
   }> = [
-    { id: 'all', label: t.shell.collections.all, count: items.length, icon: FolderHeart, active: true },
+    { id: 'all', label: t.shell.collections.all, count: items.length, icon: FolderHeart },
     { id: 'ready', label: t.shell.collections.ready, count: readyCount, icon: Play },
     { id: 'downloads', label: t.shell.collections.downloads, count: downloadCount, icon: Download },
     { id: 'missing', label: t.shell.collections.missing, count: missingCount, icon: RotateCw },
@@ -215,6 +216,7 @@ export function CollectionsPanel({
         {collectionCards.slice(0, 8).map((card) => {
           const Icon = card.icon;
           const focusId = `collection:${card.id}`;
+          const active = activeCollectionId?.toLowerCase() === card.id.toLowerCase();
           return (
             <button
               key={card.label}
@@ -223,7 +225,7 @@ export function CollectionsPanel({
               data-focus-zone="collections"
               onFocus={() => onFocus(focusId)}
               onClick={() => onOpenCollection(collectionTargetForId(card.id))}
-              className={`rh-collection-card rh-focusable ${card.active ? 'rh-collection-card-active' : ''}`}
+              className={`rh-collection-card rh-focusable ${active ? 'rh-collection-card-active' : ''}`}
             >
               <Icon className="h-4 w-4" />
               <span className="mt-3 block text-sm font-semibold">{card.label}</span>
@@ -244,6 +246,16 @@ export function collectionTargetForId(id: string): CollectionTarget {
   if (id === 'downloads') return { filter: 'downloading', query: '', sort: 'status' };
   if (id === 'missing') return { filter: 'missing', query: '', sort: 'status' };
   return { filter: 'all', query: '', sort: 'title' };
+}
+
+export function collectionIdForTarget(target: CollectionTarget): string | null {
+  const query = target.query.trim().toLowerCase();
+  if (target.filter === 'all' && query === '' && target.sort === 'title') return 'all';
+  if (target.filter === 'all' && query === 'ready to play' && target.sort === 'status') return 'ready';
+  if (target.filter === 'downloading' && query === '' && target.sort === 'status') return 'downloads';
+  if (target.filter === 'missing' && query === '' && target.sort === 'status') return 'missing';
+  if (target.filter === 'all' && query && target.sort === 'title') return `platform:${query}`;
+  return null;
 }
 
 function MiniRail({

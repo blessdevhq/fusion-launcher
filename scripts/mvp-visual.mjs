@@ -94,13 +94,12 @@ async function main() {
   await assertNoHorizontalOverflow(page, 'game imported');
   await page.getByTitle('Close').click();
 
-  await clickNav(page, 'collections');
-  await page.waitForTimeout(250);
-  await expectVisible(page.getByTestId('collections-screen'), 'collections screen');
-  await expectVisible(page.getByTestId('collections-panel'), 'collections panel');
-  await expectVisible(page.getByTestId('collection-card').first(), 'collection card');
-  await screenshot(page, '06-collections.png');
-  await assertNoHorizontalOverflow(page, 'collections');
+  assert.equal(await page.locator('[data-focus-id="nav:collections"]').count(), 0, 'collections should not be a sidebar nav target');
+  await page.getByTestId('library-search').fill('');
+  await expectVisible(page.getByTestId('collections-panel'), 'library collections panel');
+  await expectVisible(page.getByTestId('collection-card').first(), 'library collection card');
+  await screenshot(page, '06-library-collections.png');
+  await assertNoHorizontalOverflow(page, 'library collections');
   await page.getByTestId('collection-card').filter({ hasText: 'Ready to play' }).first().evaluate((node) => {
     if (!(node instanceof HTMLElement)) {
       throw new Error('Collection target is not clickable.');

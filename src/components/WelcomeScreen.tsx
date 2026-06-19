@@ -79,7 +79,7 @@ export function WelcomeScreen({ initialMessage, onConnect }: WelcomeScreenProps)
             {t.brand.demoCopy}
           </p>
           {message && (
-            <div className="rounded-md border border-amber-300/24 bg-amber-300/10 px-3 py-2 text-sm text-amber-100">
+            <div className="rounded-md border border-amber-300/24 bg-amber-300/10 px-3 py-2 select-text text-sm text-amber-100">
               {message}
             </div>
           )}
