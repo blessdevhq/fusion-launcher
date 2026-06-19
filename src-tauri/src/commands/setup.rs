@@ -3,20 +3,22 @@ pub fn check_requirements(
     game_id: String,
     state: State<'_, AppState>,
 ) -> Result<RequirementsReport, String> {
+    let content_dir = library_root_for_app_state(&state);
     let store = lock_store(&state)?;
     let game = store
         .get_game(&game_id)?
         .ok_or_else(|| format!("Unknown game: {game_id}"))?;
-    build_requirements_report(&store, &state.data_dir, &game)
+    build_requirements_report(&store, &content_dir, &game)
 }
 
 #[tauri::command]
 pub fn get_library_statuses(state: State<'_, AppState>) -> Result<Vec<LibraryGameStatus>, String> {
+    let content_dir = library_root_for_app_state(&state);
     let store = lock_store(&state)?;
     store
         .get_catalog()?
         .iter()
-        .map(|game| build_library_status(&store, &state.data_dir, game))
+        .map(|game| build_library_status(&store, &content_dir, game))
         .collect()
 }
 
@@ -30,11 +32,12 @@ pub fn get_game_setup_state(
     game_id: String,
     state: State<'_, AppState>,
 ) -> Result<GameSetupState, String> {
+    let content_dir = library_root_for_app_state(&state);
     let store = lock_store(&state)?;
     let game = store
         .get_game(&game_id)?
         .ok_or_else(|| format!("Unknown game: {game_id}"))?;
-    build_game_setup_state(&store, &state.data_dir, &game)
+    build_game_setup_state(&store, &content_dir, &game)
 }
 
 #[tauri::command]
@@ -73,13 +76,14 @@ pub fn remove_profile_emulator(
     profile_id: String,
     state: State<'_, AppState>,
 ) -> Result<ProfileEmulatorRemovalReport, String> {
+    let content_dir = library_root_for_app_state(&state);
     let store = lock_store(&state)?;
-    remove_profile_emulator_from_store(&store, &state.data_dir, profile_id.trim())
+    remove_profile_emulator_from_store(&store, &content_dir, profile_id.trim())
 }
 
 pub(super) fn remove_profile_emulator_from_store(
     store: &RepositoryStore,
-    data_dir: &Path,
+    content_dir: &Path,
     profile_id: &str,
 ) -> Result<ProfileEmulatorRemovalReport, String> {
     let profile = setup_profiles::get_platform_setup_profile(profile_id)
@@ -88,7 +92,7 @@ pub(super) fn remove_profile_emulator_from_store(
     let mut removed_path = None;
 
     if profile.emulator.install_mode == "downloadable" {
-        let install_root = data_dir.join("Emulators");
+        let install_root = content_dir.join("Emulators");
         let install_dir = install_root.join(&profile.platform).join(&profile.id);
         deleted_files = crate::archive::remove_directory_inside(&install_root, &install_dir)?;
         removed_path = Some(install_dir.to_string_lossy().to_string());
@@ -138,6 +142,7 @@ pub fn import_profile_system_file(
     source_path: String,
     state: State<'_, AppState>,
 ) -> Result<ImportAssetFileReport, String> {
+    let content_dir = library_root_for_app_state(&state);
     let store = lock_store(&state)?;
     let game = store
         .get_game(&game_id)?
@@ -152,7 +157,7 @@ pub fn import_profile_system_file(
 
     import_profile_system_file_into_store(
         &store,
-        &state.data_dir,
+        &content_dir,
         &profile,
         requirement,
         Path::new(source_path.trim()),

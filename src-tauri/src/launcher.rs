@@ -150,6 +150,7 @@ pub fn launch_game(
     state: State<'_, AppState>,
     app: AppHandle,
 ) -> Result<LaunchReport, LaunchFailure> {
+    let content_dir = crate::commands::library_root_for_app_state(&state);
     let (emulator_path, game_path, launch_args_template, expected_extensions, preferred_file) = {
         let store = state
             .store
@@ -161,7 +162,7 @@ pub fn launch_game(
             .ok_or_else(|| LaunchFailure::spawn_failed(format!("Unknown game: {game_id}")))?;
 
         let profile = crate::commands::resolve_known_profile(&game);
-        let setup_state = crate::commands::build_game_setup_state(&store, &state.data_dir, &game)
+        let setup_state = crate::commands::build_game_setup_state(&store, &content_dir, &game)
             .map_err(LaunchFailure::spawn_failed)?;
         if let Some(profile_id) = setup_state.unsupported_profile_id.as_deref() {
             return Err(LaunchFailure::spawn_failed(format!(

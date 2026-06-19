@@ -138,7 +138,7 @@ pub(super) fn load_builtin_demo_repository() -> Result<RepositorySchema, String>
 
 pub(crate) fn repair_library_state(
     store: &mut RepositoryStore,
-    data_dir: &Path,
+    content_dir: &Path,
 ) -> Result<RepairLibraryReport, String> {
     const LEGACY_REPOSITORY_ID: &str = "retrohydra-demo";
     const LEGACY_DEMO_URL: &str = "http://localhost:3000/demo-repository.json";
@@ -195,12 +195,12 @@ pub(crate) fn repair_library_state(
     let download_root = store
         .get_config("download_root")?
         .map(PathBuf::from)
-        .unwrap_or_else(|| data_dir.join("Games"));
+        .unwrap_or_else(|| content_dir.join("Games"));
     let mut removed_paths = Vec::new();
     for stale_path in stale_paths {
         let path = PathBuf::from(&stale_path);
         if path.exists() {
-            remove_path_if_allowed(data_dir, &download_root, &path)?;
+            remove_path_if_allowed(content_dir, &download_root, &path)?;
             removed_paths.push(stale_path);
         }
     }

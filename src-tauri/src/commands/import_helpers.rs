@@ -89,16 +89,16 @@ pub(super) fn copy_user_file_to_target(
 
 pub(super) fn resolve_asset_target(
     store: &RepositoryStore,
-    data_dir: &Path,
+    content_dir: &Path,
     asset: &AssetView,
     source: &SourceUri,
 ) -> Result<PathBuf, BlockedAssetTarget> {
-    resolve_asset_target_with_override(store, data_dir, asset, source, None)
+    resolve_asset_target_with_override(store, content_dir, asset, source, None)
 }
 
 pub(super) fn resolve_asset_target_with_override(
     store: &RepositoryStore,
-    data_dir: &Path,
+    content_dir: &Path,
     asset: &AssetView,
     source: &SourceUri,
     target_dir: Option<&Path>,
@@ -114,9 +114,9 @@ pub(super) fn resolve_asset_target_with_override(
 
     let Some(hint) = asset.install_hint.as_ref() else {
         let root = if is_manifest_emulator_bundle(asset) {
-            emulators_root(data_dir)
+            emulators_root(content_dir)
         } else {
-            system_root(data_dir)
+            system_root(content_dir)
         };
         return Ok(destination_for_source(
             &root,
@@ -135,7 +135,7 @@ pub(super) fn resolve_asset_target_with_override(
             ) else {
                 return Err(blocked_asset(None, "System file install path is invalid."));
             };
-            Ok(system_root(data_dir)
+            Ok(system_root(content_dir)
                 .join(&asset.platform)
                 .join(relative_path))
         }
@@ -197,7 +197,7 @@ pub(super) fn resolve_asset_target_with_override(
 
 pub(super) fn inspect_asset_installation(
     store: &RepositoryStore,
-    data_dir: &Path,
+    content_dir: &Path,
     asset: &AssetView,
     download: Option<&DownloadRecord>,
 ) -> Result<crate::schema::AssetInstallation, String> {
@@ -211,7 +211,7 @@ pub(super) fn inspect_asset_installation(
         Some(path) => Ok(path),
         None => {
             if let Some(source) = source {
-                resolve_asset_target(store, data_dir, asset, source)
+                resolve_asset_target(store, content_dir, asset, source)
             } else {
                 Err(blocked_asset(
                     None,
@@ -307,7 +307,7 @@ pub(super) fn inspect_asset_installation(
 
 pub(super) fn import_asset_file_into_store(
     store: &RepositoryStore,
-    data_dir: &Path,
+    content_dir: &Path,
     asset_id: &str,
     source_path: &Path,
 ) -> ImportAssetFileReport {
@@ -324,7 +324,7 @@ pub(super) fn import_asset_file_into_store(
         return import_asset_error("", "unsupported_target");
     }
 
-    let target = match resolve_asset_target(store, data_dir, &asset, source) {
+    let target = match resolve_asset_target(store, content_dir, &asset, source) {
         Ok(target) => target,
         Err(blocked) => {
             return import_asset_error(

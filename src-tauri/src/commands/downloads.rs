@@ -15,6 +15,7 @@ pub(crate) async fn download_asset_internal(
     app: &AppHandle,
     target_dir: Option<&Path>,
 ) -> Result<DownloadRecord, String> {
+    let content_dir = library_root_for_app_state(state);
     let asset = {
         let store = lock_app_store(state)?;
         store
@@ -29,7 +30,7 @@ pub(crate) async fn download_asset_internal(
     if matches!(source, SourceUri::UserProvided { .. }) {
         let destination = {
             let store = lock_app_store(state)?;
-            resolve_asset_target_with_override(&store, &state.data_dir, &asset, source, target_dir)
+            resolve_asset_target_with_override(&store, &content_dir, &asset, source, target_dir)
                 .map_err(|blocked| blocked.message)?
         };
         let target_path = destination.to_string_lossy().to_string();
@@ -50,7 +51,7 @@ pub(crate) async fn download_asset_internal(
     }
     let destination = {
         let store = lock_app_store(state)?;
-        match resolve_asset_target_with_override(&store, &state.data_dir, &asset, source, target_dir) {
+        match resolve_asset_target_with_override(&store, &content_dir, &asset, source, target_dir) {
             Ok(path) => path,
             Err(blocked) => {
                 let _ = store.record_asset_installation(
@@ -181,6 +182,7 @@ pub(crate) async fn prepare_manifest_emulator_bundle_asset(
     app: &AppHandle,
     target_dir: Option<&Path>,
 ) -> Result<PathBuf, String> {
+    let content_dir = library_root_for_app_state(state);
     let (asset, existing, expected_bundle_dir) = {
         let store = lock_app_store(state)?;
         let asset = store
@@ -198,7 +200,7 @@ pub(crate) async fn prepare_manifest_emulator_bundle_asset(
             .ok_or_else(|| format!("Asset {} has no sources.", asset.display_name))?;
         let expected_bundle_dir = resolve_asset_target_with_override(
             &store,
-            &state.data_dir,
+            &content_dir,
             &asset,
             source,
             target_dir,
@@ -352,6 +354,7 @@ pub fn import_asset_file(
     source_path: String,
     state: State<'_, AppState>,
 ) -> Result<ImportAssetFileReport, String> {
+    let content_dir = library_root_for_app_state(&state);
     let store = match lock_store(&state) {
         Ok(store) => store,
         Err(_) => {
@@ -361,7 +364,7 @@ pub fn import_asset_file(
 
     Ok(import_asset_file_into_store(
         &store,
-        &state.data_dir,
+        &content_dir,
         &asset_id,
         Path::new(source_path.trim()),
     ))

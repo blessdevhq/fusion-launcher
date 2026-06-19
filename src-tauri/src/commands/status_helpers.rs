@@ -55,10 +55,10 @@ pub(super) fn inspect_game_download(
 
 pub(super) fn build_library_status(
     store: &RepositoryStore,
-    data_dir: &Path,
+    content_dir: &Path,
     game: &CatalogGameView,
 ) -> Result<LibraryGameStatus, String> {
-    let requirements = build_requirements_report(store, data_dir, game)?;
+    let requirements = build_requirements_report(store, content_dir, game)?;
     let download = store.get_torrent_download(&game.id)?;
     let game_file = inspect_game_download(store, game)?;
     let installed = game_file.1.is_some()

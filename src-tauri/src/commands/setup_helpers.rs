@@ -1,6 +1,6 @@
 pub(crate) fn build_game_setup_state(
     store: &RepositoryStore,
-    data_dir: &Path,
+    content_dir: &Path,
     game: &CatalogGameView,
 ) -> Result<GameSetupState, String> {
     let profile = resolve_known_profile(game);
@@ -9,7 +9,8 @@ pub(crate) fn build_game_setup_state(
         _ => None,
     };
 
-    let repository_requirements = build_requirements_report(store, data_dir, game)?.requirements;
+    let repository_requirements =
+        build_requirements_report(store, content_dir, game)?.requirements;
     let expected_extensions = resolved_expected_extensions(game, profile.as_ref());
     let preferred_file = game
         .launch
@@ -26,7 +27,7 @@ pub(crate) fn build_game_setup_state(
         profile
             .system_files
             .iter()
-            .map(|requirement| inspect_profile_system_file(store, data_dir, profile, requirement))
+            .map(|requirement| inspect_profile_system_file(store, content_dir, profile, requirement))
             .collect::<Result<Vec<_>, _>>()?
     } else {
         Vec::new()
@@ -214,7 +215,7 @@ pub(super) fn inspect_game_setup_file(
 
 pub(super) fn inspect_profile_system_file(
     store: &RepositoryStore,
-    data_dir: &Path,
+    content_dir: &Path,
     profile: &PlatformSetupProfile,
     requirement: &ProfileSystemFileRequirement,
 ) -> Result<GameSetupSystemFileState, String> {
@@ -223,7 +224,7 @@ pub(super) fn inspect_profile_system_file(
         .as_ref()
         .and_then(|import| import.target_path.clone())
         .unwrap_or_else(|| {
-            profile_system_file_target(data_dir, profile, requirement)
+            profile_system_file_target(content_dir, profile, requirement)
                 .to_string_lossy()
                 .to_string()
         });
@@ -299,7 +300,7 @@ pub(super) fn derive_primary_setup_action(
 
 pub(super) fn import_profile_system_file_into_store(
     store: &RepositoryStore,
-    data_dir: &Path,
+    content_dir: &Path,
     profile: &PlatformSetupProfile,
     requirement: &ProfileSystemFileRequirement,
     source_path: &Path,
@@ -314,7 +315,7 @@ pub(super) fn import_profile_system_file_into_store(
         return Ok(import_asset_error("", "wrong_extension"));
     }
 
-    let target = profile_system_file_target(data_dir, profile, requirement);
+    let target = profile_system_file_target(content_dir, profile, requirement);
     let installed_path = target.to_string_lossy().to_string();
     match copy_user_file_to_target(source_path, &target, requirement.checksum.as_deref()) {
         Ok(imported) => {
@@ -355,6 +356,7 @@ pub(super) fn import_profile_system_file_into_store(
 pub(crate) fn adopt_bundled_profile_system_files(
     store: &RepositoryStore,
     data_dir: &Path,
+    content_dir: &Path,
     profile: &PlatformSetupProfile,
     search_dir: &Path,
 ) -> Result<Vec<String>, String> {
@@ -394,7 +396,7 @@ pub(crate) fn adopt_bundled_profile_system_files(
         };
         let found_str = found.to_string_lossy().to_string();
         let report =
-            import_profile_system_file_into_store(store, data_dir, profile, requirement, &found)?;
+            import_profile_system_file_into_store(store, content_dir, profile, requirement, &found)?;
         crate::logging::log_event(
             data_dir,
             "adopt_system_file",
@@ -499,7 +501,7 @@ fn find_bundled_system_file(
 }
 
 pub(super) fn profile_system_file_target(
-    data_dir: &Path,
+    content_dir: &Path,
     profile: &PlatformSetupProfile,
     requirement: &ProfileSystemFileRequirement,
 ) -> PathBuf {
@@ -518,7 +520,7 @@ pub(super) fn profile_system_file_target(
                     .unwrap_or_else(|| ".bin".to_string())
             ))
         });
-    data_dir
+    content_dir
         .join("System")
         .join(crate::downloads::safe_segment(&profile.platform))
         .join(target)

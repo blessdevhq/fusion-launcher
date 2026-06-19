@@ -524,7 +524,8 @@ fn adopts_switch_keys_bundled_in_emulator_archive() {
     std::fs::write(nested.join("prod.keys"), b"AAAA").unwrap();
 
     let adopted =
-        adopt_bundled_profile_system_files(&store, dir.path(), &profile, &search_dir).unwrap();
+        adopt_bundled_profile_system_files(&store, dir.path(), dir.path(), &profile, &search_dir)
+            .unwrap();
     assert_eq!(adopted, vec!["switch-prod-keys".to_string()]);
 
     let state = inspect_profile_system_file(&store, dir.path(), &profile, keys_req).unwrap();
@@ -545,7 +546,8 @@ fn leaves_switch_keys_unsatisfied_when_archive_lacks_them() {
     std::fs::create_dir_all(&search_dir).unwrap();
 
     let adopted =
-        adopt_bundled_profile_system_files(&store, dir.path(), &profile, &search_dir).unwrap();
+        adopt_bundled_profile_system_files(&store, dir.path(), dir.path(), &profile, &search_dir)
+            .unwrap();
     assert!(adopted.is_empty());
 
     let state = inspect_profile_system_file(&store, dir.path(), &profile, keys_req).unwrap();

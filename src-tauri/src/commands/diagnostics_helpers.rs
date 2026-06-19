@@ -1,4 +1,5 @@
 pub(super) fn build_health_report(state: &AppState) -> Result<HealthReport, String> {
+    let content_dir = library_root_for_app_state(state);
     let store = lock_app_store(state)?;
     let repositories = store.list_repositories()?;
     let catalog = store.get_catalog()?;
@@ -38,7 +39,7 @@ pub(super) fn build_health_report(state: &AppState) -> Result<HealthReport, Stri
                 .system_files
                 .iter()
                 .map(|requirement| {
-                    inspect_profile_system_file(&store, &state.data_dir, &profile, requirement)
+                    inspect_profile_system_file(&store, &content_dir, &profile, requirement)
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             let required_missing = profile_files
@@ -142,7 +143,7 @@ pub(super) fn build_health_report(state: &AppState) -> Result<HealthReport, Stri
             });
         }
 
-        let requirements = build_requirements_report(&store, &state.data_dir, game)?;
+        let requirements = build_requirements_report(&store, &content_dir, game)?;
         for item in requirements.requirements {
             if !system_file_ids.insert(item.asset.id.clone()) {
                 continue;

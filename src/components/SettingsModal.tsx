@@ -93,8 +93,8 @@ export function SettingsModal({
   const [busy, setBusy] = useState<BusyState>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [emulatorProgressByProfileId, setEmulatorProgressByProfileId] = useState<Record<string, InstallProgressEvent | undefined>>({});
-  const [downloadRoot, setDownloadRoot] = useState('');
-  const [savedDownloadRoot, setSavedDownloadRoot] = useState('');
+  const [libraryRoot, setLibraryRoot] = useState('');
+  const [savedLibraryRoot, setSavedLibraryRoot] = useState('');
   const [profiles, setProfiles] = useState<PlatformSetupProfile[]>([]);
   const [appDataDir, setAppDataDir] = useState('');
   const [logPath, setLogPath] = useState('');
@@ -130,16 +130,16 @@ export function SettingsModal({
   useEffect(() => {
     let cancelled = false;
     Promise.all([
-      api.getDownloadRoot(),
+      api.getLibraryRoot(),
       api.listPlatformSetupProfiles(),
       api.getDiagnosticsPaths(),
       api.getScreenscraperStatus(),
       api.getSteamgriddbStatus()
     ])
-      .then(([downloadFolder, setupProfiles, diagnostics, metadataStatus, steamMetadataStatus]) => {
+      .then(([libraryFolder, setupProfiles, diagnostics, metadataStatus, steamMetadataStatus]) => {
         if (cancelled) return;
-        setDownloadRoot(downloadFolder);
-        setSavedDownloadRoot(downloadFolder);
+        setLibraryRoot(libraryFolder);
+        setSavedLibraryRoot(libraryFolder);
         setProfiles(setupProfiles);
         setAppDataDir(diagnostics.dataDir);
         setLogPath(diagnostics.logPath);
@@ -208,7 +208,7 @@ export function SettingsModal({
     )).length
   ), [draftSettings, locale, savedSettings]);
   const changedEmulators = hasEmulatorDraftChanges(draftSettings, savedSettings);
-  const changedStorage = downloadRoot.trim() !== savedDownloadRoot.trim();
+  const changedStorage = libraryRoot.trim() !== savedLibraryRoot.trim();
   const changedLanguage = draftSettings.language !== savedSettings.language;
   const hasUnsavedChanges = changedEmulators || changedStorage || changedLanguage;
   const activeDownloadsCount = downloads.filter((download) => (
@@ -247,6 +247,19 @@ export function SettingsModal({
       setEmulatorProgressByProfileId((current) => ({ ...current, [profile.id]: undefined }));
       setBusy(null);
     }
+  };
+
+  const browseLibraryRoot = async () => {
+    if (!isTauriRuntime()) return;
+    const selected = await open({
+      title: t.settings.storage.libraryFolder,
+      multiple: false,
+      directory: true,
+      defaultPath: libraryRoot || undefined
+    });
+    if (typeof selected !== 'string') return;
+    setLibraryRoot(selected);
+    setMessage(null);
   };
 
   const installProfileEmulatorTo = async (profile: PlatformSetupProfile) => {
@@ -409,10 +422,10 @@ export function SettingsModal({
     setMessage(null);
     try {
       const nextSavedSettings = await onSave(draftSettings);
-      if (downloadRoot.trim() && changedStorage) {
-        const nextDownloadRoot = await api.setDownloadRoot(downloadRoot.trim());
-        setDownloadRoot(nextDownloadRoot);
-        setSavedDownloadRoot(nextDownloadRoot);
+      if (libraryRoot.trim() && changedStorage) {
+        const nextLibraryRoot = await api.setLibraryRoot(libraryRoot.trim());
+        setLibraryRoot(nextLibraryRoot);
+        setSavedLibraryRoot(nextLibraryRoot);
       }
       setSavedSettings(nextSavedSettings);
       setDraftSettings(nextSavedSettings);
@@ -450,7 +463,7 @@ export function SettingsModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 grid place-items-center bg-black/82 px-5 py-5"
+      className="fixed inset-0 z-50 grid place-items-center bg-black/88 px-5 py-5"
       onKeyDown={handleKeyDown}
       data-testid="settings-modal"
     >
@@ -459,9 +472,9 @@ export function SettingsModal({
         role="dialog"
         aria-modal="true"
         aria-labelledby="settings-modal-title"
-        className="flex h-[min(760px,calc(100vh-40px))] w-[min(1080px,calc(100vw-40px))] overflow-hidden rounded-2xl border border-white/10 bg-fusion-surface/95 text-white shadow-[0_40px_120px_rgba(0,0,0,0.72)] outline-none"
+        className="flex h-[min(760px,calc(100vh-40px))] w-[min(1080px,calc(100vw-40px))] overflow-hidden rounded-2xl border border-white/10 bg-fusion-surface text-white shadow-[0_40px_120px_rgba(0,0,0,0.72)] outline-none"
       >
-        <aside className="hidden w-60 shrink-0 border-r border-white/10 bg-white/[0.035] p-5 md:flex md:flex-col">
+        <aside className="hidden w-60 shrink-0 border-r border-white/10 bg-fusion-raised p-5 md:flex md:flex-col">
           <div>
             <h2 id="settings-modal-title" className="text-2xl font-bold tracking-normal">{t.settings.title}</h2>
             <p className="mt-2 text-xs leading-5 text-white/[0.46]">{t.settings.description}</p>
@@ -479,7 +492,7 @@ export function SettingsModal({
                   onClick={() => setActiveSection(section.id)}
                   className={`flex h-11 items-center gap-3 rounded-lg border px-3 text-left text-sm font-semibold transition ${
                     active
-                      ? 'border-fusion-accent/40 bg-fusion-accent/15 text-fusion-accent shadow-glow'
+                      ? 'border-fusion-accent/40 bg-fusion-accent/15 text-fusion-accent'
                       : 'border-transparent text-white/[0.48] hover:border-white/[0.14] hover:bg-white/[0.045] hover:text-white/[0.82]'
                   }`}
                 >
@@ -501,8 +514,8 @@ export function SettingsModal({
           </div>
         </aside>
 
-        <form onSubmit={save} className="flex min-h-0 min-w-0 flex-1 flex-col">
-          <header className="flex min-h-20 items-start justify-between gap-4 border-b border-white/10 px-5 py-5 md:px-7">
+        <form onSubmit={save} className="flex min-h-0 min-w-0 flex-1 flex-col bg-fusion-surface">
+          <header className="flex min-h-20 items-start justify-between gap-4 border-b border-white/10 bg-fusion-surface px-5 py-5 md:px-7">
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-3">
                 <h2 className="text-2xl font-bold tracking-normal md:hidden">{t.settings.title}</h2>
@@ -525,7 +538,7 @@ export function SettingsModal({
             </button>
           </header>
 
-          <div className="flex border-b border-white/10 md:hidden">
+          <div className="flex border-b border-white/10 bg-fusion-surface md:hidden">
             {SECTIONS.map((section) => (
               <button
                 key={section.id}
@@ -541,7 +554,7 @@ export function SettingsModal({
             ))}
           </div>
 
-          <div className="min-h-0 flex-1 overscroll-contain overflow-y-auto px-5 py-5 [scrollbar-gutter:stable] md:px-7" data-testid={`settings-modal-${activeSection}`}>
+          <div className="min-h-0 flex-1 overscroll-contain overflow-y-auto bg-fusion-bg px-5 py-5 [scrollbar-gutter:stable] md:px-7" data-testid={`settings-modal-${activeSection}`}>
             {activeSection === 'general' && (
               <GeneralSection
                 configuredCount={configuredCount}
@@ -618,14 +631,15 @@ export function SettingsModal({
 
             {activeSection === 'storage' && (
               <StorageSection
-                downloadRoot={downloadRoot}
+                libraryRoot={libraryRoot}
                 appDataDir={appDataDir}
                 logPath={logPath}
                 changed={changedStorage}
-                onDownloadRootChange={(value) => {
-                  setDownloadRoot(value);
+                onLibraryRootChange={(value) => {
+                  setLibraryRoot(value);
                   setMessage(null);
                 }}
+                onBrowse={browseLibraryRoot}
               />
             )}
 
@@ -650,12 +664,12 @@ export function SettingsModal({
           </div>
 
           {message && (
-            <div className="mx-5 mb-4 rounded-sm border border-white/[0.12] bg-white/[0.055] px-3 py-2 text-sm text-white/70 md:mx-7">
+            <div className="mx-5 mb-4 rounded-sm border border-white/[0.12] bg-white/[0.055] px-3 py-2 select-text text-sm text-white/70 md:mx-7">
               {message}
             </div>
           )}
 
-          <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-white/10 px-5 py-4 md:px-7">
+          <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-white/10 bg-fusion-surface px-5 py-4 md:px-7">
             <div className="text-xs text-white/[0.38]">
               {hasUnsavedChanges ? t.settings.footerDirty : t.settings.footerClean}
             </div>

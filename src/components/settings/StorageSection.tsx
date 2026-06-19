@@ -2,23 +2,25 @@ import { useI18n } from '@/components/I18nProvider';
 import { PathCard, StatusChip } from './shared';
 
 export function StorageSection({
-  downloadRoot,
+  libraryRoot,
   appDataDir,
   logPath,
   changed,
-  onDownloadRootChange
+  onLibraryRootChange,
+  onBrowse
 }: {
-  downloadRoot: string;
+  libraryRoot: string;
   appDataDir: string;
   logPath: string;
   changed: boolean;
-  onDownloadRootChange: (value: string) => void;
+  onLibraryRootChange: (value: string) => void;
+  onBrowse?: () => void;
 }) {
   const { t } = useI18n();
-  const managedRoot = appDataDir || t.common.loading;
-  const gamesRoot = appDataDir ? appendPath(appDataDir, 'Games') : t.common.loading;
-  const emulatorsRoot = appDataDir ? appendPath(appDataDir, 'Emulators') : t.common.loading;
-  const systemRoot = appDataDir ? appendPath(appDataDir, 'System') : t.common.loading;
+  const managedRoot = libraryRoot || t.common.loading;
+  const gamesRoot = libraryRoot ? appendPath(libraryRoot, 'Games') : t.common.loading;
+  const emulatorsRoot = libraryRoot ? appendPath(libraryRoot, 'Emulators') : t.common.loading;
+  const systemRoot = libraryRoot ? appendPath(libraryRoot, 'System') : t.common.loading;
 
   return (
     <section className="grid gap-4">
@@ -30,19 +32,30 @@ export function StorageSection({
       </div>
       <label className="rounded-sm border border-white/10 bg-black/[0.34] p-4">
         <div className="flex items-center justify-between gap-3">
-          <span className="text-sm font-black text-white/90">{t.settings.storage.downloadFolder}</span>
+          <span className="text-sm font-black text-white/90">{t.settings.storage.libraryFolder}</span>
           {changed && <StatusChip tone="unsaved" label={t.settings.statusChip.unsaved} />}
         </div>
-        <input
-          value={downloadRoot}
-          onChange={(event) => onDownloadRootChange(event.target.value)}
-          className="mt-3 h-11 w-full rounded-sm border border-white/10 bg-black/40 px-3 text-sm text-white/80 outline-none transition placeholder:text-white/25 focus:border-white/60"
-          placeholder="D:\\Games\\FusionLauncher"
-          spellCheck={false}
-        />
+        <div className="mt-3 flex items-center gap-2">
+          <input
+            value={libraryRoot}
+            onChange={(event) => onLibraryRootChange(event.target.value)}
+            className="h-11 w-full rounded-sm border border-white/10 bg-black/40 px-3 text-sm text-white/80 outline-none transition placeholder:text-white/25 focus:border-white/60"
+            placeholder="D:\\FusionLauncher"
+            spellCheck={false}
+          />
+          {onBrowse && (
+            <button
+              type="button"
+              onClick={onBrowse}
+              className="h-11 shrink-0 rounded-sm border border-white/10 bg-white/[0.06] px-4 text-sm font-black text-white/80 transition hover:border-white/60 hover:text-white"
+            >
+              {t.settings.storage.browse}
+            </button>
+          )}
+        </div>
       </label>
       <div className="grid gap-3 lg:grid-cols-2">
-        <PathCard label="Managed root" value={managedRoot} />
+        <PathCard label="Library root" value={managedRoot} />
         <PathCard label="Games" value={gamesRoot} />
         <PathCard label="Emulators" value={emulatorsRoot} />
         <PathCard label="System" value={systemRoot} />

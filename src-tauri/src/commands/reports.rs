@@ -20,7 +20,7 @@ pub(super) fn build_diagnostics_bundle(state: &AppState) -> Result<DiagnosticsBu
 
 pub(crate) fn build_requirements_report(
     store: &RepositoryStore,
-    data_dir: &Path,
+    content_dir: &Path,
     game: &CatalogGameView,
 ) -> Result<RequirementsReport, String> {
     let game_downloaded = inspect_game_download(store, game)?.0;
@@ -30,7 +30,8 @@ pub(crate) fn build_requirements_report(
     for asset in assets {
         let download = store.get_download(&asset.id)?;
         let trusted = store.get_trusted_executable(&asset.id)?;
-        let installation = inspect_asset_installation(store, data_dir, &asset, download.as_ref())?;
+        let installation =
+            inspect_asset_installation(store, content_dir, &asset, download.as_ref())?;
         let downloaded = installation.status == "ready";
         let checksum = expected_asset_sha256(&asset).map(ToString::to_string);
         let trusted_ok = if asset.executable {

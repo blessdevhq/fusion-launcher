@@ -2,8 +2,25 @@ pub(super) fn download_root(state: &State<'_, AppState>) -> Result<PathBuf, Stri
     download_root_for_app_state(state)
 }
 
+/// Default library root for large managed content: `AppData\Local`.
+pub(crate) fn default_library_root(state: &AppState) -> PathBuf {
+    state.local_data_dir.clone()
+}
+
+/// Resolve the library root for large managed content (Emulators/Games/System/
+/// Temp). Reads the `library_root` config override, falling back to
+/// `AppData\Local`. Lock failures fall back to the default so content paths stay
+/// resolvable.
+pub(crate) fn library_root_for_app_state(state: &AppState) -> PathBuf {
+    lock_app_store(state)
+        .ok()
+        .and_then(|store| store.get_config("library_root").ok().flatten())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| default_library_root(state))
+}
+
 pub(super) fn managed_storage_root_for_app_state(state: &AppState) -> PathBuf {
-    state.data_dir.clone()
+    library_root_for_app_state(state)
 }
 
 pub(super) fn default_games_root(data_dir: &Path) -> PathBuf {
@@ -68,6 +85,7 @@ pub(super) fn emit_direct_download_record(app: &AppHandle, record: &TorrentDownl
         "download:progress",
         crate::torrent::DownloadProgressEvent {
             game_id: record.game_id.clone(),
+            parent_game_id: record.parent_game_id.clone(),
             subject_type: record.subject_type.clone(),
             display_name: record.display_name.clone(),
             status: record.status.clone(),
