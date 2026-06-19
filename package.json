@@ -40,6 +40,7 @@
     "tauri:build": "tauri build",
     "tauri:build:vs": "scripts\\tauri-build-vs.cmd",
     "sidecar:build": "node scripts/build-sidecar.mjs",
+    "redist:fetch": "node scripts/fetch-vcredist.mjs",
     "tauri:build:bundled": "tauri build --config src-tauri/tauri.sidecar.conf.json"
   },
   "dependencies": {

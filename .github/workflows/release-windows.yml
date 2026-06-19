@@ -43,6 +43,12 @@ jobs:
           pip install -r sidecar/requirements.txt
           npm run sidecar:build
 
+      # The sidecar (PyInstaller/libtorrent) needs the MSVC runtime. Bundle the
+      # VC++ redistributable so the NSIS hook (src-tauri/nsis/hooks.nsh) can
+      # install it on machines that lack it.
+      - name: Fetch VC++ Redistributable
+        run: npm run redist:fetch
+
       - name: Run QA gate
         run: npm run qa
 

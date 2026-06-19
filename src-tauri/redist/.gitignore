@@ -1,0 +1,7 @@
+# The Visual C++ redistributable is a build artifact fetched by
+# `npm run redist:fetch` (scripts/fetch-vcredist.mjs). It is bundled into the
+# installer via tauri.sidecar.conf.json and run by the NSIS hook
+# (src-tauri/nsis/hooks.nsh); it must NOT be committed. Keep this directory in
+# the tree but ignore everything it holds.
+*
+!.gitignore

@@ -17,6 +17,7 @@ if (!hasUpdaterSigningKey) {
 const tauriCliPath = path.join(root, 'node_modules', '@tauri-apps', 'cli', 'tauri.js');
 const packageSmokePath = path.join(root, 'scripts', 'mvp-package-smoke.mjs');
 const buildSidecarPath = path.join(root, 'scripts', 'build-sidecar.mjs');
+const fetchVcredistPath = path.join(root, 'scripts', 'fetch-vcredist.mjs');
 // The default engine is the libtorrent sidecar, so the bundle must include it.
 const sidecarConfigPath = path.join(root, 'src-tauri', 'tauri.sidecar.conf.json');
 const buildArgs = hasUpdaterSigningKey
@@ -31,6 +32,8 @@ if (!hasUpdaterSigningKey) {
 
 // Build the torrent sidecar first; the externalBin overlay above expects it.
 await run(process.execPath, [buildSidecarPath]);
+// Fetch the VC++ redistributable bundled by the NSIS hook (the sidecar needs it).
+await run(process.execPath, [fetchVcredistPath]);
 await run(process.execPath, [tauriCliPath, ...buildArgs]);
 await run(process.execPath, [packageSmokePath]);
 
