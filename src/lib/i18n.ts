@@ -446,7 +446,7 @@ export const en = {
     },
     firstRun: 'First run',
     title: 'Set up Fusion Launcher before you play',
-    copy: 'Install one game from a manifest and set up a matching emulator. Commercial ROMs, BIOS, firmware, and keys are not bundled.',
+    copy: 'Connect a source or manifest, then set up a matching emulator. Proprietary game and system files are not bundled.',
     stepperLabel: 'First run setup steps',
     continue: 'Continue',
     steps: {
@@ -469,7 +469,7 @@ export const en = {
     },
     sourceStep: {
       title: 'Install from a manifest',
-      copy: 'Paste a manifest URL or JSON, load it, then install one game. The manifest can include the ROM and emulator bundle.',
+      copy: 'Paste a manifest URL or JSON, load it, then install one game. The manifest can describe allowed game files and optional emulator setup.',
       demoCopy: 'The manifest is the only first-run source path.',
       useDemo: 'Use manifest',
       connected: (count: number) => `Manifest installed / ${count} games found`,

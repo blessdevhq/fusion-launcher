@@ -86,7 +86,7 @@ npm run source:add -- \
 
 Вариант с torrent вместо `http`:
 ```jsonc
-"downloads": [ { "kind": "magnet", "uri": "magnet:?xt=urn:btih:..." } ]
+"downloads": [ { "kind": "magnet", "uri": "<legal-homebrew-magnet-uri>" } ]
 ```
 У `magnet` хеш не нужен — целостность гарантирует BitTorrent.
 
