@@ -21,6 +21,7 @@
     "typecheck": "tsc --noEmit",
     "test": "node --experimental-strip-types --test scripts/*.node-test.mjs src/types/*.node-test.ts src/lib/*.node-test.ts src/stores/*.node-test.ts",
     "static-check": "node scripts/static-check.mjs",
+    "marketing:audit": "node scripts/launch-audit.mjs",
     "source:validate": "node --experimental-strip-types scripts/validate-source-library.mjs",
     "source:add": "node --experimental-strip-types scripts/add-source-game.mjs",
     "source:template:check": "node --experimental-strip-types scripts/build-source-template-pages.mjs --check",

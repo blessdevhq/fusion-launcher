@@ -40,6 +40,9 @@ jobs:
       - name: Static check
         run: npm run static-check
 
+      - name: Marketing launch audit
+        run: npm run marketing:audit
+
       - name: Build
         run: npm run build
 
