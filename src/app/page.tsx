@@ -53,7 +53,6 @@ export default function HomePage() {
     await api.disconnectRepository(repositoryId);
     await reload();
   };
-  const metadataOnboardingReady = settings.metadataOnboarding.complete;
 
   if (loading) {
     return (
@@ -67,22 +66,10 @@ export default function HomePage() {
     );
   }
 
+  // First run shows onboarding only until a source is connected. Metadata and
+  // emulator setup are no longer gates here: the emulator installs on demand
+  // when a game is installed, and metadata is configured in Settings.
   if (repositories.length === 0) {
-    return (
-      <I18nProvider locale={settings.language}>
-        <OnboardingWizard
-          state={onboardingState}
-          catalog={catalog}
-          settings={settings}
-          initialMessage={message}
-          onSettingsChange={setSettings}
-          onReload={reload}
-        />
-      </I18nProvider>
-    );
-  }
-
-  if ((onboardingState && onboardingState.step !== 'complete') || !metadataOnboardingReady) {
     return (
       <I18nProvider locale={settings.language}>
         <OnboardingWizard

@@ -26,35 +26,9 @@ async function main() {
   await page.goto(baseUrl);
   await page.waitForLoadState('networkidle', { timeout: timeoutMs });
 
-  await expectVisible(page.getByTestId('onboarding-screen'), 'onboarding screen');
-  await expectVisible(page.getByTestId('onboarding-stepper'), 'onboarding stepper');
-  await expectVisible(page.getByTestId('onboarding-step-welcome'), 'onboarding welcome step');
-  await screenshot(page, '01-onboarding.png');
-  await assertNoHorizontalOverflow(page, 'onboarding');
-
-  await page.getByTestId('onboarding-nav-source').click();
-  await expectVisible(page.getByTestId('onboarding-demo-card'), 'onboarding demo source card');
-  await expectVisible(page.getByTestId('onboarding-source-card'), 'onboarding community source card');
-  const onboardingSource = page.getByTestId('onboarding-source-card');
-  await onboardingSource
-    .getByPlaceholder('https://blessdevhq.github.io/fusion-launcher/source-library-template/repository.json')
-    .fill('https://blessdevhq.github.io/fusion-launcher/source-library-template/repository.json');
-  await onboardingSource.getByRole('button', { name: 'Check' }).click();
-  await expectVisible(page.getByTestId('onboarding-source-preview'), 'onboarding source preview');
-
-  await page.getByTestId('onboarding-next-source').click();
-  await expectVisible(page.getByTestId('onboarding-step-metadata'), 'onboarding metadata step');
-  await expectVisible(page.getByTestId('onboarding-metadata-sources'), 'onboarding metadata sources');
-  await expectVisible(page.getByTestId('onboarding-metadata-strategy-source'), 'onboarding source metadata strategy');
-  await page.getByTestId('onboarding-next-metadata').click();
-  await expectVisible(page.getByTestId('onboarding-emulator-list'), 'onboarding emulator list after metadata');
-  await assertNoHorizontalOverflow(page, 'onboarding metadata');
-
-  await page.getByTestId('onboarding-nav-emulator').click();
-  await expectVisible(page.getByTestId('onboarding-emulator-list'), 'onboarding emulator list');
-  await page.getByTestId('onboarding-install-nes').click();
-  await expectVisible(page.getByTestId('onboarding-step-ready'), 'onboarding ready step');
-  await page.getByTestId('onboarding-open-launcher').click();
+  // The preview/demo ships with a connected source, so the app opens straight to
+  // the shell. First-run onboarding (shown only when no source is connected) is
+  // covered separately; here we verify the populated launcher.
   await expectVisible(page.getByTestId('app-shell'), 'app shell after setup');
   await expectVisible(page.getByTestId('home-screen'), 'home screen');
   await expectVisible(page.getByTestId('home-hero'), 'home hero');
@@ -134,9 +108,10 @@ async function main() {
   await expectVisible(page.getByTestId('settings-modal-sources'), 'settings modal sources tab');
   await expectVisible(page.getByTestId('settings-modal-sources-panel'), 'settings modal sources panel');
   await expectVisible(page.getByTestId('source-card').first(), 'connected source card');
-  await page.getByTestId('settings-source-url').fill('https://community.example/fusion-launcher-repository.json');
-  await page.getByTestId('settings-modal-sources-panel').getByRole('button', { name: 'Check' }).click();
-  await expectVisible(page.getByTestId('source-preview'), 'settings source preview');
+  await expectVisible(page.getByTestId('add-source'), 'settings add-source card');
+  await page.getByTestId('add-source-input').fill('https://community.example/fusion-launcher-repository.json');
+  await page.getByTestId('add-source-check').click();
+  await expectVisible(page.getByTestId('add-source-preview'), 'settings add-source preview');
   await screenshot(page, '08-settings-modal-sources.png');
   await assertNoHorizontalOverflow(page, 'settings modal sources');
 

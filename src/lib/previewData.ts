@@ -125,6 +125,7 @@ const catalog: CatalogGame[] = [
 ];
 
 let downloadRoot = PREVIEW_GAMES_ROOT;
+let libraryRoot = 'C:\\Users\\preview\\AppData\\Local\\Fusion Launcher';
 let downloads: TorrentDownloadRecord[] = [
   torrent('crystal-caverns', 'completed', 100, 46_000_000, 46_000_000, 0, 0, null),
   torrent('neon-rally', 'downloading', 68, 2_400_000_000, 3_500_000_000, 12_000_000, 7, null),
@@ -175,6 +176,12 @@ export const previewApi = {
     return previewApi.previewRepository('fusion://builtin/demo-repository.json');
   },
   async connectRepository(_url = repository.url): Promise<RepositorySummary> {
+    return repository;
+  },
+  async previewSource(_input: string): Promise<RepositoryPreview> {
+    return previewApi.previewRepository();
+  },
+  async addSource(_input: string): Promise<RepositorySummary> {
     return repository;
   },
   async connectRepositoryFile(path: string): Promise<RepositorySummary> {
@@ -653,6 +660,13 @@ export const previewApi = {
   async setDownloadRoot(path: string): Promise<string> {
     downloadRoot = path || downloadRoot;
     return downloadRoot;
+  },
+  async getLibraryRoot(): Promise<string> {
+    return libraryRoot;
+  },
+  async setLibraryRoot(path: string): Promise<string> {
+    libraryRoot = path || libraryRoot;
+    return libraryRoot;
   },
   async removeGame(gameId: string, _deleteFiles: boolean): Promise<boolean> {
     const before = downloads.length;

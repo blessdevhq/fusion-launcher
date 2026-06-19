@@ -97,10 +97,8 @@ const previewHandlers: Record<string, PreviewHandler> = {
   install_game_from_manifest: ({ titleId }) => previewApi.installGame(String(titleId ?? '')),
   add_manifest_source: () =>
     Promise.reject(new Error('Adding a manifest source is available in the desktop app.')),
-  preview_source: () =>
-    Promise.reject(new Error('Previewing a source is available in the desktop app.')),
-  add_source: () =>
-    Promise.reject(new Error('Adding a source is available in the desktop app.')),
+  preview_source: ({ input }) => previewApi.previewSource(String(input ?? '')),
+  add_source: ({ input }) => previewApi.addSource(String(input ?? '')),
   install_emulator: ({ platform }) => previewApi.installEmulator(String(platform ?? '')),
   get_emulator_status: ({ platform }) => previewApi.getEmulatorStatus(String(platform ?? '')),
   get_emulator_install_status: ({ platform }) => previewApi.getEmulatorStatus(String(platform ?? '')),
@@ -149,6 +147,8 @@ const previewHandlers: Record<string, PreviewHandler> = {
   trust_executable: ({ assetId }) => previewApi.trustExecutable(String(assetId ?? '')),
   get_download_root: () => previewApi.getDownloadRoot(),
   set_download_root: ({ path }) => previewApi.setDownloadRoot(String(path ?? '')),
+  get_library_root: () => previewApi.getLibraryRoot(),
+  set_library_root: ({ path }) => previewApi.setLibraryRoot(String(path ?? '')),
   remove_game: ({ gameId, deleteFiles }) => previewApi.removeGame(String(gameId ?? ''), Boolean(deleteFiles)),
   remove_download: ({ downloadId, deleteFiles }) => previewApi.removeDownload(String(downloadId ?? ''), Boolean(deleteFiles)),
   redownload_asset: ({ assetId, targetDir }) => previewApi.redownloadAsset(
