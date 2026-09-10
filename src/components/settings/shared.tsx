@@ -93,15 +93,6 @@ export function StatusChip({ tone, label }: { tone: EmulatorDraftTone; label: st
   );
 }
 
-export function SummaryCard({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-sm border border-white/10 bg-black/[0.34] p-4">
-      <div className="text-[10px] font-semibold text-white/[0.32]">{label}</div>
-      <div className="mt-2 text-2xl font-black text-white">{value}</div>
-    </div>
-  );
-}
-
 export function PathCard({ label, value }: { label: string; value: string }) {
   return (
     <div className="min-w-0 rounded-sm border border-white/10 bg-white/[0.025] p-4">

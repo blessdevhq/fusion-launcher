@@ -96,472 +96,532 @@ function renderLandingHtml(manifest) {
   <meta property="og:title" content="Fusion Launcher">
   <meta property="og:description" content="Source-driven Windows launcher for retro game libraries on PC.">
   <meta property="og:image" content="${ogImageUrl}">
-  <meta name="theme-color" content="#050707">
+  <meta name="theme-color" content="#070808">
   <style>
     :root {
       color-scheme: dark;
-      --bg: #050707;
-      --bg-2: #080b0b;
-      --panel: rgba(15, 18, 18, 0.76);
-      --panel-strong: rgba(20, 24, 24, 0.92);
-      --surface: rgba(255, 255, 255, 0.045);
-      --surface-strong: rgba(255, 255, 255, 0.075);
-      --line: rgba(255, 255, 255, 0.11);
+      --bg: #070808;
+      --bg-soft: #0b0d0d;
+      --panel: rgba(255, 255, 255, 0.035);
+      --panel-strong: rgba(255, 255, 255, 0.055);
+      --line: rgba(255, 255, 255, 0.10);
       --line-soft: rgba(255, 255, 255, 0.065);
-      --text: #f7f8f3;
-      --muted: rgba(232, 238, 232, 0.68);
-      --soft: rgba(232, 238, 232, 0.44);
-      --faint: rgba(232, 238, 232, 0.22);
-      --accent: #5cff91;
-      --accent-2: #3bd6c6;
-      --accent-3: #d7ff72;
-      --accent-on: #041509;
-      --danger: #ff6b6b;
-      --radius-xl: 32px;
-      --radius-lg: 24px;
-      --radius-md: 16px;
-      --shadow-deep: 0 34px 120px rgba(0, 0, 0, 0.62);
-      --shadow-glow: 0 0 80px rgba(92, 255, 145, 0.18);
+      --text: #f6f7f2;
+      --muted: rgba(236, 240, 235, 0.66);
+      --soft: rgba(236, 240, 235, 0.42);
+      --faint: rgba(236, 240, 235, 0.20);
+      --accent: #69e68f;
+      --accent-soft: rgba(105, 230, 143, 0.13);
+      --accent-line: rgba(105, 230, 143, 0.28);
+      --radius-lg: 28px;
+      --radius-md: 18px;
+      --radius-sm: 12px;
+      --shadow-panel: 0 28px 90px rgba(0, 0, 0, 0.42);
+      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      --sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
+
     * { box-sizing: border-box; }
     html { scroll-behavior: smooth; }
     body {
       margin: 0;
       min-width: 320px;
-      background:
-        radial-gradient(circle at 56% 13%, rgba(92, 255, 145, 0.16), transparent 30rem),
-        radial-gradient(circle at 8% 72%, rgba(59, 214, 198, 0.12), transparent 26rem),
-        linear-gradient(180deg, #06100b 0%, var(--bg) 34%, #050505 100%);
+      background: linear-gradient(180deg, #0a0b0b 0%, var(--bg) 52%, #050606 100%);
       color: var(--text);
-      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-family: var(--sans);
       font-feature-settings: "cv01", "ss03";
       overflow-x: hidden;
     }
-    body::before {
-      content: '';
-      position: fixed;
-      inset: 0;
-      z-index: -3;
-      background-image:
-        linear-gradient(rgba(255,255,255,0.03) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(255,255,255,0.03) 1px, transparent 1px);
-      background-size: 64px 64px;
-      mask-image: radial-gradient(circle at 50% 0%, black 0%, transparent 72%);
-      pointer-events: none;
-    }
-    body::after {
-      content: '';
-      position: fixed;
-      inset: 0;
-      z-index: -2;
-      background:
-        linear-gradient(90deg, rgba(255,255,255,0.018), transparent 18%, transparent 82%, rgba(255,255,255,0.018)),
-        repeating-linear-gradient(180deg, rgba(255,255,255,0.018) 0 1px, transparent 1px 5px);
-      opacity: 0.32;
-      pointer-events: none;
-    }
+    ::selection { background: rgba(105, 230, 143, 0.24); }
     a { color: inherit; }
-    .page { width: min(1220px, calc(100% - 40px)); margin: 0 auto; }
+    code { font-family: var(--mono); }
+
+    .page {
+      width: min(1120px, calc(100% - 48px));
+      margin: 0 auto;
+    }
     .nav-wrap {
       position: sticky;
       top: 0;
-      z-index: 30;
-      padding: 18px 0 8px;
+      z-index: 20;
+      border-bottom: 1px solid var(--line-soft);
+      background: rgba(7, 8, 8, 0.78);
       backdrop-filter: blur(18px);
     }
     header {
       display: flex;
+      min-height: 76px;
       align-items: center;
       justify-content: space-between;
       gap: 24px;
-      min-height: 66px;
-      border: 1px solid rgba(255,255,255,0.075);
-      border-radius: 999px;
-      background: linear-gradient(180deg, rgba(14,18,18,0.76), rgba(8,10,10,0.48));
-      box-shadow: inset 0 1px 0 rgba(255,255,255,0.08), 0 18px 55px rgba(0,0,0,0.25);
-      padding: 10px 12px 10px 14px;
     }
-    .brand { display: inline-flex; align-items: center; gap: 12px; min-width: 0; text-decoration: none; font-weight: 840; letter-spacing: -0.035em; }
-    .brand img { width: 42px; height: 42px; border-radius: 14px; box-shadow: 0 0 0 1px rgba(255,255,255,0.16), 0 12px 34px rgba(92, 255, 145, 0.22); }
-    .brand span { white-space: nowrap; }
-    nav { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 14px; font-weight: 620; }
-    nav a { border-radius: 999px; padding: 10px 13px; text-decoration: none; transition: background .18s ease, color .18s ease, transform .18s ease; }
-    nav a:hover { background: rgba(255,255,255,0.07); color: var(--text); transform: translateY(-1px); }
-    .hero {
-      position: relative;
-      display: grid;
-      grid-template-columns: minmax(0, 0.98fr) minmax(420px, 1.02fr);
-      gap: 54px;
+    .brand {
+      display: inline-flex;
+      min-width: 0;
       align-items: center;
-      min-height: calc(100vh - 104px);
-      padding: 76px 0 94px;
+      gap: 12px;
+      color: var(--text);
+      text-decoration: none;
     }
-    .hero::before {
-      content: '';
-      position: absolute;
-      left: -14%;
-      top: 12%;
-      width: 440px;
-      height: 440px;
+    .brand-icon {
+      width: 40px;
+      height: 40px;
+      border-radius: 13px;
+      box-shadow: 0 0 0 1px rgba(255,255,255,0.16);
+    }
+    .brand span {
+      font-size: 15px;
+      font-weight: 620;
+      letter-spacing: -0.025em;
+      white-space: nowrap;
+    }
+    nav {
+      display: flex;
+      align-items: center;
+      gap: 18px;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 520;
+    }
+    nav a {
+      text-decoration: none;
+      transition: color 160ms ease;
+    }
+    nav a:hover { color: var(--text); }
+    .language-switch {
+      display: inline-flex;
+      align-items: center;
+      gap: 2px;
+      border: 1px solid var(--line-soft);
       border-radius: 999px;
-      background: radial-gradient(circle, rgba(92,255,145,0.22), transparent 64%);
-      filter: blur(24px);
-      opacity: 0.62;
-      pointer-events: none;
+      padding: 2px;
+      background: rgba(255,255,255,0.025);
     }
-    .hero-copy { position: relative; z-index: 2; }
+    .language-switch button {
+      border: 0;
+      border-radius: 999px;
+      background: transparent;
+      color: var(--soft);
+      cursor: pointer;
+      font: inherit;
+      padding: 5px 8px;
+      transition: background 160ms ease, color 160ms ease;
+    }
+    .language-switch button[aria-pressed="true"] {
+      background: rgba(255,255,255,0.09);
+      color: var(--text);
+    }
+
+    .hero {
+      display: grid;
+      grid-template-columns: minmax(0, 0.88fr) minmax(360px, 1fr);
+      gap: 72px;
+      align-items: center;
+      padding: 116px 0 78px;
+    }
     .eyebrow {
       display: inline-flex;
       align-items: center;
       gap: 10px;
-      border: 1px solid rgba(92, 255, 145, 0.36);
-      background: linear-gradient(180deg, rgba(92,255,145,0.13), rgba(92,255,145,0.055));
-      color: #caffd8;
-      border-radius: 999px;
-      padding: 9px 13px;
-      font-size: 13px;
-      font-weight: 780;
-      box-shadow: inset 0 1px 0 rgba(255,255,255,0.1), 0 0 42px rgba(92,255,145,0.13);
+      color: var(--accent);
+      font: 520 12px/1 var(--mono);
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
     }
     .eyebrow::before {
-      content: '';
-      width: 8px;
-      height: 8px;
+      content: "";
+      width: 7px;
+      height: 7px;
       border-radius: 999px;
       background: var(--accent);
-      box-shadow: 0 0 20px rgba(92, 255, 145, 0.9);
     }
+    h1,
+    h2,
+    h3,
+    p { margin: 0; }
     h1 {
-      margin: 24px 0 20px;
-      max-width: 780px;
-      font-size: clamp(58px, 7.3vw, 106px);
-      line-height: 0.89;
-      letter-spacing: -0.082em;
+      max-width: 680px;
+      margin-top: 24px;
+      color: var(--text);
+      font-size: clamp(50px, 6.9vw, 88px);
+      font-weight: 620;
+      letter-spacing: -0.072em;
+      line-height: 0.94;
       text-wrap: balance;
     }
-    .gradient-word {
-      color: transparent;
-      background: linear-gradient(90deg, #f7f8f3 0%, #baffcd 42%, #69ffd5 100%);
-      -webkit-background-clip: text;
-      background-clip: text;
-      text-shadow: 0 0 48px rgba(92,255,145,0.08);
-    }
+    .accent-word { color: var(--accent); }
     .lead {
-      max-width: 660px;
+      max-width: 610px;
+      margin-top: 26px;
       color: var(--muted);
-      font-size: clamp(18px, 1.7vw, 22px);
-      line-height: 1.62;
+      font-size: clamp(17px, 1.55vw, 20px);
+      line-height: 1.68;
       letter-spacing: -0.018em;
       text-wrap: pretty;
     }
-    .actions { display: flex; flex-wrap: wrap; gap: 12px; margin: 36px 0 20px; }
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-top: 34px;
+    }
     .button {
-      position: relative;
       display: inline-flex;
-      min-height: 52px;
+      min-height: 46px;
       align-items: center;
       justify-content: center;
-      gap: 10px;
-      border-radius: 999px;
-      padding: 0 22px;
-      text-decoration: none;
-      font-weight: 850;
+      border-radius: var(--radius-sm);
+      padding: 0 16px;
+      font-size: 14px;
+      font-weight: 560;
       letter-spacing: -0.012em;
-      transition: transform .2s ease, box-shadow .2s ease, background .2s ease;
+      text-decoration: none;
+      transition: background 160ms ease, border-color 160ms ease, color 160ms ease, transform 160ms ease;
     }
+    .button:hover { transform: translateY(-1px); }
     .button.primary {
-      background: linear-gradient(180deg, #79ff9d, #43e978);
-      color: var(--accent-on);
-      box-shadow: 0 18px 58px rgba(92, 255, 145, 0.24), inset 0 1px 0 rgba(255,255,255,0.42);
+      border: 1px solid rgba(105, 230, 143, 0.44);
+      background: var(--accent);
+      color: #071109;
     }
-    .button.primary:hover { transform: translateY(-2px); box-shadow: 0 24px 70px rgba(92, 255, 145, 0.32), inset 0 1px 0 rgba(255,255,255,0.5); }
+    .button.primary:hover { background: #7df2a0; }
     .button.secondary {
-      border: 1px solid rgba(255,255,255,0.13);
-      background: linear-gradient(180deg, rgba(255,255,255,0.075), rgba(255,255,255,0.025));
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,0.035);
       color: var(--text);
-      box-shadow: inset 0 1px 0 rgba(255,255,255,0.08);
     }
-    .button.secondary:hover { transform: translateY(-2px); background: rgba(255,255,255,0.09); }
+    .button.secondary:hover {
+      border-color: rgba(255,255,255,0.16);
+      background: rgba(255,255,255,0.055);
+    }
     .note {
-      max-width: 650px;
+      max-width: 610px;
+      margin-top: 22px;
       color: var(--soft);
       font-size: 13px;
-      line-height: 1.72;
+      line-height: 1.65;
     }
-    .hero-tags { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 28px; }
-    .hero-tags span {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      border: 1px solid rgba(255,255,255,0.09);
-      border-radius: 999px;
-      background: rgba(255,255,255,0.045);
-      color: rgba(247,248,243,0.78);
-      padding: 8px 10px;
-      font-size: 12px;
-      font-weight: 720;
-    }
-    .hero-tags span::before { content: ''; width: 6px; height: 6px; border-radius: 999px; background: var(--accent-2); box-shadow: 0 0 14px rgba(59,214,198,0.65); }
-    .showcase {
-      position: relative;
-      min-height: 620px;
-      perspective: 1400px;
-    }
-    .halo {
-      position: absolute;
-      inset: 8% -10% auto 4%;
-      height: 430px;
-      border-radius: 999px;
-      background: radial-gradient(circle, rgba(92,255,145,0.23), rgba(59,214,198,0.1) 44%, transparent 68%);
-      filter: blur(34px);
-      opacity: .76;
-      pointer-events: none;
-    }
-    .launcher-window {
-      position: relative;
-      z-index: 2;
+    .hero-facts {
       display: grid;
-      grid-template-columns: 90px minmax(0, 1fr);
-      width: min(100%, 640px);
-      min-height: 560px;
-      margin-left: auto;
-      border: 1px solid rgba(255,255,255,0.115);
-      border-radius: 34px;
-      background:
-        linear-gradient(180deg, rgba(255,255,255,0.085), rgba(255,255,255,0.026)),
-        radial-gradient(circle at 80% 10%, rgba(92,255,145,0.16), transparent 28rem),
-        rgba(9, 11, 11, 0.84);
-      box-shadow: var(--shadow-deep), inset 0 1px 0 rgba(255,255,255,0.11), inset 0 -1px 0 rgba(0,0,0,0.45);
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 1px;
+      margin-top: 38px;
       overflow: hidden;
-      transform: rotateX(2deg) rotateY(-4deg);
+      border: 1px solid var(--line-soft);
+      border-radius: 18px;
+      background: var(--line-soft);
     }
-    .launcher-window::before {
-      content: '';
-      position: absolute;
-      inset: 0;
-      background-image: linear-gradient(rgba(255,255,255,0.035) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.028) 1px, transparent 1px);
-      background-size: 42px 42px;
-      mask-image: radial-gradient(circle at 55% 35%, black, transparent 72%);
-      pointer-events: none;
-    }
-    .sidebar {
-      position: relative;
-      z-index: 2;
-      display: grid;
-      grid-template-rows: auto 1fr auto;
-      gap: 18px;
-      border-right: 1px solid rgba(255,255,255,0.08);
-      background: rgba(0,0,0,0.22);
-      padding: 22px 16px;
-    }
-    .dot-stack { display: flex; gap: 6px; }
-    .dot { width: 9px; height: 9px; border-radius: 50%; background: rgba(255,255,255,0.24); }
-    .dot:nth-child(1) { background: #ff6464; } .dot:nth-child(2) { background: #ffd56a; } .dot:nth-child(3) { background: var(--accent); }
-    .side-icons { display: grid; gap: 12px; align-content: start; padding-top: 16px; }
-    .side-icon {
-      display: grid;
-      place-items: center;
-      width: 48px;
-      height: 48px;
-      border: 1px solid rgba(255,255,255,0.08);
-      border-radius: 16px;
-      background: rgba(255,255,255,0.045);
-      color: var(--muted);
-      font-weight: 860;
-      box-shadow: inset 0 1px 0 rgba(255,255,255,0.08);
-    }
-    .side-icon.active { color: var(--accent-on); background: linear-gradient(180deg, #75ff9c, #42df75); box-shadow: 0 16px 40px rgba(92,255,145,0.22); }
-    .side-footer { width: 48px; height: 48px; border-radius: 16px; background: url('./fusion/app-icon.png') center/cover; box-shadow: 0 0 0 1px rgba(255,255,255,0.12); }
-    .app-area { position: relative; z-index: 2; padding: 24px; }
-    .app-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; margin-bottom: 20px; }
-    .app-kicker { color: var(--accent); font: 760 12px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .12em; text-transform: uppercase; }
-    .app-title { margin-top: 7px; font-size: 28px; font-weight: 860; letter-spacing: -0.055em; }
-    .status-pill { border: 1px solid rgba(92,255,145,0.2); border-radius: 999px; background: rgba(92,255,145,0.08); color: #caffd8; padding: 8px 10px; font-size: 12px; font-weight: 760; white-space: nowrap; }
-    .game-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
-    .game-card {
-      position: relative;
-      min-height: 164px;
-      overflow: hidden;
-      border: 1px solid rgba(255,255,255,0.09);
-      border-radius: 22px;
-      background: linear-gradient(150deg, rgba(255,255,255,0.09), rgba(255,255,255,0.026));
-      box-shadow: inset 0 1px 0 rgba(255,255,255,0.08);
+    .fact {
+      min-height: 84px;
+      background: rgba(255,255,255,0.026);
       padding: 16px;
     }
-    .game-card::after {
-      content: '';
-      position: absolute;
-      right: -34px;
-      bottom: -48px;
-      width: 150px;
-      height: 150px;
-      border-radius: 34px;
-      background: linear-gradient(135deg, rgba(92,255,145,0.28), rgba(59,214,198,0.06));
-      transform: rotate(12deg);
+    .fact b {
+      display: block;
+      color: var(--text);
+      font-size: 13px;
+      font-weight: 560;
+      letter-spacing: -0.01em;
     }
-    .platform { color: var(--soft); font-size: 12px; font-weight: 740; text-transform: uppercase; letter-spacing: .1em; }
-    .game-card h3 { position: relative; z-index: 1; margin: 46px 0 0; font-size: 19px; letter-spacing: -0.035em; }
-    .game-card p { position: relative; z-index: 1; margin: 7px 0 0; color: var(--soft); font-size: 12px; }
-    .game-card.featured { grid-row: span 2; min-height: 342px; display: grid; align-content: end; background: radial-gradient(circle at 50% 28%, rgba(92,255,145,0.25), transparent 32%), linear-gradient(150deg, rgba(255,255,255,0.09), rgba(255,255,255,0.026)); }
-    .game-card.featured img { position: absolute; width: 78%; left: 50%; top: 43%; transform: translate(-50%, -50%); filter: drop-shadow(0 24px 36px rgba(0,0,0,0.45)); opacity: .9; }
-    .download-bar {
-      display: grid;
-      grid-template-columns: 1fr auto;
-      gap: 14px;
-      align-items: center;
-      margin-top: 14px;
-      border: 1px solid rgba(255,255,255,0.09);
-      border-radius: 20px;
-      background: rgba(0,0,0,0.36);
+    .fact span {
+      display: block;
+      margin-top: 8px;
+      color: var(--soft);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .hero-panel {
+      position: relative;
+      border: 1px solid var(--line);
+      border-radius: var(--radius-lg);
+      background:
+        linear-gradient(180deg, rgba(255,255,255,0.065), rgba(255,255,255,0.024)),
+        rgba(7, 9, 9, 0.72);
+      box-shadow: var(--shadow-panel), inset 0 1px 0 rgba(255,255,255,0.075);
+      overflow: hidden;
       padding: 14px;
     }
-    .progress { height: 8px; overflow: hidden; border-radius: 999px; background: rgba(255,255,255,0.08); }
-    .progress span { display:block; width: 72%; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--accent), var(--accent-2)); box-shadow: 0 0 18px rgba(92,255,145,0.46); }
-    .download-bar strong { font-size: 13px; }
-    .download-bar small { display:block; color: var(--soft); margin-top: 4px; }
-    .floating-card {
-      position: absolute;
-      z-index: 5;
-      border: 1px solid rgba(255,255,255,0.11);
-      border-radius: 18px;
-      background: rgba(9, 10, 10, 0.76);
-      backdrop-filter: blur(20px);
-      box-shadow: 0 18px 50px rgba(0,0,0,0.42), inset 0 1px 0 rgba(255,255,255,0.08);
-      padding: 15px 16px;
-      min-width: 210px;
-    }
-    .floating-card b { display: block; font-size: 13px; margin-bottom: 6px; }
-    .floating-card span { display: block; color: var(--soft); font-size: 12px; }
-    .floating-card.source { left: -18px; top: 88px; }
-    .floating-card.emu { right: -10px; top: 42px; }
-    .floating-card.play { right: 18px; bottom: 52px; min-width: 230px; }
-    .orbit {
-      position: absolute;
-      z-index: 1;
-      right: 42px;
-      top: 86px;
-      width: 520px;
-      height: 520px;
-      border: 1px solid rgba(92,255,145,0.10);
-      border-radius: 50%;
-      opacity: .55;
-      animation: spin 26s linear infinite;
-    }
-    .orbit::before, .orbit::after { content:''; position:absolute; width:10px; height:10px; border-radius:50%; background:var(--accent); box-shadow:0 0 20px rgba(92,255,145,0.8); }
-    .orbit::before { left: 50%; top: -5px; } .orbit::after { right: 10%; bottom: 12%; background: var(--accent-2); }
-    @keyframes spin { to { transform: rotate(360deg); } }
-    .marquee {
-      position: relative;
-      overflow: hidden;
-      border-block: 1px solid rgba(255,255,255,0.07);
-      background: rgba(255,255,255,0.025);
-      margin-bottom: 34px;
-      -webkit-mask-image: linear-gradient(90deg, transparent, black 8%, black 92%, transparent);
-      mask-image: linear-gradient(90deg, transparent, black 8%, black 92%, transparent);
-    }
-    .marquee-track {
+    .window-bar,
+    .product-frame { position: relative; z-index: 1; }
+    .window-bar {
       display: flex;
-      gap: 10px;
-      width: max-content;
-      padding: 14px 0;
-      animation: slide 28s linear infinite;
-    }
-    .marquee span {
-      display: inline-flex;
       align-items: center;
-      border: 1px solid rgba(255,255,255,0.08);
-      border-radius: 999px;
-      background: rgba(255,255,255,0.04);
-      color: rgba(247,248,243,0.72);
-      padding: 9px 13px;
+      justify-content: space-between;
+      gap: 18px;
+      border-bottom: 1px solid var(--line-soft);
+      padding: 8px 10px 14px;
+      color: var(--soft);
+      font: 500 12px/1 var(--mono);
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    .traffic { display: flex; gap: 6px; }
+    .traffic span {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: rgba(255,255,255,0.24);
+    }
+    .traffic span:nth-child(3) { background: var(--accent); }
+    .product-frame {
+      display: grid;
+      gap: 12px;
+      padding-top: 14px;
+    }
+    .image-drop {
+      position: relative;
+      display: grid;
+      place-items: center;
+      min-height: 296px;
+      overflow: hidden;
+      border: 1px dashed rgba(255,255,255,0.20);
+      border-radius: 22px;
+      background: rgba(255,255,255,0.026);
+      text-align: center;
+    }
+    .drop-image {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      border-radius: inherit;
+      object-fit: cover;
+      opacity: 0;
+      transition: opacity 180ms ease;
+    }
+    .drop-copy {
+      position: relative;
+      z-index: 1;
+      padding: 28px;
+    }
+    .image-drop.has-image {
+      border-style: solid;
+    }
+    .image-drop.has-image .drop-image {
+      opacity: 1;
+    }
+    .image-drop.has-image::before,
+    .image-drop.has-image .drop-copy {
+      opacity: 0;
+      pointer-events: none;
+    }
+    .image-drop::before {
+      content: attr(data-slot-label);
+      position: absolute;
+      left: 16px;
+      top: 14px;
+      color: var(--soft);
+      font: 500 11px/1 var(--mono);
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+    }
+    .image-drop strong {
+      display: block;
+      color: var(--text);
+      font-size: 19px;
+      font-weight: 560;
+      letter-spacing: -0.025em;
+    }
+    .image-drop span {
+      display: block;
+      max-width: 340px;
+      margin: 10px auto 0;
+      color: var(--soft);
       font-size: 13px;
-      font-weight: 720;
-      white-space: nowrap;
+      line-height: 1.55;
     }
-    @keyframes slide { to { transform: translateX(-50%); } }
-    .section { position: relative; padding: 74px 0; }
-    .section + .section { border-top: 1px solid rgba(255,255,255,0.07); }
-    .section-head { display: flex; align-items: end; justify-content: space-between; gap: 26px; margin-bottom: 30px; }
-    .section h2 { margin: 0; max-width: 760px; font-size: clamp(34px, 4.6vw, 64px); line-height: .98; letter-spacing: -0.068em; text-wrap: balance; }
-    .section .section-copy { max-width: 460px; margin: 0; color: var(--muted); line-height: 1.68; }
-    .flow-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; }
+    .image-drop code {
+      display: inline-block;
+      margin-top: 12px;
+      color: rgba(205, 255, 220, 0.82);
+      font-size: 12px;
+    }
+    .mini-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+    .mini-grid .image-drop { min-height: 154px; border-radius: 18px; }
+    .mini-grid .image-drop strong { font-size: 15px; }
+    .mini-grid .image-drop span { font-size: 12px; }
+
+    .section {
+      padding: 82px 0;
+      border-top: 1px solid var(--line-soft);
+    }
+    .section-head {
+      display: grid;
+      grid-template-columns: minmax(0, 0.9fr) minmax(260px, 0.7fr);
+      gap: 48px;
+      align-items: end;
+      margin-bottom: 28px;
+    }
+    .section-kicker {
+      margin-bottom: 14px;
+      color: var(--accent);
+      font: 520 12px/1 var(--mono);
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+    h2 {
+      max-width: 760px;
+      color: var(--text);
+      font-size: clamp(34px, 4.7vw, 58px);
+      font-weight: 610;
+      letter-spacing: -0.062em;
+      line-height: 1;
+      text-wrap: balance;
+    }
+    .section-copy {
+      color: var(--muted);
+      font-size: 15px;
+      line-height: 1.72;
+      text-wrap: pretty;
+    }
+    .flow-grid,
+    .cards,
+    .shot-grid {
+      display: grid;
+      gap: 12px;
+    }
+    .flow-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    .cards { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .shot-grid { grid-template-columns: 1.15fr 0.85fr; }
+    .stack { display: grid; gap: 12px; }
+    .step,
+    .card,
+    .legal-panel,
+    .code-panel {
+      border: 1px solid var(--line-soft);
+      border-radius: var(--radius-md);
+      background: var(--panel);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.045);
+    }
     .step {
-      position: relative;
-      min-height: 188px;
-      overflow: hidden;
-      border: 1px solid rgba(92,255,145,0.15);
-      border-radius: 24px;
-      background: linear-gradient(180deg, rgba(92,255,145,0.08), rgba(255,255,255,0.025));
-      padding: 22px;
-      box-shadow: inset 0 1px 0 rgba(255,255,255,0.07);
+      min-height: 174px;
+      padding: 18px;
     }
-    .step::after { content:''; position:absolute; right:-32px; bottom:-40px; width:110px; height:110px; border-radius:34px; background:rgba(92,255,145,0.08); transform:rotate(18deg); }
-    .step b { display: block; color: var(--accent); font: 800 12px/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .14em; margin-bottom: 52px; }
-    .step strong { display:block; margin-bottom: 9px; font-size: 18px; letter-spacing: -0.03em; }
-    .step span { color: var(--muted); font-size: 14px; line-height: 1.48; }
-    .cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+    .step b {
+      display: block;
+      color: var(--accent);
+      font: 520 12px/1 var(--mono);
+      letter-spacing: 0.12em;
+    }
+    .step strong {
+      display: block;
+      margin-top: 54px;
+      color: var(--text);
+      font-size: 18px;
+      font-weight: 570;
+      letter-spacing: -0.025em;
+    }
+    .step span,
+    .card p,
+    .legal-panel p {
+      color: var(--muted);
+      line-height: 1.66;
+    }
+    .step span {
+      display: block;
+      margin-top: 8px;
+      font-size: 13px;
+    }
     .card {
-      position: relative;
-      min-height: 260px;
-      overflow: hidden;
-      border: 1px solid rgba(255,255,255,0.09);
-      border-radius: 28px;
-      background: linear-gradient(180deg, rgba(255,255,255,0.07), rgba(255,255,255,0.027));
-      padding: 26px;
-      box-shadow: inset 0 1px 0 rgba(255,255,255,0.08);
+      min-height: 240px;
+      padding: 24px;
     }
-    .card::before { content:''; position:absolute; inset:auto -20% -35% 22%; height:180px; border-radius:50%; background:radial-gradient(circle, rgba(92,255,145,0.12), transparent 68%); }
-    .card .kicker { color: var(--accent); font: 820 12px/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .14em; text-transform: uppercase; }
-    .card h3 { margin: 80px 0 12px; font-size: 24px; letter-spacing: -0.045em; }
-    .card p { margin: 0; color: var(--muted); line-height: 1.62; }
+    .card .kicker {
+      color: var(--accent);
+      font: 520 12px/1 var(--mono);
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+    .card h3 {
+      margin-top: 74px;
+      color: var(--text);
+      font-size: 22px;
+      font-weight: 590;
+      letter-spacing: -0.04em;
+      line-height: 1.08;
+    }
+    .card p {
+      margin-top: 14px;
+      font-size: 14px;
+    }
+    .shot-grid .image-drop:first-child { min-height: 440px; }
+    .shot-grid .image-drop { min-height: 214px; }
+
     .legal {
       display: grid;
-      grid-template-columns: minmax(0, .9fr) minmax(320px, 1.1fr);
-      gap: 22px;
+      grid-template-columns: minmax(0, 0.85fr) minmax(320px, 1.15fr);
+      gap: 18px;
       align-items: stretch;
     }
-    .legal-panel, .code-panel {
-      border: 1px solid rgba(255,255,255,0.10);
-      border-radius: 30px;
-      background: linear-gradient(180deg, rgba(255,255,255,0.07), rgba(255,255,255,0.025));
-      box-shadow: inset 0 1px 0 rgba(255,255,255,0.08);
-      padding: 30px;
+    .legal-panel,
+    .code-panel { padding: 28px; }
+    .legal-panel h2 { font-size: clamp(34px, 4.2vw, 52px); }
+    .legal-panel p { margin-top: 18px; font-size: 15px; }
+    .code-panel {
+      display: grid;
+      align-content: center;
+      gap: 14px;
+      background: rgba(0,0,0,0.26);
     }
-    .legal-panel h2 { font-size: clamp(34px, 4.6vw, 58px); }
-    .legal-panel p { color: var(--muted); line-height: 1.7; }
-    .code-panel { display: grid; align-content: center; gap: 14px; background: rgba(0,0,0,0.34); }
-    .terminal-line { display: flex; align-items: center; gap: 10px; color: var(--soft); font: 500 13px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; }
-    .terminal-line::before { content: '>'; color: var(--accent); }
-    .mono { color: #caffd8; overflow-wrap: anywhere; }
-    footer { display:flex; justify-content:space-between; gap:18px; color: var(--soft); padding: 54px 0 70px; font-size: 14px; }
-    @media (prefers-reduced-motion: reduce) {
-      .orbit, .marquee-track { animation: none; }
-      html { scroll-behavior: auto; }
+    .terminal-line {
+      display: flex;
+      min-width: 0;
+      align-items: flex-start;
+      gap: 10px;
+      color: var(--soft);
+      font: 500 13px/1.65 var(--mono);
     }
-    @media (max-width: 1060px) {
-      .hero { grid-template-columns: 1fr; min-height: auto; }
-      .showcase { min-height: 590px; }
-      .launcher-window { margin: 0 auto; transform: none; }
-      .section-head { display: block; }
-      .section-copy { margin-top: 16px !important; }
+    .terminal-line::before {
+      content: ">";
+      flex: 0 0 auto;
+      color: var(--accent);
+    }
+    .mono {
+      color: rgba(205, 255, 220, 0.88);
+      overflow-wrap: anywhere;
+    }
+    footer {
+      display: flex;
+      justify-content: space-between;
+      gap: 18px;
+      padding: 42px 0 64px;
+      border-top: 1px solid var(--line-soft);
+      color: var(--soft);
+      font-size: 13px;
+    }
+    footer a { color: var(--muted); }
+
+    @media (max-width: 1020px) {
+      .hero,
+      .section-head,
+      .legal,
+      .shot-grid { grid-template-columns: 1fr; }
+      .hero { gap: 44px; padding-top: 78px; }
+      .hero-facts,
       .flow-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-      .cards, .legal { grid-template-columns: 1fr; }
+      .cards { grid-template-columns: 1fr; }
+      .card { min-height: 210px; }
+      .card h3 { margin-top: 56px; }
     }
-    @media (max-width: 720px) {
-      .page { width: min(100% - 28px, 1220px); }
-      header { align-items: flex-start; border-radius: 26px; flex-direction: column; padding: 12px; }
-      nav { flex-wrap: wrap; }
-      .hero { padding-top: 44px; }
-      h1 { font-size: clamp(46px, 15vw, 72px); }
-      .lead { font-size: 17px; }
-      .showcase { min-height: auto; }
-      .launcher-window { grid-template-columns: 1fr; min-height: auto; border-radius: 28px; }
-      .sidebar { display: none; }
-      .game-grid { grid-template-columns: 1fr; }
-      .game-card.featured { min-height: 270px; }
-      .floating-card, .orbit { display: none; }
-      .flow-grid { grid-template-columns: 1fr; }
-      .section { padding: 54px 0; }
+    @media (max-width: 680px) {
+      .page { width: min(100% - 28px, 1120px); }
+      header { min-height: 68px; }
+      .brand span { display: none; }
+      nav { gap: 12px; font-size: 12px; }
+      .hero { padding: 58px 0 58px; }
+      h1 { font-size: clamp(44px, 14vw, 58px); }
+      .lead { font-size: 16px; }
+      .hero-facts,
+      .flow-grid,
+      .mini-grid { grid-template-columns: 1fr; }
+      .hero-panel { border-radius: 22px; padding: 10px; }
+      .image-drop { min-height: 250px; }
+      .section { padding: 58px 0; }
       footer { flex-direction: column; }
     }
   </style>
@@ -571,12 +631,17 @@ function renderLandingHtml(manifest) {
     <div class="page">
       <header>
         <a class="brand" href="./" aria-label="Fusion Launcher home">
-          <img src="./fusion/app-icon.png" alt="">
+          <img class="brand-icon" src="./fusion/app-icon.png" alt="">
           <span>fusion launcher</span>
         </a>
         <nav aria-label="Primary">
-          <a href="${templateUrl}">Source template</a>
+          <a href="#screenshots" data-i18n="nav.images">Image slots</a>
+          <a href="${templateUrl}" data-i18n="nav.template">Source template</a>
           <a href="${githubUrl}">GitHub</a>
+          <span class="language-switch" aria-label="Language">
+            <button type="button" data-lang="en" aria-pressed="true">EN</button>
+            <button type="button" data-lang="ru" aria-pressed="false">RU</button>
+          </span>
         </nav>
       </header>
     </div>
@@ -585,106 +650,358 @@ function renderLandingHtml(manifest) {
   <main class="page">
     <section class="hero">
       <div class="hero-copy">
-        <div class="eyebrow">Source libraries + guided emulator setup</div>
-        <h1>Organize and launch <span class="gradient-word">retro game</span> libraries from one PC launcher.</h1>
-        <p class="lead">Fusion Launcher connects sources, tracks allowed install flows, prepares emulator requirements, enriches artwork, and launches everything from a local-first Windows desktop app.</p>
+        <div class="eyebrow" data-i18n="hero.eyebrow">Local-first Windows launcher</div>
+        <h1 data-i18n-html="hero.title">Retro game libraries on PC. <span class="accent-word">Clean source flow.</span></h1>
+        <p class="lead" data-i18n="hero.lead">Fusion Launcher connects source-library catalogs, tracks allowed install state, checks emulator requirements, and launches from one quiet desktop shell.</p>
         <div class="actions">
-          <a class="button primary" href="${githubUrl}">View on GitHub</a>
-          <a class="button secondary" href="${templateUrl}">Open source-library template</a>
+          <a class="button primary" href="${githubUrl}" data-i18n="cta.github">View on GitHub</a>
+          <a class="button secondary" href="${templateUrl}" data-i18n="cta.template">Open source-library template</a>
         </div>
-        <p class="note">Content-neutral by design: Fusion Launcher does not host or distribute commercial games, BIOS files, firmware, keys, or third-party payloads.</p>
-        <div class="hero-tags" aria-label="Product traits">
-          <span>Source-driven</span>
-          <span>Windows-first</span>
-          <span>Local storage</span>
-          <span>Emulator preflight</span>
+        <p class="note" data-i18n="hero.note">Content-neutral by design: Fusion Launcher does not host or distribute commercial games, BIOS files, firmware, keys, or third-party payloads.</p>
+        <div class="hero-facts" aria-label="Product traits" data-i18n-aria="aria.traits">
+          <div class="fact"><b data-i18n="fact.sources.title">Source-driven</b><span data-i18n="fact.sources.text">Catalogs stay user-owned and portable.</span></div>
+          <div class="fact"><b data-i18n="fact.windows.title">Windows-first</b><span data-i18n="fact.windows.text">Tauri desktop shell, local storage.</span></div>
+          <div class="fact"><b data-i18n="fact.preflight.title">Preflight</b><span data-i18n="fact.preflight.text">Setup checks before launch.</span></div>
+          <div class="fact"><b data-i18n="fact.screens.title">Screenshot-ready</b><span data-i18n="fact.screens.text">Clean frames for real product captures.</span></div>
         </div>
       </div>
 
-      <div class="showcase" aria-label="Fusion Launcher product showcase">
-        <div class="halo"></div>
-        <div class="orbit"></div>
-        <div class="floating-card source"><b>Connect source</b><span>GitHub Pages, HTTPS, or local JSON</span></div>
-        <div class="floating-card emu"><b>Prepare emulator</b><span>Portable profiles and system-file checks</span></div>
-        <div class="floating-card play"><b>Ready to play</b><span>Launch after preflight passes</span></div>
-        <div class="launcher-window">
-          <aside class="sidebar" aria-hidden="true">
-            <div class="dot-stack"><span class="dot"></span><span class="dot"></span><span class="dot"></span></div>
-            <div class="side-icons"><div class="side-icon active">▶</div><div class="side-icon">◎</div><div class="side-icon">▦</div><div class="side-icon">⚙</div></div>
-            <div class="side-footer"></div>
-          </aside>
-          <div class="app-area">
-            <div class="app-top">
-              <div><div class="app-kicker">source connected</div><div class="app-title">Retro library</div></div>
-              <div class="status-pill">Local-first</div>
+      <div class="hero-panel" aria-label="Fusion Launcher screenshot placeholder" data-i18n-aria="aria.heroPanel">
+        <div class="window-bar"><span>Fusion Launcher</span><div class="traffic" aria-hidden="true"><span></span><span></span><span></span></div></div>
+        <div class="product-frame">
+          <div class="image-drop" data-slot-label="image slot" data-slot-label-key="slot.label" data-auto-src="./fusion/screens/hero-library.png" data-auto-alt="Fusion Launcher library screenshot" data-i18n-auto-alt="slot.hero.alt">
+            <div class="drop-copy">
+              <strong data-i18n="slot.hero.title">Drop your primary app screenshot here.</strong>
+              <span data-i18n="slot.hero.text">Best fit: a dark 16:10 library or game-detail screenshot with real covers and the Fusion sidebar.</span>
+              <code>public/fusion/screens/hero-library.png</code>
             </div>
-            <div class="game-grid">
-              <article class="game-card featured"><img src="./fusion/hero-mascot.png" alt=""><div class="platform">demo source</div><h3>Fusion smoke test</h3><p>First-party validation content</p></article>
-              <article class="game-card"><div class="platform">NES</div><h3>Pixel catalog</h3><p>Metadata + cover ready</p></article>
-              <article class="game-card"><div class="platform">PS2</div><h3>Launch profile</h3><p>Requirements checked</p></article>
-              <article class="game-card"><div class="platform">PSP</div><h3>Portable setup</h3><p>Emulator path stored locally</p></article>
-              <article class="game-card"><div class="platform">Source</div><h3>JSON library</h3><p>Community or personal URL</p></article>
+          </div>
+          <div class="mini-grid">
+            <div class="image-drop" data-slot-label="image slot" data-slot-label-key="slot.label" data-auto-src="./fusion/screens/setup-modal.png" data-auto-alt="Fusion Launcher setup modal screenshot" data-i18n-auto-alt="slot.setup.alt">
+              <div class="drop-copy"><strong data-i18n="slot.setup.title">Setup modal</strong><span data-i18n="slot.setup.text">Emulator path / preflight checks.</span></div>
             </div>
-            <div class="download-bar"><div><strong>Installing allowed source content</strong><small>Direct, bundled, and torrent-aware state</small></div><div class="progress" aria-hidden="true"><span></span></div></div>
+            <div class="image-drop" data-slot-label="image slot" data-slot-label-key="slot.label" data-auto-src="./fusion/screens/game-detail.png" data-auto-alt="Fusion Launcher game detail screenshot" data-i18n-auto-alt="slot.detail.alt">
+              <div class="drop-copy"><strong data-i18n="slot.detail.title">Game detail</strong><span data-i18n="slot.detail.text">Artwork, source, install status.</span></div>
+            </div>
           </div>
         </div>
       </div>
     </section>
-  </main>
 
-  <div class="marquee" aria-hidden="true">
-    <div class="marquee-track">
-      <span>Connect source</span><span>Browse catalog</span><span>Install content</span><span>Prepare emulator</span><span>Scrape artwork</span><span>Run preflight</span><span>Launch game</span>
-      <span>Connect source</span><span>Browse catalog</span><span>Install content</span><span>Prepare emulator</span><span>Scrape artwork</span><span>Run preflight</span><span>Launch game</span>
-    </div>
-  </div>
-
-  <main class="page">
     <section class="section">
       <div class="section-head">
-        <h2>Connect source → install → set up → play.</h2>
-        <p class="section-copy">Fusion Launcher is built around source libraries: catalogs that describe games, platforms, metadata, artwork, setup profiles, and install requirements.</p>
+        <div>
+          <div class="section-kicker" data-i18n="flow.kicker">Flow</div>
+          <h2 data-i18n="flow.title">Connect source. Verify setup. Launch locally.</h2>
+        </div>
+        <p class="section-copy" data-i18n="flow.copy">Source libraries describe games, metadata, artwork, setup profiles, and install requirements. Fusion keeps each step explicit before it launches anything.</p>
       </div>
       <div class="flow-grid">
-        <div class="step"><b>01</b><strong>Connect</strong><span>Paste or import a source-library URL.</span></div>
-        <div class="step"><b>02</b><strong>Browse</strong><span>Explore retro game catalogs in one launcher.</span></div>
-        <div class="step"><b>03</b><strong>Install</strong><span>Track files described by the connected source.</span></div>
-        <div class="step"><b>04</b><strong>Set up</strong><span>Prepare emulator paths and required system files.</span></div>
-        <div class="step"><b>05</b><strong>Launch</strong><span>Start games after readiness checks pass.</span></div>
+        <div class="step"><b>01</b><strong data-i18n="flow.connect.title">Connect</strong><span data-i18n="flow.connect.text">Paste or import a source-library URL.</span></div>
+        <div class="step"><b>02</b><strong data-i18n="flow.browse.title">Browse</strong><span data-i18n="flow.browse.text">Open a local catalog with metadata and artwork.</span></div>
+        <div class="step"><b>03</b><strong data-i18n="flow.preflight.title">Preflight</strong><span data-i18n="flow.preflight.text">Check emulator paths and required user-provided files.</span></div>
+        <div class="step"><b>04</b><strong data-i18n="flow.launch.title">Launch</strong><span data-i18n="flow.launch.text">Start games after readiness checks pass.</span></div>
+      </div>
+    </section>
+
+    <section class="section" id="screenshots">
+      <div class="section-head">
+        <div>
+          <div class="section-kicker" data-i18n="screens.kicker">Image slots</div>
+          <h2 data-i18n="screens.title">Add real product screenshots when they are ready.</h2>
+        </div>
+        <p class="section-copy" data-i18n-html="screens.copy">Use these slots for your own product images later. Keep filenames under <code>public/fusion/screens/</code>; the Pages build copies that folder automatically.</p>
+      </div>
+      <div class="shot-grid">
+        <div class="image-drop" data-slot-label="image slot" data-slot-label-key="slot.label" data-auto-src="./fusion/screens/library.png" data-auto-alt="Fusion Launcher library view screenshot" data-i18n-auto-alt="slot.library.alt">
+          <div class="drop-copy">
+            <strong data-i18n="slot.library.title">Library screenshot</strong>
+            <span data-i18n="slot.library.text">Main browsing view with covers, source state, and sidebar.</span>
+            <code>public/fusion/screens/library.png</code>
+          </div>
+        </div>
+        <div class="stack">
+          <div class="image-drop" data-slot-label="image slot" data-slot-label-key="slot.label" data-auto-src="./fusion/screens/source-setup.png" data-auto-alt="Fusion Launcher source setup screenshot" data-i18n-auto-alt="slot.sourceSetup.alt">
+            <div class="drop-copy">
+              <strong data-i18n="slot.sourceSetup.title">Source setup</strong>
+              <span data-i18n="slot.sourceSetup.text">URL import, manifest details, trust notes.</span>
+              <code>public/fusion/screens/source-setup.png</code>
+            </div>
+          </div>
+          <div class="image-drop" data-slot-label="image slot" data-slot-label-key="slot.label" data-auto-src="./fusion/screens/preflight.png" data-auto-alt="Fusion Launcher preflight result screenshot" data-i18n-auto-alt="slot.preflight.alt">
+            <div class="drop-copy">
+              <strong data-i18n="slot.preflight.title">Preflight result</strong>
+              <span data-i18n="slot.preflight.text">Emulator profile and missing-file checks.</span>
+              <code>public/fusion/screens/preflight.png</code>
+            </div>
+          </div>
+        </div>
       </div>
     </section>
 
     <section class="section">
       <div class="section-head">
-        <h2>A launcher layer for source-based game libraries.</h2>
-        <p class="section-copy">The pitch is sharp: source-library catalog flow, guided setup assistance, and a Windows desktop launcher shell.</p>
+        <div>
+          <div class="section-kicker" data-i18n="position.kicker">Positioning</div>
+          <h2 data-i18n="position.title">A launcher layer for source-based game libraries.</h2>
+        </div>
+        <p class="section-copy" data-i18n="position.copy">Clear source model, setup help, and Windows desktop shell without implying bundled commercial content.</p>
       </div>
       <div class="cards">
-        <article class="card"><div class="kicker">Sources</div><h3>Source-library catalog flow</h3><p>Fusion connects user-selected source libraries and turns them into a browsable launcher catalog with download state.</p></article>
-        <article class="card"><div class="kicker">Setup</div><h3>Guided emulator setup</h3><p>Supported platforms get portable emulator setup help, local paths, system-file checks, and launch preflight diagnostics.</p></article>
-        <article class="card"><div class="kicker">Desktop</div><h3>Windows launcher UX</h3><p>Built with Tauri, Rust, Next.js, and local-first storage for a fast PC launcher experience.</p></article>
+        <article class="card"><div class="kicker" data-i18n="card.sources.kicker">Sources</div><h3 data-i18n="card.sources.title">Catalog flow without bundled payloads</h3><p data-i18n="card.sources.text">Fusion connects user-selected source libraries and turns them into a browsable launcher catalog with local download state.</p></article>
+        <article class="card"><div class="kicker" data-i18n="card.setup.kicker">Setup</div><h3 data-i18n="card.setup.title">Guided emulator readiness</h3><p data-i18n="card.setup.text">Supported platforms get portable setup help, local paths, system-file checks, and launch diagnostics.</p></article>
+        <article class="card"><div class="kicker" data-i18n="card.desktop.kicker">Desktop</div><h3 data-i18n="card.desktop.title">Fast Windows app shell</h3><p data-i18n="card.desktop.text">Built with Tauri, Rust, Next.js, and local-first storage for a responsive PC launcher experience.</p></article>
       </div>
     </section>
 
     <section class="section legal" id="content-model">
       <div class="legal-panel">
-        <h2>Content-neutral by design.</h2>
-        <p>Fusion Launcher provides source connection, download tracking, metadata enrichment, emulator setup assistance, and launch orchestration.</p>
-        <p>The official project does not ship commercial ROMs, BIOS files, firmware, keys, or third-party game payloads. Users choose their sources and are responsible for the content they connect.</p>
+        <h2 data-i18n="legal.title">Content-neutral by design.</h2>
+        <p data-i18n="legal.p1">Fusion Launcher provides source connection, download tracking, metadata enrichment, emulator setup assistance, and launch orchestration.</p>
+        <p data-i18n="legal.p2">The official project does not ship commercial ROMs, BIOS files, firmware, keys, or third-party game payloads. Users choose their sources and are responsible for the content they connect.</p>
       </div>
       <div class="code-panel">
-        <div class="terminal-line">starter source template</div>
+        <div class="terminal-line" data-i18n="terminal.starter">starter source template</div>
         <div class="terminal-line mono">${templateUrl}</div>
-        <div class="terminal-line">template updated ${updatedAt}</div>
-        <div class="terminal-line">not affiliated with emulator projects, publishers, or console manufacturers</div>
+        <div class="terminal-line"><span data-i18n="terminal.updated">template updated</span>&nbsp;${updatedAt}</div>
+        <div class="terminal-line" data-i18n="terminal.affiliation">not affiliated with emulator projects, publishers, or console manufacturers</div>
       </div>
     </section>
   </main>
 
   <footer class="page">
     <span>Fusion Launcher</span>
-    <span><a href="${githubUrl}">GitHub</a> · <a href="${templateUrl}">Source template</a></span>
+    <span><a href="${githubUrl}">GitHub</a> · <a href="${templateUrl}" data-i18n="nav.template">Source template</a></span>
   </footer>
+  <script>
+    (() => {
+      const dictionaries = {
+        en: {
+          'meta.title': 'Fusion Launcher - source-driven retro library launcher',
+          'meta.description': 'Fusion Launcher is a source-driven Windows launcher for retro game libraries on PC. Connect sources, install allowed content, set up emulators, and play from one desktop app.',
+          'nav.images': 'Image slots',
+          'nav.template': 'Source template',
+          'hero.eyebrow': 'Local-first Windows launcher',
+          'hero.title': 'Retro game libraries on PC. <span class="accent-word">Clean source flow.</span>',
+          'hero.lead': 'Fusion Launcher connects source-library catalogs, tracks allowed install state, checks emulator requirements, and launches from one quiet desktop shell.',
+          'cta.github': 'View on GitHub',
+          'cta.template': 'Open source-library template',
+          'hero.note': 'Content-neutral by design: Fusion Launcher does not host or distribute commercial games, BIOS files, firmware, keys, or third-party payloads.',
+          'aria.traits': 'Product traits',
+          'fact.sources.title': 'Source-driven',
+          'fact.sources.text': 'Catalogs stay user-owned and portable.',
+          'fact.windows.title': 'Windows-first',
+          'fact.windows.text': 'Tauri desktop shell, local storage.',
+          'fact.preflight.title': 'Preflight',
+          'fact.preflight.text': 'Setup checks before launch.',
+          'fact.screens.title': 'Screenshot-ready',
+          'fact.screens.text': 'Clean frames for real product captures.',
+          'aria.heroPanel': 'Fusion Launcher screenshot placeholder',
+          'slot.label': 'image slot',
+          'slot.hero.alt': 'Fusion Launcher library screenshot',
+          'slot.hero.title': 'Drop your primary app screenshot here.',
+          'slot.hero.text': 'Best fit: a dark 16:10 library or game-detail screenshot with real covers and the Fusion sidebar.',
+          'slot.setup.alt': 'Fusion Launcher setup modal screenshot',
+          'slot.setup.title': 'Setup modal',
+          'slot.setup.text': 'Emulator path / preflight checks.',
+          'slot.detail.alt': 'Fusion Launcher game detail screenshot',
+          'slot.detail.title': 'Game detail',
+          'slot.detail.text': 'Artwork, source, install status.',
+          'flow.kicker': 'Flow',
+          'flow.title': 'Connect source. Verify setup. Launch locally.',
+          'flow.copy': 'Source libraries describe games, metadata, artwork, setup profiles, and install requirements. Fusion keeps each step explicit before it launches anything.',
+          'flow.connect.title': 'Connect',
+          'flow.connect.text': 'Paste or import a source-library URL.',
+          'flow.browse.title': 'Browse',
+          'flow.browse.text': 'Open a local catalog with metadata and artwork.',
+          'flow.preflight.title': 'Preflight',
+          'flow.preflight.text': 'Check emulator paths and required user-provided files.',
+          'flow.launch.title': 'Launch',
+          'flow.launch.text': 'Start games after readiness checks pass.',
+          'screens.kicker': 'Image slots',
+          'screens.title': 'Add real product screenshots when they are ready.',
+          'screens.copy': 'Use these slots for your own product images later. Keep filenames under <code>public/fusion/screens/</code>; the Pages build copies that folder automatically.',
+          'slot.library.alt': 'Fusion Launcher library view screenshot',
+          'slot.library.title': 'Library screenshot',
+          'slot.library.text': 'Main browsing view with covers, source state, and sidebar.',
+          'slot.sourceSetup.alt': 'Fusion Launcher source setup screenshot',
+          'slot.sourceSetup.title': 'Source setup',
+          'slot.sourceSetup.text': 'URL import, manifest details, trust notes.',
+          'slot.preflight.alt': 'Fusion Launcher preflight result screenshot',
+          'slot.preflight.title': 'Preflight result',
+          'slot.preflight.text': 'Emulator profile and missing-file checks.',
+          'position.kicker': 'Positioning',
+          'position.title': 'A launcher layer for source-based game libraries.',
+          'position.copy': 'Clear source model, setup help, and Windows desktop shell without implying bundled commercial content.',
+          'card.sources.kicker': 'Sources',
+          'card.sources.title': 'Catalog flow without bundled payloads',
+          'card.sources.text': 'Fusion connects user-selected source libraries and turns them into a browsable launcher catalog with local download state.',
+          'card.setup.kicker': 'Setup',
+          'card.setup.title': 'Guided emulator readiness',
+          'card.setup.text': 'Supported platforms get portable setup help, local paths, system-file checks, and launch diagnostics.',
+          'card.desktop.kicker': 'Desktop',
+          'card.desktop.title': 'Fast Windows app shell',
+          'card.desktop.text': 'Built with Tauri, Rust, Next.js, and local-first storage for a responsive PC launcher experience.',
+          'legal.title': 'Content-neutral by design.',
+          'legal.p1': 'Fusion Launcher provides source connection, download tracking, metadata enrichment, emulator setup assistance, and launch orchestration.',
+          'legal.p2': 'The official project does not ship commercial ROMs, BIOS files, firmware, keys, or third-party game payloads. Users choose their sources and are responsible for the content they connect.',
+          'terminal.starter': 'starter source template',
+          'terminal.updated': 'template updated',
+          'terminal.affiliation': 'not affiliated with emulator projects, publishers, or console manufacturers'
+        },
+        ru: {
+          'meta.title': 'Fusion Launcher — лаунчер ретро-библиотек из источников',
+          'meta.description': 'Fusion Launcher — Windows-лаунчер для ретро-библиотек на ПК. Подключайте источники, устанавливайте разрешённый контент, настраивайте эмуляторы и запускайте игры из одного приложения.',
+          'nav.images': 'Слоты для изображений',
+          'nav.template': 'Шаблон источника',
+          'hero.eyebrow': 'Локальный Windows-лаунчер',
+          'hero.title': 'Ретро-библиотеки на ПК. <span class="accent-word">Чистый поток источников.</span>',
+          'hero.lead': 'Fusion Launcher подключает каталоги источников, отслеживает разрешённую установку, проверяет требования эмуляторов и запускает всё из спокойной desktop-оболочки.',
+          'cta.github': 'Открыть GitHub',
+          'cta.template': 'Открыть шаблон источника',
+          'hero.note': 'Контент-нейтрально по дизайну: Fusion Launcher не хостит и не распространяет коммерческие игры, BIOS, firmware, ключи или сторонние payload-файлы.',
+          'aria.traits': 'Свойства продукта',
+          'fact.sources.title': 'От источников',
+          'fact.sources.text': 'Каталоги остаются переносимыми и под контролем пользователя.',
+          'fact.windows.title': 'Windows-first',
+          'fact.windows.text': 'Tauri-оболочка и локальное хранение.',
+          'fact.preflight.title': 'Preflight',
+          'fact.preflight.text': 'Проверки настройки перед запуском.',
+          'fact.screens.title': 'Готово под скриншоты',
+          'fact.screens.text': 'Чистые рамки для реальных кадров продукта.',
+          'aria.heroPanel': 'Плейсхолдер скриншота Fusion Launcher',
+          'slot.label': 'слот изображения',
+          'slot.hero.alt': 'Скриншот библиотеки Fusion Launcher',
+          'slot.hero.title': 'Добавь сюда главный скриншот приложения.',
+          'slot.hero.text': 'Лучше всего подойдёт тёмный 16:10 скрин библиотеки или страницы игры с реальными обложками и сайдбаром Fusion.',
+          'slot.setup.alt': 'Скриншот окна настройки Fusion Launcher',
+          'slot.setup.title': 'Окно настройки',
+          'slot.setup.text': 'Путь к эмулятору / preflight-проверки.',
+          'slot.detail.alt': 'Скриншот страницы игры Fusion Launcher',
+          'slot.detail.title': 'Страница игры',
+          'slot.detail.text': 'Арт, источник, статус установки.',
+          'flow.kicker': 'Поток',
+          'flow.title': 'Подключи источник. Проверь настройку. Запусти локально.',
+          'flow.copy': 'Source libraries описывают игры, метаданные, арт, профили настройки и требования установки. Fusion явно показывает каждый шаг перед запуском.',
+          'flow.connect.title': 'Подключение',
+          'flow.connect.text': 'Вставь или импортируй URL source-library.',
+          'flow.browse.title': 'Каталог',
+          'flow.browse.text': 'Открой локальный каталог с метаданными и артом.',
+          'flow.preflight.title': 'Preflight',
+          'flow.preflight.text': 'Проверь пути эмуляторов и пользовательские системные файлы.',
+          'flow.launch.title': 'Запуск',
+          'flow.launch.text': 'Запускай игры только после успешных проверок.',
+          'screens.kicker': 'Слоты изображений',
+          'screens.title': 'Добавь реальные скриншоты продукта, когда они будут готовы.',
+          'screens.copy': 'Эти места оставлены под твои изображения. Храни файлы в <code>public/fusion/screens/</code>; Pages-сборка скопирует эту папку автоматически.',
+          'slot.library.alt': 'Скриншот библиотеки Fusion Launcher',
+          'slot.library.title': 'Скриншот библиотеки',
+          'slot.library.text': 'Основной экран с обложками, состоянием источника и сайдбаром.',
+          'slot.sourceSetup.alt': 'Скриншот настройки источника Fusion Launcher',
+          'slot.sourceSetup.title': 'Настройка источника',
+          'slot.sourceSetup.text': 'Импорт URL, детали manifest, trust-заметки.',
+          'slot.preflight.alt': 'Скриншот результата preflight Fusion Launcher',
+          'slot.preflight.title': 'Результат preflight',
+          'slot.preflight.text': 'Профиль эмулятора и проверки недостающих файлов.',
+          'position.kicker': 'Позиционирование',
+          'position.title': 'Лаунчерный слой для игровых библиотек из источников.',
+          'position.copy': 'Понятная модель источников, помощь с настройкой и Windows desktop-оболочка без намёка на поставку коммерческого контента.',
+          'card.sources.kicker': 'Источники',
+          'card.sources.title': 'Каталоги без встроенных payload-файлов',
+          'card.sources.text': 'Fusion подключает выбранные пользователем source libraries и превращает их в просматриваемый каталог с локальным состоянием загрузок.',
+          'card.setup.kicker': 'Настройка',
+          'card.setup.title': 'Готовность эмулятора',
+          'card.setup.text': 'Для поддерживаемых платформ есть помощь с portable-настройкой, локальные пути, проверки системных файлов и диагностика запуска.',
+          'card.desktop.kicker': 'Desktop',
+          'card.desktop.title': 'Быстрая Windows-оболочка',
+          'card.desktop.text': 'Tauri, Rust, Next.js и local-first хранение для отзывчивого ПК-лаунчера.',
+          'legal.title': 'Контент-нейтрально по дизайну.',
+          'legal.p1': 'Fusion Launcher подключает источники, отслеживает загрузки, обогащает метаданные, помогает с настройкой эмуляторов и оркестрирует запуск.',
+          'legal.p2': 'Официальный проект не поставляет коммерческие ROM, BIOS, firmware, ключи или сторонние игровые payload-файлы. Пользователь сам выбирает источники и отвечает за подключаемый контент.',
+          'terminal.starter': 'стартовый шаблон источника',
+          'terminal.updated': 'шаблон обновлён',
+          'terminal.affiliation': 'не связан с проектами эмуляторов, издателями или производителями консолей'
+        }
+      };
+
+      const isSupported = (locale) => Object.prototype.hasOwnProperty.call(dictionaries, locale);
+      const getStoredLocale = () => {
+        try { return window.localStorage.getItem('fusionLandingLang'); } catch { return null; }
+      };
+      const storeLocale = (locale) => {
+        try { window.localStorage.setItem('fusionLandingLang', locale); } catch {}
+      };
+      const params = new URLSearchParams(window.location.search);
+      const requested = params.get('lang');
+      const stored = getStoredLocale();
+      const browserLocale = (navigator.language || '').toLowerCase().startsWith('ru') ? 'ru' : 'en';
+      const initialLocale = isSupported(requested) ? requested : (isSupported(stored) ? stored : browserLocale);
+
+      const setLanguage = (locale) => {
+        const nextLocale = isSupported(locale) ? locale : 'en';
+        const dictionary = dictionaries[nextLocale];
+        document.documentElement.lang = nextLocale;
+        document.title = dictionary['meta.title'];
+        const description = document.querySelector('meta[name="description"]');
+        if (description) description.setAttribute('content', dictionary['meta.description']);
+        const ogDescription = document.querySelector('meta[property="og:description"]');
+        if (ogDescription) ogDescription.setAttribute('content', dictionary['meta.description']);
+
+        document.querySelectorAll('[data-i18n]').forEach((element) => {
+          const key = element.getAttribute('data-i18n');
+          if (key && dictionary[key]) element.textContent = dictionary[key];
+        });
+        document.querySelectorAll('[data-i18n-html]').forEach((element) => {
+          const key = element.getAttribute('data-i18n-html');
+          if (key && dictionary[key]) element.innerHTML = dictionary[key];
+        });
+        document.querySelectorAll('[data-i18n-aria]').forEach((element) => {
+          const key = element.getAttribute('data-i18n-aria');
+          if (key && dictionary[key]) element.setAttribute('aria-label', dictionary[key]);
+        });
+        document.querySelectorAll('[data-slot-label-key]').forEach((element) => {
+          const key = element.getAttribute('data-slot-label-key');
+          if (key && dictionary[key]) element.setAttribute('data-slot-label', dictionary[key]);
+        });
+        document.querySelectorAll('[data-i18n-auto-alt]').forEach((element) => {
+          const key = element.getAttribute('data-i18n-auto-alt');
+          if (key && dictionary[key]) element.setAttribute('data-auto-alt', dictionary[key]);
+        });
+        document.querySelectorAll('[data-lang]').forEach((button) => {
+          button.setAttribute('aria-pressed', String(button.getAttribute('data-lang') === nextLocale));
+        });
+        storeLocale(nextLocale);
+      };
+
+      document.querySelectorAll('[data-lang]').forEach((button) => {
+        button.addEventListener('click', () => setLanguage(button.getAttribute('data-lang')));
+      });
+      setLanguage(initialLocale);
+    })();
+  </script>
+  <script>
+    (() => {
+      if (window.location.protocol === 'file:') return;
+      document.querySelectorAll('.image-drop[data-auto-src]').forEach(async (slot) => {
+        const src = slot.getAttribute('data-auto-src');
+        if (!src) return;
+        try {
+          const response = await fetch(src, { method: 'HEAD', cache: 'no-store' });
+          if (!response.ok) return;
+          const image = new Image();
+          image.className = 'drop-image';
+          image.alt = slot.getAttribute('data-auto-alt') || '';
+          image.loading = 'lazy';
+          image.onload = () => slot.classList.add('has-image');
+          image.onerror = () => image.remove();
+          image.src = src;
+          slot.prepend(image);
+        } catch {
+          // Keep the text placeholder when the optional screenshot is absent.
+        }
+      });
+    })();
+  </script>
 </body>
 </html>
 `;

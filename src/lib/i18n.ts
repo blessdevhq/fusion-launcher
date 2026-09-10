@@ -353,6 +353,7 @@ export const en = {
     },
     rails: {
       continuePlaying: 'Continue playing',
+      exploreLibrary: 'Explore library',
       downloads: 'Downloads',
       needsSetup: 'Needs setup',
       recentlyAdded: 'Recently added'
@@ -1078,6 +1079,7 @@ export const ru: UiText = {
     },
     rails: {
       continuePlaying: 'Продолжить играть',
+      exploreLibrary: 'Исследовать библиотеку',
       downloads: 'Загрузки',
       needsSetup: 'Нужна настройка',
       recentlyAdded: 'Недавно добавленные'

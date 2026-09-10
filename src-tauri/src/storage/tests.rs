@@ -258,6 +258,61 @@ fn batched_catalog_enrichment_matches_per_game_path() {
 }
 
 #[test]
+fn missing_artwork_backfill_retries_recoverable_scrape_states() {
+    for (status, message) in [
+        (
+            "failed",
+            "SteamGridDB artwork lookup failed: temporary network error",
+        ),
+        (
+            "skipped",
+            "ScreenScraper credentials are not configured. Configure SteamGridDB to fetch artwork only.",
+        ),
+    ] {
+        let dir = tempdir().unwrap();
+        let mut store = RepositoryStore::open(&dir.path().join("fusion-launcher.db")).unwrap();
+        store
+            .store_repository("https://example.com/index.json", &test_repo())
+            .unwrap();
+        store
+            .set_scrape_state("repo::game", status, Some("artwork"), &[], Some(message))
+            .unwrap();
+
+        let queued = store.mark_games_missing_artwork_pending_for_scrape(80).unwrap();
+
+        assert_eq!(queued, 1, "{status} should be retried");
+        let state = store.get_scrape_state("repo::game").unwrap().unwrap();
+        assert_eq!(state.status, "pending");
+        assert_eq!(state.message.as_deref(), Some("Queued for automatic cover art."));
+    }
+}
+
+#[test]
+fn missing_artwork_backfill_does_not_retry_confirmed_not_found_state() {
+    let dir = tempdir().unwrap();
+    let mut store = RepositoryStore::open(&dir.path().join("fusion-launcher.db")).unwrap();
+    store
+        .store_repository("https://example.com/index.json", &test_repo())
+        .unwrap();
+    store
+        .set_scrape_state(
+            "repo::game",
+            "skipped",
+            Some("artwork"),
+            &[],
+            Some("ScreenScraper credentials are not configured. SteamGridDB did not find artwork for this game."),
+        )
+        .unwrap();
+
+    let queued = store
+        .mark_games_missing_artwork_pending_for_scrape(80)
+        .unwrap();
+
+    assert_eq!(queued, 0);
+    let state = store.get_scrape_state("repo::game").unwrap().unwrap();
+    assert_eq!(state.status, "skipped");
+}
+#[test]
 fn stores_and_updates_emulator_configs() {
     let dir = tempdir().unwrap();
     let store = RepositoryStore::open(&dir.path().join("fusion-launcher.db")).unwrap();

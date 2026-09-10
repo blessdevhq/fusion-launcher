@@ -22,13 +22,17 @@ export function composeHomeRails(
   const downloading = items.filter((item) => item.isDownloading || item.isPaused || item.hasError);
   const needsSetup = items.filter((item) => item.missingRequirements.length > 0);
   const heroItem = ready[0] ?? downloading[0] ?? items[0] ?? null;
+  const supportingItems = heroItem
+    ? items.filter((item) => item.game.id !== heroItem.game.id)
+    : items;
+  const supportingReady = ready.filter((item) => item.game.id !== heroItem?.game.id);
 
   const rails: HomeRail[] = [
     {
-      title: t.dashboard.rails.continuePlaying,
-      testId: 'home-rail-ready',
-      zone: 'ready',
-      items: mergeRailItems(ready, [], 12)
+      title: t.dashboard.rails.exploreLibrary,
+      testId: 'home-rail-library',
+      zone: 'library',
+      items: mergeRailItems(supportingReady, supportingItems, 12)
     },
     {
       title: t.dashboard.rails.downloads,

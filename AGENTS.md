@@ -50,3 +50,13 @@ gated by source policy and emulator licensing.
 - `src-tauri/src/storage`: SQLite store modules.
 - `src-tauri/src`: Rust orchestration, downloads, scrapers, torrent, security, and setup profiles.
 - `docs/`: release, authoring, source library, and install documentation.
+
+## Visual OS
+
+For UI work, read the relevant `design/` contract and `.agents/visual-os/` guidance before editing.
+
+- `src/app/globals.css` and `tailwind.config.js` are the canonical visual-token layer; reuse `--rh-*` and `fusion-*` roles before adding raw visual literals.
+- Search existing shell, dashboard, modal, focus and `data-testid` patterns before creating UI primitives or navigation behavior.
+- Treat external screenshots/Figma as intent only: do not copy protected assets, CSS, copy, logos or distinctive trade dress.
+- For covered launcher flows, run `npm run mvp:visual`; inspect supported desktop states and report intended visual diffs.
+- Do not autonomously approve new shared visual roles, canonical primitives or future screenshot baselines.

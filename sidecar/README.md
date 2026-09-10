@@ -54,18 +54,28 @@ runs the same steps automatically.
 
 ## How it's bundled
 
-`externalBin` is intentionally **not** in the base `tauri.conf.json` — that would
-force every `cargo`/`tauri dev` build to have the sidecar present (Tauri copies
-external binaries at compile time). Instead it lives in the overlay
-`src-tauri/tauri.sidecar.conf.json`, applied only when packaging:
+`externalBin` is intentionally not in the base `tauri.conf.json`. Keeping it in
+`src-tauri/tauri.sidecar.conf.json` lets normal development, tests, and the CI
+Rust job run without requiring a locally built sidecar.
 
+For a Windows distributable, use the canonical release command:
+
+```powershell
+npm run mvp:release:windows
 ```
+
+That command builds the sidecar, fetches the VC++ redistributable, applies the
+sidecar config overlay, and runs package smoke. `npm run tauri:build` alone is
+not enough for a tester/release build because it does not include the torrent
+sidecar, the redist resource, or the NSIS redist hook.
+
+The equivalent manual sequence is:
+
+```powershell
 npm run sidecar:build
-npm run tauri:build:bundled        # tauri build --config src-tauri/tauri.sidecar.conf.json
+npm run redist:fetch
+npm run tauri:build:bundled
 ```
-
-So normal development, tests, and the CI rust job work without the sidecar; only
-the installer build (and anyone testing the libtorrent engine) needs it.
 
 ### Testing the libtorrent engine locally
 

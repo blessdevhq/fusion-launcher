@@ -23,7 +23,7 @@ import { GameArt } from '@/components/shell/GamePoster';
 import { useDownloadState } from '@/hooks/useDownloadState';
 import { api } from '@/lib/api';
 import { displayProductText } from '@/lib/brandText';
-import { isDirectGameDownload } from '@/lib/downloadActions';
+import { isDirectGameDownload, shouldShowDownloadPeers } from '@/lib/downloadActions';
 import { normalizeLaunchFailure } from '@/lib/launchErrors';
 import { useInstallGame } from '@/lib/orchestratorApi';
 import { defaultSaveDirForGame } from '@/lib/paths';
@@ -470,6 +470,7 @@ export function GameDetailsModal({
 
   const saveDir = download.saveDir ?? defaultSaveDir;
   const status = download.status;
+  const directDownload = isDirectGameDownload(game, download.record);
   const progressPercent = (download.canPlay ? 100 : download.progressPercent).toFixed(1);
   const statusMessage = message ?? download.errorMessage;
   const gameFileReady = setupState ? setupState.gameFile.status === 'ready' : download.canPlay;
@@ -685,10 +686,10 @@ export function GameDetailsModal({
                   <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-white/45">
                     <span>{formatBytes(download.downloadedBytes)} / {formatBytes(download.totalBytes)}</span>
                     <span>{formatSpeed(download.downloadSpeedBytesPerSec)}</span>
-                    <span>{download.peersCount} {t.common.peers}</span>
+                    {shouldShowDownloadPeers(download.record) && !directDownload && <span>{download.peersCount} {t.common.peers}</span>}
                   </div>
                   <div className="mt-3 flex flex-wrap gap-2">
-                    {status === 'downloading' && (
+                    {status === 'downloading' && !directDownload && (
                       <button
                         onClick={() => runDownloadAction('pause', download.pause)}
                         disabled={busy !== null}
@@ -702,7 +703,7 @@ export function GameDetailsModal({
                       <button
                         onClick={() => runDownloadAction(
                           status === 'error' ? 'retry' : 'resume',
-                          status === 'error' && isDirectGameDownload(game, download.record)
+                          status === 'error' && directDownload
                             ? () => api.startGameDownload(game.id)
                             : download.resume
                         )}
@@ -713,7 +714,7 @@ export function GameDetailsModal({
                         {status === 'error' ? t.gameDetails.downloadActions.retry : t.gameDetails.downloadActions.resume}
                       </button>
                     )}
-                    {status === 'error' && isDirectGameDownload(game, download.record) && (
+                    {status === 'error' && directDownload && (
                       <button
                         onClick={() => void handleDownloadTo()}
                         disabled={busy !== null}

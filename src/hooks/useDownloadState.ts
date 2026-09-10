@@ -123,6 +123,7 @@ function mergeRecordWithEvent(
     ...record,
     subjectType: event.subjectType ?? record.subjectType,
     displayName: event.displayName ?? record.displayName,
+    parentGameId: event.parentGameId ?? record.parentGameId,
     status: event.status,
     saveDir: event.saveDir || record.saveDir,
     progressPercent: event.progressPercent,

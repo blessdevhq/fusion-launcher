@@ -84,6 +84,29 @@ struct TorrentEntry {
 /// Keep only the last few stderr lines so a crash report stays readable.
 const MAX_STDERR_LINES: usize = 8;
 
+const SIDECAR_DEPENDENCY_HINT: &str = "Torrent sidecar could not load libtorrent. Install or repair the Microsoft Visual C++ 2015-2022 x64 Redistributable, then reinstall Fusion Launcher from the bundled Windows installer.";
+
+pub(crate) fn sidecar_dependency_error_message(error: &str) -> Option<&'static str> {
+    let normalized = error.to_ascii_lowercase();
+    let import_failure = normalized.contains("importerror")
+        || normalized.contains("dll load failed")
+        || normalized.contains("failed to execute script");
+    let sidecar_failure =
+        normalized.contains("libtorrent") || normalized.contains("torrent_sidecar");
+    if import_failure && sidecar_failure {
+        Some(SIDECAR_DEPENDENCY_HINT)
+    } else {
+        None
+    }
+}
+
+fn decorate_sidecar_error(error: &str) -> String {
+    match sidecar_dependency_error_message(error) {
+        Some(hint) => format!("{error} {hint}"),
+        None => error.to_string(),
+    }
+}
+
 pub struct LibtorrentEngine {
     app: AppHandle,
     next_id: AtomicUsize,
@@ -176,10 +199,11 @@ impl LibtorrentEngine {
                                     } else {
                                         format!(" {}", entry.recent_stderr.join(" | "))
                                     };
-                                    entry.stats.error = Some(format!(
+                                    let error = format!(
                                         "Torrent sidecar exited unexpectedly (code {:?}).{detail}",
                                         payload.code
-                                    ));
+                                    );
+                                    entry.stats.error = Some(decorate_sidecar_error(&error));
                                 }
                             }
                         }
@@ -350,5 +374,23 @@ mod tests {
     fn non_json_lines_are_ignored() {
         assert!(parse_progress_line("starting up DHT...").is_none());
         assert!(parse_progress_line("").is_none());
+    }
+
+    #[test]
+    fn classifies_libtorrent_dll_import_failure() {
+        let error = "Torrent sidecar exited unexpectedly (code Some(1)). Traceback | ImportError: DLL load failed while importing libtorrent: missing module. | [PYI-1:ERROR] Failed to execute script 'torrent_sidecar'";
+
+        let message = sidecar_dependency_error_message(error).unwrap();
+
+        assert!(message.contains("Visual C++"));
+        assert!(decorate_sidecar_error(error).contains("Visual C++"));
+    }
+
+    #[test]
+    fn leaves_unrelated_sidecar_errors_unchanged() {
+        let error = "Torrent sidecar exited unexpectedly (code Some(1)). No peers found";
+
+        assert_eq!(sidecar_dependency_error_message(error), None);
+        assert_eq!(decorate_sidecar_error(error), error);
     }
 }

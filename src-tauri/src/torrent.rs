@@ -581,14 +581,20 @@ pub fn get_game_download(
     game_id: String,
     state: State<'_, AppState>,
 ) -> Result<Option<TorrentDownloadRecord>, String> {
-    state.torrents()?.get_game_download(&game_id)
+    if let Some(torrents) = state.torrents.as_ref() {
+        return torrents.get_game_download(&game_id);
+    }
+    lock_store(&state.store)?.get_torrent_download(&game_id)
 }
 
 #[tauri::command]
 pub fn list_torrent_downloads(
     state: State<'_, AppState>,
 ) -> Result<Vec<TorrentDownloadRecord>, String> {
-    state.torrents()?.list_downloads()
+    if let Some(torrents) = state.torrents.as_ref() {
+        return torrents.list_downloads();
+    }
+    lock_store(&state.store)?.list_torrent_downloads()
 }
 
 #[tauri::command]
@@ -611,8 +617,46 @@ pub async fn resume_download(
 pub async fn cancel_download(
     game_id: String,
     state: State<'_, AppState>,
+    app: AppHandle,
 ) -> Result<TorrentDownloadRecord, String> {
+    let record = lock_store(&state.store)?
+        .get_torrent_download(&game_id)?
+        .ok_or_else(|| format!("Unknown torrent download: {game_id}"))?;
+    if is_direct_download_record(&record) {
+        return cancel_direct_download(game_id, state.inner(), &app, record).await;
+    }
+
     state.torrents()?.cancel_download(game_id).await
+}
+
+async fn cancel_direct_download(
+    game_id: String,
+    state: &AppState,
+    app: &AppHandle,
+    record: TorrentDownloadRecord,
+) -> Result<TorrentDownloadRecord, String> {
+    if record.status == "completed" {
+        return Err("Completed downloads cannot be cancelled.".to_string());
+    }
+
+    let cancelling = lock_store(&state.store)?.set_torrent_status(&game_id, "cancelling", None)?;
+    emit_download_record(app, &cancelling);
+
+    if state.direct_downloads.cancel(&game_id)? {
+        return Ok(cancelling);
+    }
+
+    if let Err(error) = crate::downloads::remove_partial_download(Path::new(&record.save_dir)).await
+    {
+        let failed =
+            lock_store(&state.store)?.set_torrent_status(&game_id, "error", Some(&error))?;
+        emit_download_record(app, &failed);
+        return Ok(failed);
+    }
+
+    let cancelled = lock_store(&state.store)?.set_torrent_status(&game_id, "cancelled", None)?;
+    emit_download_record(app, &cancelled);
+    Ok(cancelled)
 }
 
 fn validate_start_request(game_id: &str, magnet_uri: &str, save_dir: &str) -> Result<(), String> {
@@ -918,7 +962,11 @@ fn event_from_status(status: &TorrentStatus) -> DownloadProgressEvent {
 
 fn emit_download_record(app: &AppHandle, record: &TorrentDownloadRecord) {
     let status = status_from_persisted_record(record);
-    let _ = app.emit("download:progress", event_from_status(&status));
+    let mut event = event_from_status(&status);
+    event.subject_type = record.subject_type.clone();
+    event.display_name = record.display_name.clone();
+    event.parent_game_id = record.parent_game_id.clone();
+    let _ = app.emit("download:progress", event);
 }
 
 async fn remove_save_dir_if_safe(data_dir: &Path, save_dir: &str) -> Result<(), String> {

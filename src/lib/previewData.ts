@@ -143,8 +143,8 @@ let scraperStatus: ScreenScraperStatus = {
   dailyLimit: 20_000
 };
 let steamgriddbStatus: SteamGridDbStatus = {
-  configured: false,
-  keySource: 'none',
+  configured: true,
+  keySource: 'built-in',
   dailyRequests: 0,
   dailyLimit: 1_000,
   pendingBatch: 0,
@@ -305,10 +305,11 @@ export const previewApi = {
     return scraperStatus;
   },
   async saveSteamgriddbKey(apiKey: string): Promise<SteamGridDbStatus> {
+    const hasUserKey = Boolean(apiKey.trim());
     steamgriddbStatus = {
       ...steamgriddbStatus,
-      configured: Boolean(apiKey.trim()),
-      keySource: apiKey.trim() ? 'user' : 'none'
+      configured: true,
+      keySource: hasUserKey ? 'user' : 'built-in'
     };
     return steamgriddbStatus;
   },

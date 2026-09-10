@@ -134,6 +134,7 @@ export function mergeDownloadRecord(
     gameId: event.gameId,
     subjectType: event.subjectType ?? record?.subjectType ?? null,
     displayName: event.displayName ?? record?.displayName ?? null,
+    parentGameId: event.parentGameId ?? record?.parentGameId ?? null,
     magnetUri: record?.magnetUri ?? '',
     saveDir: event.saveDir || record?.saveDir || '',
     status: event.status,

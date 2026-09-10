@@ -1085,6 +1085,7 @@ async fn download_emulator_archive(
             resume: true,
         },
         |_, _| {},
+        || false,
     )
     .await
     .map_err(|error| format!("Failed to download {display_name}: {error}"))?;

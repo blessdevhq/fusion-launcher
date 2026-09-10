@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { isDirectGameDownload } from './downloadActions.ts';
+import { isDirectGameDownload, shouldShowDownloadPeers } from './downloadActions.ts';
 
 const game = {
   id: 'repo::game',
@@ -35,5 +35,11 @@ describe('download retry actions', () => {
       ),
       false
     );
+  });
+
+  it('shows peer counts only for torrent download rows', () => {
+    assert.equal(shouldShowDownloadPeers({ magnetUri: 'magnet:?xt=urn:btih:abc' }), true);
+    assert.equal(shouldShowDownloadPeers({ magnetUri: 'direct:http' }), false);
+    assert.equal(shouldShowDownloadPeers({ magnetUri: 'direct:asset:http' }), false);
   });
 });

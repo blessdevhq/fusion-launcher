@@ -165,6 +165,7 @@ export function HomeRailsPanel({
           testId={rail.testId}
           items={rail.items}
           zone={rail.zone}
+          featured={rail.testId === 'home-rail-library'}
           onOpenDetails={onOpenDetails}
           onPrimaryAction={onPrimaryAction}
           onFocus={onFocus}
@@ -228,8 +229,8 @@ export function CollectionsPanel({
               className={`rh-collection-card rh-focusable ${active ? 'rh-collection-card-active' : ''}`}
             >
               <Icon className="h-4 w-4" />
-              <span className="mt-3 block text-sm font-semibold">{card.label}</span>
-              <span className="mt-1 block text-xs text-white/48">{t.shell.collections.count(card.count)}</span>
+              <span>{card.label}</span>
+              <span className="rh-collection-count">{t.shell.collections.count(card.count)}</span>
             </button>
           );
         })}
@@ -263,6 +264,7 @@ function MiniRail({
   testId,
   items,
   zone,
+  featured,
   onOpenDetails,
   onPrimaryAction,
   onFocus
@@ -271,6 +273,7 @@ function MiniRail({
   testId: string;
   items: GameLibraryItem[];
   zone: string;
+  featured: boolean;
   onOpenDetails: (game: CatalogGame) => void;
   onPrimaryAction: (item: GameLibraryItem) => void;
   onFocus: (focusId: string) => void;
@@ -338,7 +341,7 @@ function MiniRail({
   if (items.length === 0) return null;
 
   return (
-    <div className="rh-mini-rail" data-testid={testId}>
+    <div className={`rh-mini-rail ${featured ? 'rh-mini-rail-featured' : ''}`} data-testid={testId}>
       <div className="rh-mini-rail-header">
         <div className="rh-mini-rail-title">{title}</div>
         <div className="rh-mini-rail-actions">

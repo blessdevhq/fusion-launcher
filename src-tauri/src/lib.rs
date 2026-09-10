@@ -42,6 +42,7 @@ pub struct AppState {
     /// `None` when the torrent engine failed to start this session. Direct HTTP
     /// downloads keep working.
     pub torrents: Option<TorrentManager>,
+    pub direct_downloads: downloads::DirectDownloadRegistry,
     pub running_games: Arc<Mutex<HashMap<String, u32>>>,
     pub library_scrape: scraper::LibraryScrapeRuntime,
 }
@@ -137,6 +138,7 @@ pub fn run() {
                 data_dir,
                 local_data_dir,
                 torrents,
+                direct_downloads: downloads::DirectDownloadRegistry::new(),
                 running_games: Arc::new(Mutex::new(HashMap::new())),
                 library_scrape: scraper::LibraryScrapeRuntime::new(),
             };

@@ -1,5 +1,8 @@
-use std::io::Read;
+use std::collections::HashMap;
+use std::io::{ErrorKind, Read};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use reqwest::header::RANGE;
@@ -22,10 +25,138 @@ const DOWNLOAD_USER_AGENT: &str = concat!("FusionLauncher/", env!("CARGO_PKG_VER
 /// Minimum gap between streaming progress callbacks, to avoid flooding the IPC
 /// channel and SQLite on fast connections.
 const PROGRESS_REPORT_INTERVAL: Duration = Duration::from_millis(400);
+pub const DOWNLOAD_CANCELLED_MESSAGE: &str = "Download cancelled.";
 
+#[derive(Debug)]
 pub struct DownloadedFile {
     pub path: PathBuf,
     pub sha256: String,
+}
+
+#[derive(Clone, Default)]
+pub struct DirectDownloadRegistry {
+    tokens: Arc<Mutex<HashMap<String, Arc<AtomicBool>>>>,
+}
+
+#[derive(Clone)]
+pub struct DirectDownloadCancelToken {
+    token: Arc<AtomicBool>,
+}
+
+pub struct DirectDownloadGuard {
+    id: String,
+    token: Arc<AtomicBool>,
+    registry: DirectDownloadRegistry,
+}
+
+impl DirectDownloadRegistry {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn start(&self, id: &str) -> Result<DirectDownloadGuard, String> {
+        let id = id.trim();
+        if id.is_empty() {
+            return Err("Download id cannot be empty.".to_string());
+        }
+
+        let token = Arc::new(AtomicBool::new(false));
+        let mut tokens = self.lock_tokens()?;
+        if tokens.contains_key(id) {
+            return Err(format!("Download is already active: {id}"));
+        }
+        tokens.insert(id.to_string(), Arc::clone(&token));
+
+        Ok(DirectDownloadGuard {
+            id: id.to_string(),
+            token,
+            registry: self.clone(),
+        })
+    }
+
+    pub fn cancel(&self, id: &str) -> Result<bool, String> {
+        let Some(token) = self.lock_tokens()?.get(id).cloned() else {
+            return Ok(false);
+        };
+        token.store(true, Ordering::SeqCst);
+        Ok(true)
+    }
+
+    fn finish(&self, id: &str, token: &Arc<AtomicBool>) {
+        let Ok(mut tokens) = self.tokens.lock() else {
+            return;
+        };
+        if tokens
+            .get(id)
+            .is_some_and(|current| Arc::ptr_eq(current, token))
+        {
+            tokens.remove(id);
+        }
+    }
+
+    fn lock_tokens(
+        &self,
+    ) -> Result<std::sync::MutexGuard<'_, HashMap<String, Arc<AtomicBool>>>, String> {
+        self.tokens
+            .lock()
+            .map_err(|_| "Direct download registry lock is poisoned.".to_string())
+    }
+}
+
+impl DirectDownloadGuard {
+    pub fn token(&self) -> DirectDownloadCancelToken {
+        DirectDownloadCancelToken {
+            token: Arc::clone(&self.token),
+        }
+    }
+}
+
+impl Drop for DirectDownloadGuard {
+    fn drop(&mut self) {
+        self.registry.finish(&self.id, &self.token);
+    }
+}
+
+impl DirectDownloadCancelToken {
+    pub fn is_cancelled(&self) -> bool {
+        self.token.load(Ordering::SeqCst)
+    }
+}
+
+pub fn is_download_cancelled_error(error: &str) -> bool {
+    error == DOWNLOAD_CANCELLED_MESSAGE
+}
+
+pub(crate) struct DirectDownloadSpeedMeter {
+    previous: Option<(u64, Instant)>,
+}
+
+impl DirectDownloadSpeedMeter {
+    pub(crate) fn new() -> Self {
+        Self { previous: None }
+    }
+
+    pub(crate) fn sample(&mut self, downloaded_bytes: u64) -> u64 {
+        self.sample_at(downloaded_bytes, Instant::now())
+    }
+
+    fn sample_at(&mut self, downloaded_bytes: u64, now: Instant) -> u64 {
+        let Some((previous_bytes, previous_at)) = self.previous.replace((downloaded_bytes, now))
+        else {
+            return 0;
+        };
+
+        if downloaded_bytes <= previous_bytes {
+            return 0;
+        }
+
+        let elapsed = now.saturating_duration_since(previous_at);
+        if elapsed.is_zero() {
+            return 0;
+        }
+
+        ((downloaded_bytes - previous_bytes) as f64 / elapsed.as_secs_f64()).round() as u64
+    }
 }
 
 /// Options controlling a streaming HTTP download.
@@ -60,6 +191,18 @@ pub async fn download_source_to_file_with_progress(
     destination: &Path,
     on_progress: impl FnMut(u64, Option<u64>),
 ) -> Result<DownloadedFile, String> {
+    download_source_to_file_with_progress_and_cancel(source, destination, on_progress, || false)
+        .await
+}
+
+/// Like [`download_source_to_file_with_progress`], but lets callers abort a
+/// streaming direct download without waiting for the process to exit.
+pub async fn download_source_to_file_with_progress_and_cancel(
+    source: &SourceUri,
+    destination: &Path,
+    on_progress: impl FnMut(u64, Option<u64>),
+    mut is_cancelled: impl FnMut() -> bool,
+) -> Result<DownloadedFile, String> {
     match source {
         SourceUri::Http {
             url,
@@ -81,6 +224,7 @@ pub async fn download_source_to_file_with_progress(
                     resume: true,
                 },
                 on_progress,
+                is_cancelled,
             )
             .await
         }
@@ -88,7 +232,12 @@ pub async fn download_source_to_file_with_progress(
             path,
             sha256,
             size_bytes,
-        } => copy_bundled_to_file(path, sha256, *size_bytes, destination).await,
+        } => {
+            if is_cancelled() {
+                return Err(DOWNLOAD_CANCELLED_MESSAGE.to_string());
+            }
+            copy_bundled_to_file(path, sha256, *size_bytes, destination).await
+        }
         SourceUri::Magnet { uri, .. } => handle_torrent(uri).await,
         SourceUri::UserProvided { .. } => {
             Err("This source is user-provided and cannot be downloaded automatically.".to_string())
@@ -155,6 +304,7 @@ pub async fn download_http_streaming(
     destination: &Path,
     options: StreamOptions<'_>,
     mut on_progress: impl FnMut(u64, Option<u64>),
+    mut is_cancelled: impl FnMut() -> bool,
 ) -> Result<DownloadedFile, String> {
     if let Some(parent) = destination.parent() {
         tokio::fs::create_dir_all(parent)
@@ -162,6 +312,10 @@ pub async fn download_http_streaming(
             .map_err(|error| format!("Failed to create download folder: {error}"))?;
     }
     let part_path = part_path_for(destination);
+    if is_cancelled() {
+        let _ = tokio::fs::remove_file(&part_path).await;
+        return Err(DOWNLOAD_CANCELLED_MESSAGE.to_string());
+    }
 
     // Decide whether we can resume an existing partial file. If anything looks
     // off we fall back to a clean download instead of risking a corrupt resume.
@@ -238,11 +392,21 @@ pub async fn download_http_streaming(
     let mut last_report = Instant::now();
 
     loop {
+        if is_cancelled() {
+            drop(file);
+            let _ = tokio::fs::remove_file(&part_path).await;
+            return Err(DOWNLOAD_CANCELLED_MESSAGE.to_string());
+        }
         let chunk = match response.chunk().await {
             Ok(Some(chunk)) => chunk,
             Ok(None) => break,
             Err(error) => return Err(format!("Failed to read source body: {error}")),
         };
+        if is_cancelled() {
+            drop(file);
+            let _ = tokio::fs::remove_file(&part_path).await;
+            return Err(DOWNLOAD_CANCELLED_MESSAGE.to_string());
+        }
         downloaded += chunk.len() as u64;
         if let Some(max_bytes) = options.max_bytes {
             if downloaded > max_bytes {
@@ -300,6 +464,18 @@ pub async fn download_http_streaming(
         path: destination.to_path_buf(),
         sha256: actual_sha256,
     })
+}
+
+pub async fn remove_partial_download(destination: &Path) -> Result<(), String> {
+    let part_path = part_path_for(destination);
+    match tokio::fs::remove_file(&part_path).await {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!(
+            "Failed to remove partial download {}: {error}",
+            part_path.display()
+        )),
+    }
 }
 
 fn part_path_for(destination: &Path) -> PathBuf {
@@ -435,6 +611,69 @@ mod tests {
     fn part_path_is_sibling_with_part_suffix() {
         let part = part_path_for(Path::new("C:/games/nes/sonic.nes"));
         assert_eq!(part, Path::new("C:/games/nes/sonic.nes.part"));
+    }
+
+    #[test]
+    fn direct_download_registry_cancels_and_forgets_token() {
+        let registry = DirectDownloadRegistry::new();
+        let guard = registry.start("repo::game").unwrap();
+        let token = guard.token();
+
+        assert!(!token.is_cancelled());
+        assert!(registry.cancel("repo::game").unwrap());
+        assert!(token.is_cancelled());
+
+        drop(guard);
+        assert!(!registry.cancel("repo::game").unwrap());
+    }
+
+    #[test]
+    fn direct_download_speed_meter_reports_delta_per_second() {
+        let mut meter = DirectDownloadSpeedMeter::new();
+        let start = Instant::now();
+
+        assert_eq!(meter.sample_at(1_000, start), 0);
+        assert_eq!(
+            meter.sample_at(3_000, start + Duration::from_millis(500)),
+            4_000
+        );
+    }
+
+    #[test]
+    fn direct_download_speed_meter_ignores_invalid_samples() {
+        let mut meter = DirectDownloadSpeedMeter::new();
+        let start = Instant::now();
+
+        assert_eq!(meter.sample_at(2_000, start), 0);
+        assert_eq!(meter.sample_at(2_000, start + Duration::from_secs(1)), 0);
+        assert_eq!(meter.sample_at(1_000, start + Duration::from_secs(2)), 0);
+        assert_eq!(meter.sample_at(2_000, start + Duration::from_secs(2)), 0);
+    }
+
+    #[tokio::test]
+    async fn cancelled_http_download_removes_partial_file_before_request() {
+        let temp = tempfile::tempdir().unwrap();
+        let destination = temp.path().join("game.bin");
+        let part = part_path_for(&destination);
+        std::fs::write(&part, b"partial").unwrap();
+
+        let error = download_http_streaming(
+            "https://example.com/game.bin",
+            &destination,
+            StreamOptions {
+                expected_sha256: None,
+                expected_size_bytes: None,
+                max_bytes: None,
+                resume: true,
+            },
+            |_, _| {},
+            || true,
+        )
+        .await
+        .unwrap_err();
+
+        assert_eq!(error, DOWNLOAD_CANCELLED_MESSAGE);
+        assert!(!part.exists());
     }
 
     #[tokio::test]

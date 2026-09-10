@@ -21,6 +21,7 @@ export function createGameArt(game: Pick<CatalogGame, 'id' | 'title' | 'platform
   const palette = PALETTES[seed % PALETTES.length];
   const angle = 120 + (seed % 80);
   const offset = 18 + (seed % 46);
+  const focalX = 60 + (seed % 24);
   const initials = game.title
     .split(/\s+/)
     .filter(Boolean)
@@ -35,9 +36,9 @@ export function createGameArt(game: Pick<CatalogGame, 'id' | 'title' | 'platform
   ].join(', ');
 
   const heroPattern = [
-    `linear-gradient(96deg, #0A0A0B 0%, ${palette[0]} 39%, transparent 66%)`,
-    `linear-gradient(24deg, transparent 30%, ${palette[1]}66 58%, ${palette[2]}33 86%)`,
-    `linear-gradient(180deg, #141416 0%, #0A0A0B 100%)`
+    `radial-gradient(ellipse 48% 94% at ${focalX}% 44%, ${palette[1]}b8 0%, ${palette[1]}54 34%, transparent 76%)`,
+    `linear-gradient(${angle - 28}deg, transparent 34%, ${palette[2]}40 62%, transparent 88%)`,
+    `linear-gradient(100deg, #0A0A0B 0%, ${palette[0]} 38%, ${palette[1]} 100%)`
   ].join(', ');
 
   return {

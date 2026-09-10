@@ -20,11 +20,16 @@ test('scraperApi routes metadata commands through preview runtime', async () => 
   assert.equal(status.configured, false);
 
   let sgdbStatus = await scraperApi.getSteamgriddbStatus();
-  assert.equal(sgdbStatus.configured, false);
+  assert.equal(sgdbStatus.configured, true);
+  assert.equal(sgdbStatus.keySource, 'built-in');
 
   sgdbStatus = await scraperApi.saveSteamgriddbKey('sgdb-preview-key');
   assert.equal(sgdbStatus.configured, true);
   assert.equal(sgdbStatus.keySource, 'user');
+
+  sgdbStatus = await scraperApi.saveSteamgriddbKey('');
+  assert.equal(sgdbStatus.configured, true);
+  assert.equal(sgdbStatus.keySource, 'built-in');
 
   await scraperApi.scrapeGame('crystal-caverns');
   const artworkOnlyState = await scraperApi.getScrapeState('crystal-caverns');

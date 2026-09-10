@@ -192,18 +192,12 @@ pub(super) fn build_health_report(state: &AppState) -> Result<HealthReport, Stri
         .iter()
         .filter(|download| matches!(download.status.as_str(), "resolving" | "downloading"))
         .count();
-    let downloader = HealthCheckItem {
-        id: "downloader:libtorrent".to_string(),
-        label: "Downloader session".to_string(),
-        status: "ready".to_string(),
-        message: Some(format!("{active_downloads} active torrent download(s)")),
-        action: None,
-        path: Some(
-            download_root_for_app_state(state)?
-                .to_string_lossy()
-                .to_string(),
-        ),
-    };
+    let downloader = build_downloader_health_item(
+        active_downloads,
+        &torrent_downloads,
+        state.torrents.is_some(),
+        download_root_for_app_state(state)?.to_string_lossy().to_string(),
+    );
 
     Ok(HealthReport {
         generated_at: Utc::now().to_rfc3339(),
@@ -216,6 +210,50 @@ pub(super) fn build_health_report(state: &AppState) -> Result<HealthReport, Stri
     })
 }
 
+fn build_downloader_health_item(
+    active_downloads: usize,
+    torrent_downloads: &[TorrentDownloadRecord],
+    torrents_available: bool,
+    download_root: String,
+) -> HealthCheckItem {
+    if let Some(message) = torrent_downloads
+        .iter()
+        .filter_map(|download| download.error_message.as_deref())
+        .find_map(crate::libtorrent_engine::sidecar_dependency_error_message)
+    {
+        return HealthCheckItem {
+            id: "downloader:libtorrent".to_string(),
+            label: "Downloader session".to_string(),
+            status: "error".to_string(),
+            message: Some(message.to_string()),
+            action: Some("openLogs".to_string()),
+            path: Some(download_root),
+        };
+    }
+
+    if !torrents_available {
+        return HealthCheckItem {
+            id: "downloader:libtorrent".to_string(),
+            label: "Downloader session".to_string(),
+            status: "error".to_string(),
+            message: Some(
+                "Torrent engine is unavailable for this session. Restart Fusion Launcher and check logs if magnet downloads remain disabled."
+                    .to_string(),
+            ),
+            action: Some("openLogs".to_string()),
+            path: Some(download_root),
+        };
+    }
+
+    HealthCheckItem {
+        id: "downloader:libtorrent".to_string(),
+        label: "Downloader session".to_string(),
+        status: "ready".to_string(),
+        message: Some(format!("{active_downloads} active torrent download(s)")),
+        action: None,
+        path: Some(download_root),
+    }
+}
 pub(super) fn check_game_file_health(
     path: &str,
     game: &CatalogGameView,

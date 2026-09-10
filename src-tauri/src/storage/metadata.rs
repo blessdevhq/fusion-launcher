@@ -389,10 +389,10 @@ impl RepositoryStore {
         Ok(game_ids.len())
     }
 
-    /// Queue catalog games that are still missing cover art and have never been
-    /// scraped, capped at `limit` so a huge catalog never triggers a giant batch.
-    /// Used by the background cover backfill (auto-scrape) at startup and after a
-    /// source is added.
+    /// Queue catalog games that are still missing cover art and either have not
+    /// been scraped, are already pending, or failed for a recoverable provider
+    /// reason such as a previously missing SteamGridDB key. Confirmed no-artwork
+    /// results stay skipped so startup does not retry them forever.
     pub fn mark_games_missing_artwork_pending_for_scrape(
         &self,
         limit: usize,
@@ -406,7 +406,12 @@ impl RepositoryStore {
             LEFT JOIN scrape_state s ON s.game_id = g.id
             WHERE (g.cover_image_url IS NULL OR TRIM(g.cover_image_url) = '')
               AND (g.artwork_json IS NULL OR g.artwork_json NOT LIKE '%"cover":"%')
-              AND (s.game_id IS NULL OR s.status = 'pending')
+              AND (
+                s.game_id IS NULL
+                OR s.status = 'pending'
+                OR s.status = 'failed'
+                OR (s.status = 'skipped' AND COALESCE(s.message, '') LIKE '%Configure SteamGridDB%')
+              )
             ORDER BY g.title
             LIMIT ?1
             "#,

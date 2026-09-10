@@ -32,6 +32,9 @@ async function main() {
   await expectVisible(page.getByTestId('app-shell'), 'app shell after setup');
   await expectVisible(page.getByTestId('home-screen'), 'home screen');
   await expectVisible(page.getByTestId('home-hero'), 'home hero');
+  await expectVisible(page.getByTestId('home-rail-library'), 'featured home library rail');
+  await assertHomeFeaturedRail(page, 'home');
+  await page.waitForTimeout(1_000);
   await screenshot(page, '02-home.png');
   await assertNoHorizontalOverflow(page, 'home');
   await assertHomeHintBarClearance(page, 'home');
@@ -246,6 +249,8 @@ async function assertHomeViewports(page) {
     await page.waitForTimeout(250);
     await expectVisible(page.getByTestId('home-screen'), `home screen ${viewport.label}`);
     await expectVisible(page.getByTestId('home-hero'), `home hero ${viewport.label}`);
+    await expectVisible(page.getByTestId('home-rail-library'), `featured home library rail ${viewport.label}`);
+    await assertHomeFeaturedRail(page, `home ${viewport.label}`);
     await screenshot(page, `02-home-${viewport.label}.png`);
     await assertNoHorizontalOverflow(page, `home ${viewport.label}`);
     await assertHomeHintBarClearance(page, `home ${viewport.label}`);
@@ -295,6 +300,28 @@ async function assertHomeHintBarClearance(page, label) {
     `${label} overlaps hint bar: home bottom ${metrics.homeBottom}px > hint top ${metrics.hintTop}px`
   );
   console.log(`PASS hint bar clearance ${label}`);
+}
+
+async function assertHomeFeaturedRail(page, label) {
+  const metrics = await page.evaluate(() => {
+    const hero = document.querySelector('[data-testid="home-hero"]');
+    const rail = document.querySelector('[data-testid="home-rail-library"]');
+    if (!(hero instanceof HTMLElement) || !(rail instanceof HTMLElement)) {
+      throw new Error('Missing Home hero or featured library rail.');
+    }
+
+    const heroRect = hero.getBoundingClientRect();
+    const railRect = rail.getBoundingClientRect();
+    return {
+      gap: railRect.top - heroRect.bottom,
+      railWidth: railRect.width,
+      homeWidth: heroRect.width
+    };
+  });
+
+  assert.ok(metrics.gap >= -16 && metrics.gap <= 40, `${label} featured library rail is detached from hero: ${metrics.gap}px`);
+  assert.ok(Math.abs(metrics.railWidth - metrics.homeWidth) <= 40, `${label} featured library rail is not aligned with hero width`);
+  console.log(`PASS featured library rail anchored to hero ${label}`);
 }
 
 async function assertLibraryCardsDoNotOverlap(page, label) {

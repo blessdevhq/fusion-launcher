@@ -422,6 +422,25 @@ fn open_store(required_asset_ids: Vec<String>) -> (tempfile::TempDir, Repository
 }
 
 #[test]
+fn direct_download_progress_persists_speed_without_peers() {
+    let dir = tempdir().unwrap();
+    let store = RepositoryStore::open(&dir.path().join("fusion-launcher.db")).unwrap();
+    store
+        .record_direct_asset_download_started("repo::asset", "http", "F:/Emu/eden.zip", 4096)
+        .unwrap();
+
+    let record =
+        persist_direct_download_progress(&store, "repo::asset", 2048, Some(4096), 1024).unwrap();
+
+    assert_eq!(record.progress_percent, 50.0);
+    assert_eq!(record.downloaded_bytes, 2048);
+    assert_eq!(record.total_bytes, 4096);
+    assert_eq!(record.download_speed_bytes_per_sec, 1024);
+    assert_eq!(record.upload_speed_bytes_per_sec, 0);
+    assert_eq!(record.peers_count, 0);
+}
+
+#[test]
 fn removing_downloadable_profile_deletes_managed_folder_and_config() {
     let (dir, store) = open_store(Vec::new());
     let emulator_dir = dir.path().join("Emulators").join("nes").join("nes-mesen");

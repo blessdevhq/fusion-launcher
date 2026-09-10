@@ -72,6 +72,8 @@ pub(crate) async fn download_asset_internal(
     let target_path = destination.to_string_lossy().to_string();
     let expected_bytes = source_size_bytes(source).unwrap_or(0);
 
+    let _download_guard = state.direct_downloads.start(&asset.id)?;
+    let cancel_token = _download_guard.token();
     let started = lock_app_store(state)?.record_direct_asset_download_started(
         &asset.id,
         source_kind,
@@ -81,30 +83,31 @@ pub(crate) async fn download_asset_internal(
     emit_direct_download_record(app, &started);
     let download_result = {
         let asset_id = asset.id.clone();
-        crate::downloads::download_source_to_file_with_progress(
+        let progress_cancel_token = cancel_token.clone();
+        let stream_cancel_token = cancel_token.clone();
+        let mut speed_meter = crate::downloads::DirectDownloadSpeedMeter::new();
+        crate::downloads::download_source_to_file_with_progress_and_cancel(
             source,
             &destination,
-            |downloaded, total| {
-                let percent = match total {
-                    Some(total) if total > 0 => (downloaded as f64 / total as f64) * 100.0,
-                    _ => 0.0,
-                };
+            move |downloaded, total| {
+                if progress_cancel_token.is_cancelled() {
+                    return;
+                }
+                let speed_bytes_per_sec = speed_meter.sample(downloaded);
                 if let Ok(store) = lock_app_store(state) {
-                    if let Ok(record) = store.update_torrent_progress(
+                    if let Ok(record) = persist_direct_download_progress(
+                        &store,
                         &asset_id,
-                        "downloading",
-                        percent,
                         downloaded,
-                        total.unwrap_or(0),
-                        0,
-                        0,
-                        0,
+                        total,
+                        speed_bytes_per_sec,
                     ) {
                         drop(store);
                         emit_direct_download_record(app, &record);
                     }
                 }
             },
+            move || stream_cancel_token.is_cancelled(),
         )
         .await
     };
@@ -150,6 +153,14 @@ pub(crate) async fn download_asset_internal(
                 Some(&file.sha256),
                 total_bytes,
             )
+        }
+        Err(error)
+            if cancel_token.is_cancelled()
+                || crate::downloads::is_download_cancelled_error(&error) =>
+        {
+            let cancelled = lock_app_store(state)?.set_torrent_status(&asset.id, "cancelled", None)?;
+            emit_direct_download_record(app, &cancelled);
+            Err(crate::downloads::DOWNLOAD_CANCELLED_MESSAGE.to_string())
         }
         Err(error) => {
             let store = lock_app_store(state)?;
@@ -540,6 +551,8 @@ pub(crate) async fn start_game_download_internal(
                 return Err(error);
             }
 
+            let _download_guard = state.direct_downloads.start(&game.id)?;
+            let cancel_token = _download_guard.token();
             lock_app_store(state)?.record_direct_game_download_started(
                 &game.id,
                 source_kind,
@@ -554,35 +567,50 @@ pub(crate) async fn start_game_download_internal(
 
             let download_result = {
                 let game_id = game.id.clone();
-                crate::downloads::download_source_to_file_with_progress(
+                let progress_cancel_token = cancel_token.clone();
+                let stream_cancel_token = cancel_token.clone();
+                let mut speed_meter = crate::downloads::DirectDownloadSpeedMeter::new();
+                crate::downloads::download_source_to_file_with_progress_and_cancel(
                     source,
                     &destination,
-                    |downloaded, total| {
-                        let percent = match total {
-                            Some(total) if total > 0 => (downloaded as f64 / total as f64) * 100.0,
-                            _ => 0.0,
-                        };
+                    move |downloaded, total| {
+                        if progress_cancel_token.is_cancelled() {
+                            return;
+                        }
+                        let speed_bytes_per_sec = speed_meter.sample(downloaded);
                         if let Ok(store) = lock_app_store(state) {
-                            if let Ok(record) = store.update_torrent_progress(
+                            if let Ok(record) = persist_direct_download_progress(
+                                &store,
                                 &game_id,
-                                "downloading",
-                                percent,
                                 downloaded,
-                                total.unwrap_or(0),
-                                0,
-                                0,
-                                0,
+                                total,
+                                speed_bytes_per_sec,
                             ) {
                                 drop(store);
                                 emit_direct_download_record(app, &record);
                             }
                         }
                     },
+                    move || stream_cancel_token.is_cancelled(),
                 )
                 .await
             };
             let file = match download_result {
                 Ok(file) => file,
+                Err(error)
+                    if cancel_token.is_cancelled()
+                        || crate::downloads::is_download_cancelled_error(&error) =>
+                {
+                    let cancelled =
+                        lock_app_store(state)?.set_torrent_status(&game.id, "cancelled", None)?;
+                    emit_direct_download_record(app, &cancelled);
+                    logging::log_event(
+                        &state.data_dir,
+                        "game_download_cancelled",
+                        &[("game_id", game.id.as_str()), ("source", source_kind)],
+                    );
+                    return Err(crate::downloads::DOWNLOAD_CANCELLED_MESSAGE.to_string());
+                }
                 Err(error) => {
                     let failed = lock_app_store(state)?.record_direct_game_download_failed(
                         &game.id,
@@ -632,6 +660,30 @@ pub(crate) async fn start_game_download_internal(
             Err("Game downloads cannot be user-provided.".to_string())
         }
     }
+}
+
+fn persist_direct_download_progress(
+    store: &RepositoryStore,
+    subject_id: &str,
+    downloaded: u64,
+    total: Option<u64>,
+    download_speed_bytes_per_sec: u64,
+) -> Result<TorrentDownloadRecord, String> {
+    let progress_percent = match total {
+        Some(total) if total > 0 => (downloaded as f64 / total as f64) * 100.0,
+        _ => 0.0,
+    };
+
+    store.update_torrent_progress(
+        subject_id,
+        "downloading",
+        progress_percent,
+        downloaded,
+        total.unwrap_or(0),
+        download_speed_bytes_per_sec,
+        0,
+        0,
+    )
 }
 
 fn game_direct_download_destination(

@@ -3,6 +3,7 @@ import { motion } from 'framer-motion';
 import { Ban, FolderOpen, Loader2, Package, Pause, Play, RotateCw, Trash2 } from 'lucide-react';
 import { useI18n } from '@/components/I18nProvider';
 import { GameArt } from '@/components/shell/GamePoster';
+import { shouldShowDownloadPeers } from '@/lib/downloadActions';
 import type { GameLibraryItem } from '@/lib/libraryStatus';
 import type { CatalogGame, TorrentDownloadRecord } from '@/types/repository';
 import { ACTIVE_DOWNLOAD_STATUSES, RESUMABLE_DOWNLOAD_STATUSES } from './constants';
@@ -141,7 +142,7 @@ function DownloadRow({
   const active = ACTIVE_DOWNLOAD_STATUSES.includes(download.status);
   const resumable = RESUMABLE_DOWNLOAD_STATUSES.includes(download.status);
   const direct = download.magnetUri.startsWith('direct:');
-  const cancellable = !direct && !['completed', 'cancelled', 'cancelling', 'error'].includes(download.status);
+  const cancellable = !['completed', 'cancelled', 'cancelling', 'error'].includes(download.status);
   const removable = ['completed', 'cancelled', 'error'].includes(download.status);
   const statusHint = downloadStatusHint(download, t);
   const title = item?.game.title ?? download.displayName ?? download.gameId;
@@ -181,7 +182,7 @@ function DownloadRow({
         <div className="mt-2 flex flex-wrap gap-4 text-xs text-white/42">
           <span>{formatBytes(download.downloadedBytes)} / {formatBytes(download.totalBytes)}</span>
           <span>{formatSpeed(download.downloadSpeedBytesPerSec)}</span>
-          <span>{download.peersCount} {t.common.peers}</span>
+          {shouldShowDownloadPeers(download) && <span>{download.peersCount} {t.common.peers}</span>}
         </div>
         {statusHint && <div className={`mt-2 text-xs text-white/42 ${download.status === 'error' ? 'select-text' : ''}`}>{statusHint}</div>}
         {download.errorMessage && <div className="mt-2 select-text text-xs text-red-100">{download.errorMessage}</div>}
