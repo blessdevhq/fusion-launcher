@@ -61,7 +61,6 @@ pub async fn install_profile_emulator(
         &app,
         &state,
         &profile.platform,
-        None,
         target_dir.as_deref(),
     )
     .await?;
