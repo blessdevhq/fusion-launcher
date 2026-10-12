@@ -32,6 +32,21 @@ export function useGamepad({
 }: UseGamepadOptions) {
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
+      const target = event.target;
+      const isEditable = target instanceof HTMLElement && (
+        target.tagName === 'INPUT' ||
+        target.tagName === 'TEXTAREA' ||
+        target.isContentEditable
+      );
+
+      if (isEditable) {
+        if (event.key === 'Escape') {
+          target.blur();
+          onBack();
+        }
+        return;
+      }
+
       const direction = DIRECTION_KEYS[event.code] ?? DIRECTION_KEYS[event.key];
       if (direction) {
         const targets = collectFocusTargets();

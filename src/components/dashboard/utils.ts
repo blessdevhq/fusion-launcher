@@ -123,6 +123,7 @@ export function summarizeDownloads(downloads: TorrentDownloadRecord[]) {
 }
 
 export function downloadStatusHint(download: TorrentDownloadRecord, t: UiText) {
+  if (download.status === 'queued') return t.dashboard.downloads.statusHints.queued;
   if (download.status === 'interrupted') return t.dashboard.downloads.statusHints.interrupted;
   if (download.status === 'paused') return t.dashboard.downloads.statusHints.paused;
   if (download.status === 'resolving') return t.dashboard.downloads.statusHints.resolving;

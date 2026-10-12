@@ -84,6 +84,18 @@ describe('preview one-click setup support', () => {
     assert.equal(result.errorCode, 'game_requires_import');
   });
 
+  it('detects and auto-imports system files seamlessly', async () => {
+    const detection = await previewApi.detectSystemFile('C:/dumps/prod.keys');
+    assert.equal(detection.success, true);
+    assert.equal(detection.detectedKind, 'switch_keys');
+    assert.equal(detection.requirementId, 'switch-prod-keys');
+
+    const importReport = await previewApi.autoImportSystemFile('C:/dumps/prod.keys');
+    assert.equal(importReport.success, true);
+    assert.equal(importReport.status, 'installed');
+    assert.ok(importReport.installedPath?.includes('switch'));
+  });
+
   it('forgets a manual Switch emulator without deleting files', async () => {
     await previewApi.selectProfileEmulator('switch-manual', 'preview://external/eden.exe');
 
@@ -121,5 +133,25 @@ describe('preview one-click setup support', () => {
     assert.deepEqual(game?.metadata?.genres, ['Puzzle', 'Homebrew']);
     assert.equal(state.status, 'ready');
     assert.equal(state.matchKind, 'override');
+  });
+
+  it('parses deep links for sources, games, and files', async () => {
+    const sourceAction = await previewApi.parseDeepLink('fusion://source/add?url=https%3A%2F%2Fexample.com%2Frepo.json&name=CoolRepo');
+    assert.deepEqual(sourceAction, {
+      action: 'addSource',
+      params: { url: 'https://example.com/repo.json', name: 'CoolRepo' }
+    });
+
+    const playAction = await previewApi.parseDeepLink('fusion://play?game=zelda-totk');
+    assert.deepEqual(playAction, {
+      action: 'play',
+      params: { gameId: 'zelda-totk' }
+    });
+
+    const installAction = await previewApi.parseDeepLink('fusion://install?manifest=https%3A%2F%2Fexample.com%2Fgame.json');
+    assert.deepEqual(installAction, {
+      action: 'install',
+      params: { manifest: 'https://example.com/game.json', title: undefined }
+    });
   });
 });

@@ -5,7 +5,7 @@ use std::process::Command;
 use std::time::Duration;
 
 use chrono::Utc;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Emitter, State};
 use url::Url;
@@ -55,6 +55,7 @@ include!("emulators.rs");
 include!("downloads.rs");
 include!("settings.rs");
 include!("diagnostics.rs");
+include!("porting.rs");
 include!("smoke.rs");
 
 #[cfg(test)]

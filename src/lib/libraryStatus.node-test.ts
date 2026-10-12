@@ -220,6 +220,10 @@ describe('library status derivation', () => {
       searchAndSortLibraryItems(items, 'all', 'demo repo', 'title').map((item) => item.game.id),
       ['repo::second', 'repo::game']
     );
+    assert.deepEqual(
+      searchAndSortLibraryItems(items, 'all', 'gba alpha', 'title').map((item) => item.game.id),
+      ['repo::second']
+    );
   });
 
   it('applies library filters before search and sorts status by actionability', () => {

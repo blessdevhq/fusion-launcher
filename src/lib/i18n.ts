@@ -52,7 +52,8 @@ export const en = {
     sources: 'Sources',
     updated: 'Updated',
     published: 'Published',
-    peers: 'peers'
+    peers: 'peers',
+    share: 'Share'
   },
   brand: {
     tagline: 'Retro game libraries. One Windows launcher.',
@@ -306,6 +307,15 @@ export const en = {
     emptyHealth: 'No records yet.'
   },
   dashboard: {
+    dropzone: {
+      title: 'Drop file to install or import',
+      description: 'System files (prod.keys, PS3 firmware, BIOS), games (.nsp, .iso, .zip), or sources (.json)',
+      processing: 'Analyzing and installing file...',
+      installedSystem: (label: string) => `Installed system component: ${label}`,
+      installedGame: (title: string) => `Imported game: ${title}`,
+      gamePayloadNotice: (fileName: string) => `Game file detected: ${fileName}. Open game in Library to link it.`,
+      sourceConnected: (name: string) => `Source connected: ${name}`
+    },
     filters: {
       all: 'All games',
       installed: 'Installed',
@@ -321,6 +331,10 @@ export const en = {
     topbar: {
       searchAria: 'Search games and collections',
       searchPlaceholder: 'Search games, collections, friends...',
+      clearSearch: 'Clear search',
+      searchResults: 'Search results',
+      searchNoResults: 'No games found',
+      searchViewAll: (count: number) => `View all ${count} results in library`,
       refreshTitle: 'Refresh',
       settingsTitle: 'Open settings',
       notificationsTitle: 'Open activity center',
@@ -386,6 +400,7 @@ export const en = {
       deleteFiles: 'Delete files',
       deleteConfirm: (title: string) => `Delete downloaded files for ${title}?`,
       statusHints: {
+        queued: 'In download queue.',
         interrupted: 'Restored after restart. Resume to continue.',
         paused: 'Paused state is persisted.',
         resolving: 'Resolving magnet metadata.',
@@ -599,6 +614,7 @@ export const en = {
   },
   gameDetails: {
     downloadTitles: {
+      queued: 'Queued',
       resolving: 'Resolving metadata',
       downloading: 'Downloading',
       paused: 'Paused',
@@ -626,6 +642,9 @@ export const en = {
       systemFileImported: 'System file imported.',
       downloadFolderNotReady: 'Downloaded game folder is not ready yet.',
       launchSent: 'Launch sent.',
+      smartImportSuccess: (label: string) => `Successfully imported ${label}!`,
+      smartImportButton: 'Smart Auto-Import (Keys / Firmware / BIOS)',
+      smartImportDropPrompt: 'Drop keys, firmware, or BIOS here',
       removeConfirm: (title: string) => `Delete downloaded files for ${title}?`
     },
     closeTitle: 'Close',
@@ -725,6 +744,65 @@ export const en = {
     game: 'Installing game',
     verify: 'Final check',
     done: 'Ready to play'
+  },
+  portingStudio: {
+    triggerButton: 'Port Game',
+    triggerButtonTooltip: 'Create, optimize, and export game configs in 1 click',
+    modalTitle: 'Game Porting & Manifest Studio',
+    modalSubtitle: 'Package your games with artwork, 60 FPS patches, and instant sharing links for friends.',
+    dragPrompt: 'Drag & Drop ROM or Game File Here',
+    dragSubtext: 'Supports .nsp, .xci, .iso, .chd, .sfc, .z64, .gba, .cue, .cso',
+    inspectingFile: 'Analyzing file & calculating SHA-256 hash...',
+    fileLabel: 'Target File',
+    gameTitle: 'Game Title',
+    gameTitlePlaceholder: 'e.g. Chrono Trigger',
+    platform: 'Platform',
+    setupProfile: 'Setup Profile',
+    sizeBytes: 'File Size',
+    sha256: 'SHA-256 Checksum',
+    autoScrapeBtn: 'Auto-Fill Artwork & Info',
+    autoScraping: 'Searching SteamGridDB & ScreenScraper...',
+    coverUrl: 'Cover Image URL',
+    heroUrl: 'Hero Background URL',
+    developer: 'Developer / Studio',
+    releaseYear: 'Release Year',
+    genres: 'Genres (comma-separated)',
+    description: 'Game Description',
+    optimizationTitle: 'Optimizations & Modding Presets',
+    enable60fps: '⚡ Enable 60 FPS Patch & Unlock',
+    enable60fpsDesc: 'Injects 60 FPS optimization patch into emulator on launch',
+    autoGamepad: '🎮 Auto-Configure Gamepad Layout',
+    autoGamepadDesc: 'Pre-configures XInput / DualSense controls out of the box',
+    authorBrandingTitle: 'Creator Branding & Attribution',
+    authorBrandingDesc: 'Earn recognition, promote your community, or link your donation page.',
+    authorName: 'Author / Translator Nickname',
+    authorNamePlaceholder: 'e.g. @MechanicsVoiceOver, Dendy_Master',
+    authorUrl: 'Creator Channel / Boosty / Discord URL',
+    authorUrlPlaceholder: 'https://t.me/... or https://boosty.to/...',
+    patchVersion: 'Translation / Mod Version',
+    patchVersionPlaceholder: 'e.g. Full Russian Voiceover v1.2',
+    notes: 'Player Notes & Tips',
+    notesPlaceholder: 'e.g. Best played on Vulkan renderer with 2x scaling.',
+    distributionTitle: 'Distribution Mode',
+    modeUserProvided: '🟢 User-Provided ROM (Zero-Copyright Safe)',
+    modeUserProvidedDesc: '100% legal anywhere. Manifest contains metadata & settings; players bring their own dump.',
+    modeDirect: '🔵 Direct Download Link (HTTP / Archive.org)',
+    modeDirectPlaceholder: 'https://archive.org/... or https://my-server.com/...',
+    modeMagnet: '🟣 P2P Magnet Link (Decentralized Torrent)',
+    modeMagnetPlaceholder: 'magnet:?xt=urn:btih:...',
+    shareSectionTitle: 'Viral Share & Export',
+    copyDeepLink: 'Copy One-Click Share Link (fusion://)',
+    copyDeepLinkDesc: 'Anyone with Fusion Launcher can click this link to preview and add the game in 1 second!',
+    copyPostMarkdown: 'Copy Post Template (Telegram / Discord)',
+    saveManifestJson: 'Save .fusion.json Manifest',
+    addToLibraryBtn: 'Add to My Library & Play Now',
+    linkCopiedAlert: 'Share link copied to clipboard! Share it with your friends or community.',
+    postCopiedAlert: 'Post template copied! Paste it into Discord, Telegram, or VK.',
+    manifestSavedAlert: 'Manifest saved successfully!',
+    addedSuccessAlert: 'Game successfully added to your library!',
+    authorCardBadge: (name: string) => `Config by ${name}`,
+    authorCardLink: 'Creator Page',
+    previewCardTitle: 'Live In-App Preview'
   }
 } as const;
 
@@ -778,7 +856,8 @@ export const ru: UiText = {
     sources: 'Источники',
     updated: 'Обновлено',
     published: 'Опубликовано',
-    peers: 'peers'
+    peers: 'peers',
+    share: 'Поделиться'
   },
   brand: {
     tagline: 'Ретро-библиотеки игр. Один Windows-лаунчер.',
@@ -1032,6 +1111,15 @@ export const ru: UiText = {
     emptyHealth: 'Записей пока нет.'
   },
   dashboard: {
+    dropzone: {
+      title: 'Бросьте файл для установки или импорта',
+      description: 'Системные файлы (prod.keys, прошивки PS3, BIOS), образы игр (.nsp, .iso, .zip) или источники (.json)',
+      processing: 'Анализ и установка файла...',
+      installedSystem: (label: string) => `Установлен системный компонент: ${label}`,
+      installedGame: (title: string) => `Импортирована игра: ${title}`,
+      gamePayloadNotice: (fileName: string) => `Обнаружен образ игры: ${fileName}. Откройте игру в библиотеке для привязки.`,
+      sourceConnected: (name: string) => `Подключен источник: ${name}`
+    },
     filters: {
       all: 'Все игры',
       installed: 'Установленные',
@@ -1047,6 +1135,10 @@ export const ru: UiText = {
     topbar: {
       searchAria: 'Поиск игр и коллекций',
       searchPlaceholder: 'Поиск игр, коллекций, друзей...',
+      clearSearch: 'Очистить поиск',
+      searchResults: 'Результаты поиска',
+      searchNoResults: 'Игры не найдены',
+      searchViewAll: (count: number) => `Показать все (${count}) в библиотеке`,
       refreshTitle: 'Обновить',
       settingsTitle: 'Открыть настройки',
       notificationsTitle: 'Открыть центр активности',
@@ -1112,6 +1204,7 @@ export const ru: UiText = {
       deleteFiles: 'Удалить файлы',
       deleteConfirm: (title: string) => `Удалить скачанные файлы для ${title}?`,
       statusHints: {
+        queued: 'В очереди загрузки.',
         interrupted: 'Восстановлено после перезапуска. Продолжи, чтобы скачать дальше.',
         paused: 'Пауза сохранена.',
         resolving: 'Ищем magnet-метаданные.',
@@ -1325,6 +1418,7 @@ export const ru: UiText = {
   },
   gameDetails: {
     downloadTitles: {
+      queued: 'В очереди',
       resolving: 'Поиск метаданных',
       downloading: 'Загрузка',
       paused: 'Пауза',
@@ -1352,6 +1446,9 @@ export const ru: UiText = {
       systemFileImported: 'Системный файл импортирован.',
       downloadFolderNotReady: 'Папка скачанной игры пока не готова.',
       launchSent: 'Запуск отправлен.',
+      smartImportSuccess: (label: string) => `Успешно установлен компонент ${label}!`,
+      smartImportButton: 'Умный авто-импорт (Ключи / Прошивка / BIOS)',
+      smartImportDropPrompt: 'Перетащите ключи, прошивку или BIOS сюда',
       removeConfirm: (title: string) => `Удалить скачанные файлы для ${title}?`
     },
     closeTitle: 'Закрыть',
@@ -1451,6 +1548,65 @@ export const ru: UiText = {
     game: 'Устанавливаем игру',
     verify: 'Финальная проверка',
     done: 'Можно играть'
+  },
+  portingStudio: {
+    triggerButton: 'Портировать игру',
+    triggerButtonTooltip: 'Создание, оптимизация и экспорт конфигов игр в 1 клик',
+    modalTitle: 'Студия портирования и упаковки игр',
+    modalSubtitle: 'Упакуйте игру с обложками, 60 FPS патчами и ссылкой для друзей за 15 секунд.',
+    dragPrompt: 'Перетащите ROM или файл игры сюда',
+    dragSubtext: 'Поддерживаются .nsp, .xci, .iso, .chd, .sfc, .z64, .gba, .cue, .cso',
+    inspectingFile: 'Анализ файла и расчет SHA-256 хеша...',
+    fileLabel: 'Файл игры',
+    gameTitle: 'Название игры',
+    gameTitlePlaceholder: 'Например, Chrono Trigger',
+    platform: 'Платформа',
+    setupProfile: 'Профиль эмулятора',
+    sizeBytes: 'Размер файла',
+    sha256: 'Хеш SHA-256',
+    autoScrapeBtn: 'Авто-поиск обложек и инфо',
+    autoScraping: 'Поиск в SteamGridDB и ScreenScraper...',
+    coverUrl: 'Ссылка на обложку (Cover)',
+    heroUrl: 'Ссылка на фон (Hero)',
+    developer: 'Разработчик / Студия',
+    releaseYear: 'Год выпуска',
+    genres: 'Жанры (через запятую)',
+    description: 'Описание игры',
+    optimizationTitle: 'Оптимизация и пресеты',
+    enable60fps: '⚡ Включить 60 FPS патч и анлок',
+    enable60fpsDesc: 'Автоматически применяет 60 FPS патч перед запуском игры',
+    autoGamepad: '🎮 Авто-настройка геймпада',
+    autoGamepadDesc: 'Предустановленная раскладка для XInput / DualSense',
+    authorBrandingTitle: 'Атрибуция автора и сообщества',
+    authorBrandingDesc: 'Получите признание, приведите игроков в свой канал или страницу донатов.',
+    authorName: 'Ник автора / студии перевода',
+    authorNamePlaceholder: 'Например, @MechanicsVoiceOver, Dendy_Master',
+    authorUrl: 'Ссылка на канал / Boosty / Telegram / VK',
+    authorUrlPlaceholder: 'https://t.me/... или https://boosty.to/...',
+    patchVersion: 'Версия перевода или мода',
+    patchVersionPlaceholder: 'Например, Полная русская озвучка v1.2',
+    notes: 'Советы для игроков',
+    notesPlaceholder: 'Например, Рекомендуется рендер Vulkan и апскейл 2x.',
+    distributionTitle: 'Режим распространения',
+    modeUserProvided: '🟢 Чистый конфиг (Zero-Copyright Safe)',
+    modeUserProvidedDesc: '100% легально везде. Конфиг содержит настройки и арты; игроки используют свой ROM.',
+    modeDirect: '🔵 Прямая ссылка (HTTP / Облако)',
+    modeDirectPlaceholder: 'https://archive.org/... или https://my-server.com/...',
+    modeMagnet: '🟣 P2P Magnet-ссылка (Torrent)',
+    modeMagnetPlaceholder: 'magnet:?xt=urn:btih:...',
+    shareSectionTitle: 'Виральный шеринг и запуск',
+    copyDeepLink: 'Скопировать ссылку для друзей (fusion://)',
+    copyDeepLinkDesc: 'Игроки кликают по ссылке в браузере или мессенджере — и игра сразу в лаунчере!',
+    copyPostMarkdown: 'Скопировать пост для Telegram / Discord',
+    saveManifestJson: 'Сохранить файл .fusion.json',
+    addToLibraryBtn: 'Добавить в библиотеку и играть',
+    linkCopiedAlert: 'Ссылка скопирована в буфер обмена! Отправьте её друзьям или в сообщество.',
+    postCopiedAlert: 'Шаблон поста скопирован! Вставьте его в Telegram, Discord или VK.',
+    manifestSavedAlert: 'Файл манифеста успешно сохранен!',
+    addedSuccessAlert: 'Игра успешно добавлена в вашу библиотеку!',
+    authorCardBadge: (name: string) => `Конфиг подготовил: ${name}`,
+    authorCardLink: 'Страница автора',
+    previewCardTitle: 'Превью в лаунчере'
   }
 };
 

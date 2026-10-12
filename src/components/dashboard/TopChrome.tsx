@@ -1,6 +1,9 @@
-import { useEffect, useRef, useState } from 'react';
-import { AlertTriangle, Bell, CheckCircle2, Download, Loader2, RefreshCcw, Search, Settings } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { AlertTriangle, ArrowRight, Bell, CheckCircle2, Download, Loader2, RefreshCcw, Search, Settings, Sparkles, X } from 'lucide-react';
 import { useI18n } from '@/components/I18nProvider';
+import { GameArt } from '@/components/shell/GamePoster';
+import { displayProductText } from '@/lib/brandText';
+import { searchAndSortLibraryItems, type GameLibraryItem } from '@/lib/libraryStatus';
 import type { ActivityEvent } from '@/stores/launcherStore';
 import type { UpdatePanelPhase, UpdatePanelState } from './types';
 import { ActivityIcon } from './shared';
@@ -9,6 +12,7 @@ import { displayActivityTitle, formatEventTime, updateNotificationText } from '.
 export function TopChrome({
   onRefresh,
   onOpenSettings,
+  onOpenPortingStudio,
   onFocus,
   refreshing,
   notificationsOpen,
@@ -18,10 +22,14 @@ export function TopChrome({
   onNotificationsOpenChange,
   onCheckAppUpdate,
   onInstallAppUpdate,
-  onOpenActivityEvent
+  onOpenActivityEvent,
+  games,
+  onSelectGame,
+  onNavigateToLibrary
 }: {
   onRefresh: () => void;
   onOpenSettings: () => void;
+  onOpenPortingStudio?: () => void;
   onFocus: (focusId: string) => void;
   refreshing: boolean;
   notificationsOpen: boolean;
@@ -32,11 +40,33 @@ export function TopChrome({
   onCheckAppUpdate: () => Promise<void>;
   onInstallAppUpdate: () => Promise<void>;
   onOpenActivityEvent: (event: ActivityEvent) => void;
+  games?: GameLibraryItem[];
+  onSelectGame?: (gameId: string) => void;
+  onNavigateToLibrary?: (query?: string) => void;
 }) {
   const [searchValue, setSearchValue] = useState('');
+  const [searchFocused, setSearchFocused] = useState(false);
+  const searchRootRef = useRef<HTMLDivElement>(null);
   const actionsRef = useRef<HTMLDivElement>(null);
   const updateCheckedFromPopoverRef = useRef(false);
   const { t } = useI18n();
+
+  const matchingGames = useMemo(() => {
+    if (!searchValue.trim() || !games) return [];
+    return searchAndSortLibraryItems(games, 'all', searchValue, 'title');
+  }, [games, searchValue]);
+
+  useEffect(() => {
+    if (!searchFocused) return undefined;
+
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!(event.target instanceof Node)) return;
+      if (!searchRootRef.current?.contains(event.target)) setSearchFocused(false);
+    };
+
+    document.addEventListener('pointerdown', handlePointerDown);
+    return () => document.removeEventListener('pointerdown', handlePointerDown);
+  }, [searchFocused]);
 
   useEffect(() => {
     if (!notificationsOpen || updatePanel.phase !== 'idle' || updateCheckedFromPopoverRef.current) return;
@@ -69,15 +99,119 @@ export function TopChrome({
 
   return (
     <header className="rh-topbar">
-      <label className="rh-global-search" aria-label={t.dashboard.topbar.searchAria}>
-        <Search className="h-4 w-4 text-white/42" />
-        <input
-          value={searchValue}
-          onChange={(event) => setSearchValue(event.target.value)}
-          placeholder={t.dashboard.topbar.searchPlaceholder}
-        />
-      </label>
+      <div ref={searchRootRef} className="rh-global-search-root">
+        <label className="rh-global-search" aria-label={t.dashboard.topbar.searchAria}>
+          <Search className="h-4 w-4 text-white/42" />
+          <input
+            data-testid="global-search"
+            data-focus-id="top:search"
+            data-focus-zone="topbar"
+            value={searchValue}
+            onChange={(event) => {
+              setSearchValue(event.target.value);
+              setSearchFocused(true);
+            }}
+            onFocus={() => {
+              onFocus('top:search');
+              setSearchFocused(true);
+            }}
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') {
+                event.preventDefault();
+                setSearchFocused(false);
+              } else if (event.key === 'Enter') {
+                event.preventDefault();
+                setSearchFocused(false);
+                onNavigateToLibrary?.(searchValue);
+              }
+            }}
+            placeholder={t.dashboard.topbar.searchPlaceholder}
+          />
+          {searchValue && (
+            <button
+              type="button"
+              onClick={() => {
+                setSearchValue('');
+              }}
+              className="rh-search-clear"
+              title={t.dashboard.topbar.clearSearch}
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </label>
+        {searchFocused && searchValue.trim().length > 0 && (
+          <div className="rh-search-popover" data-testid="global-search-results">
+            {matchingGames.length === 0 ? (
+              <div className="rh-search-popover-empty">{t.dashboard.topbar.searchNoResults}</div>
+            ) : (
+              <>
+                <div className="rh-search-popover-list">
+                  {matchingGames.slice(0, 6).map((item) => (
+                    <button
+                      key={item.game.id}
+                      type="button"
+                      data-testid={`global-search-item-${item.game.id}`}
+                      className="rh-search-popover-item"
+                      onClick={() => {
+                        setSearchFocused(false);
+                        onSelectGame?.(item.game.id);
+                      }}
+                    >
+                      <div className="h-9 w-7 shrink-0 overflow-hidden rounded bg-black/40">
+                        <GameArt game={item.game} className="h-full w-full object-cover" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-sm font-semibold text-white">
+                          {displayProductText(item.game.title)}
+                        </div>
+                        <div className="flex items-center gap-2 text-xs text-white/50">
+                          <span className="uppercase tracking-wider">{item.game.platform}</span>
+                          <span>•</span>
+                          <span className={`rh-card-status-${item.statusTone}`}>
+                            {item.statusLabel}
+                          </span>
+                        </div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+                {onNavigateToLibrary && (
+                  <div className="rh-search-popover-footer">
+                    <span>{t.dashboard.topbar.searchResults} ({matchingGames.length})</span>
+                    <button
+                      type="button"
+                      className="rh-search-popover-viewall"
+                      onClick={() => {
+                        setSearchFocused(false);
+                        onNavigateToLibrary(searchValue);
+                      }}
+                    >
+                      <span>{t.dashboard.topbar.searchViewAll(matchingGames.length)}</span>
+                      <ArrowRight className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )}
+      </div>
       <div ref={actionsRef} className="rh-topbar-actions">
+        {onOpenPortingStudio && (
+          <button
+            data-testid="top-port-game"
+            data-focus-id="top:port-game"
+            data-focus-zone="topbar"
+            onFocus={() => onFocus('top:port-game')}
+            onClick={onOpenPortingStudio}
+            className="flex items-center gap-1.5 rounded-lg border border-fusion-accent/40 bg-fusion-accent/15 px-3 py-1.5 text-xs font-bold text-fusion-accent hover:bg-fusion-accent/25 hover:border-fusion-accent/60 transition shadow-sm mr-1"
+            title={t.portingStudio.triggerButtonTooltip}
+          >
+            <Sparkles className="h-3.5 w-3.5" />
+            <span className="hidden sm:inline">{t.portingStudio.triggerButton}</span>
+          </button>
+        )}
         <button
           data-focus-id="top:refresh"
           data-focus-zone="topbar"

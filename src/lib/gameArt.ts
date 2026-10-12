@@ -1,4 +1,46 @@
+import { convertFileSrc } from '@tauri-apps/api/core';
+import { api } from './api.ts';
+import { isTauriRuntime } from './runtime.ts';
 import type { CatalogGame } from '../types/repository.ts';
+
+const artworkCache = new Map<string, string>();
+const pendingFetches = new Map<string, Promise<string>>();
+
+export async function resolveArtworkUrl(url: string | null): Promise<string | null> {
+  if (!url || !isTauriRuntime() || (!url.startsWith('http://') && !url.startsWith('https://'))) {
+    return url;
+  }
+
+  if (artworkCache.has(url)) {
+    return artworkCache.get(url)!;
+  }
+
+  if (pendingFetches.has(url)) {
+    return pendingFetches.get(url)!;
+  }
+
+  const promise = (async () => {
+    try {
+      const localPath = await api.cacheArtwork(url);
+      if (localPath && localPath !== url) {
+        const assetUrl = convertFileSrc(localPath);
+        artworkCache.set(url, assetUrl);
+        return assetUrl;
+      }
+    } catch {
+      // Fall back to original url on network or cache error
+    }
+    artworkCache.set(url, url);
+    return url;
+  })();
+
+  pendingFetches.set(url, promise);
+  try {
+    return await promise;
+  } finally {
+    pendingFetches.delete(url);
+  }
+}
 
 const PALETTES = [
   ['#0A0A0B', '#2f6f45', '#5CE68C'],

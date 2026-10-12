@@ -14,7 +14,10 @@ import {
   RotateCw,
   ShieldAlert,
   ShieldCheck,
-  X
+  X,
+  Zap,
+  ExternalLink,
+  Share2
 } from 'lucide-react';
 import { useI18n } from '@/components/I18nProvider';
 import { LaunchErrorModal } from '@/components/LaunchErrorModal';
@@ -390,6 +393,26 @@ export function GameDetailsModal({
     });
   };
 
+  const handleSmartAutoImport = async () => {
+    const selected = isTauriRuntime()
+      ? await open({
+          title: t.gameDetails.messages.smartImportButton,
+          multiple: false,
+          directory: false
+        })
+      : 'C:\\dumps\\prod.keys';
+    if (typeof selected !== 'string') return;
+    await run('smart-import', async () => {
+      const report = await api.autoImportSystemFile(selected);
+      if (!report.success) {
+        throw new Error(report.message);
+      }
+      setMessage(t.gameDetails.messages.smartImportSuccess(report.label));
+      await loadRequirements();
+      await onRefresh();
+    });
+  };
+
   const handleRescrape = async () => {
     setBusy('metadata');
     setMessage(null);
@@ -448,6 +471,50 @@ export function GameDetailsModal({
     }
   };
 
+  const handleShareGame = async () => {
+    try {
+      const httpDownload = game.downloads.find((d) => d.kind === 'http');
+      const magnetDownload = game.downloads.find((d) => d.kind === 'magnet');
+      const userDownload = game.downloads.find((d) => d.kind === 'user_provided');
+      const sha256 = httpDownload ? httpDownload.sha256 : userDownload ? userDownload.sha256 : undefined;
+      const downloadUrl = httpDownload ? httpDownload.url : undefined;
+      const magnetUri = magnetDownload ? magnetDownload.uri : undefined;
+
+      const input = {
+        id: game.id,
+        title: game.title,
+        platform: game.platform,
+        description: game.description,
+        coverImageUrl: game.artwork?.cover ?? game.coverImageUrl,
+        heroImageUrl: game.artwork?.hero,
+        releaseYear: game.metadata?.releaseYear,
+        developer: game.metadata?.developer,
+        genres: game.metadata?.genres,
+        contentMode: game.contentMode === 'downloadable' ? 'downloadable' : 'user_provided',
+        downloadUrl,
+        magnetUri,
+        sha256,
+        setupProfileId: game.setupProfileId,
+        expectedExtensions: game.expectedExtensions,
+        authorName: game.metadata?.externalIds?.author ?? game.metadata?.tags?.find((item) => item.startsWith('author:'))?.replace('author:', ''),
+        authorUrl: game.metadata?.externalIds?.authorUrl ?? game.metadata?.tags?.find((item) => item.startsWith('authorUrl:'))?.replace('authorUrl:', '')
+      };
+
+      const jsonStr = JSON.stringify(input);
+      const bytes = new TextEncoder().encode(jsonStr);
+      let binary = '';
+      for (let i = 0; i < bytes.length; i++) {
+        binary += String.fromCharCode(bytes[i]);
+      }
+      const base64Safe = btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+      const link = `fusion://game/add?data=${base64Safe}&title=${encodeURIComponent(game.title)}`;
+      await navigator.clipboard.writeText(link);
+      setMessage(t.portingStudio.linkCopiedAlert);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : String(err));
+    }
+  };
+
   const handlePlay = async () => {
     const saveDir = download.saveDir ?? defaultSaveDir;
     if (!saveDir) {
@@ -485,6 +552,8 @@ export function GameDetailsModal({
   const playActionClass = canPlay
     ? 'inline-flex h-10 items-center gap-2 rounded-lg bg-fusion-accent px-4 text-sm font-bold text-fusion-accentOn shadow-glow transition hover:bg-fusion-accentHover'
     : 'inline-flex h-10 items-center gap-2 rounded-md border border-white/10 bg-white/[0.04] px-4 text-sm font-semibold text-white/38 transition disabled:opacity-60';
+  const authorName = game.metadata?.externalIds?.author ?? game.metadata?.tags?.find((item) => item.startsWith('author:'))?.replace('author:', '');
+  const authorUrl = game.metadata?.externalIds?.authorUrl ?? game.metadata?.tags?.find((item) => item.startsWith('authorUrl:'))?.replace('authorUrl:', '');
   const downloadTitle = download.isLoading
     ? t.gameDetails.downloadTitles.checking
     : status
@@ -527,6 +596,25 @@ export function GameDetailsModal({
                 ))}
                 {game.metadata.developer && <span className="rounded border border-white/10 px-2 py-1">{game.metadata.developer}</span>}
                 {game.metadata.players && <span className="rounded border border-white/10 px-2 py-1">{game.metadata.players}</span>}
+              </div>
+            )}
+
+            {authorName && (
+              <div className="mb-5 flex items-center justify-between gap-3 rounded-xl border border-fusion-accent/30 bg-fusion-accent/10 p-3 text-xs text-white/80">
+                <div className="flex items-center gap-2">
+                  <span className="font-semibold text-fusion-accent">{t.portingStudio.authorCardBadge(authorName)}</span>
+                </div>
+                {authorUrl && (
+                  <a
+                    href={authorUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="flex items-center gap-1 font-semibold text-fusion-accent hover:underline"
+                  >
+                    <span>{t.portingStudio.authorCardLink}</span>
+                    <ExternalLink className="h-3.5 w-3.5" />
+                  </a>
+                )}
               </div>
             )}
 
@@ -591,6 +679,22 @@ export function GameDetailsModal({
             </div>
 
             <div className="mb-5 space-y-2">
+              {setupState?.systemFiles?.some((item) => item.required && item.status !== 'ready') && (
+                <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-cyan-500/20 bg-cyan-950/20 p-2.5">
+                  <div className="flex items-center gap-2 text-xs text-cyan-200">
+                    <Zap className="h-4 w-4 text-cyan-400 shrink-0" />
+                    <span>{t.gameDetails.messages.smartImportDropPrompt}</span>
+                  </div>
+                  <button
+                    onClick={() => void handleSmartAutoImport()}
+                    disabled={busy !== null}
+                    className="flex items-center gap-1.5 rounded-md border border-cyan-500/40 bg-cyan-500/15 px-3 py-1.5 text-xs font-semibold text-cyan-200 transition hover:bg-cyan-500/25 disabled:opacity-40"
+                  >
+                    {busy === 'smart-import' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5" />}
+                    <span>{t.gameDetails.messages.smartImportButton}</span>
+                  </button>
+                </div>
+              )}
               {(setupState?.systemFiles || []).map((item) => (
                 <div key={item.id} className="flex items-center justify-between gap-3 rounded-md bg-black/22 px-3 py-2 text-sm">
                   <div className="min-w-0">
@@ -805,6 +909,15 @@ export function GameDetailsModal({
                     {t.gameDetails.setup.openFolder}
                   </button>
                 )}
+                <button
+                  onClick={() => void handleShareGame()}
+                  disabled={busy !== null}
+                  className={secondaryActionClass}
+                  title={t.portingStudio.copyDeepLink}
+                >
+                  <Share2 className="h-4 w-4" />
+                  <span>{t.common.share}</span>
+                </button>
                 {(download.canPlay || status === 'completed' || status === 'cancelled') && (
                   <button
                     onClick={() => {

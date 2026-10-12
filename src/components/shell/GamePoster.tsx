@@ -5,7 +5,7 @@ import { motion } from 'framer-motion';
 import { Download, Play, RotateCw, ShieldAlert } from 'lucide-react';
 import { useI18n } from '../I18nProvider';
 import { displayProductText } from '../../lib/brandText.ts';
-import { createGameArt, selectGameArtImageUrl } from '../../lib/gameArt.ts';
+import { createGameArt, selectGameArtImageUrl, resolveArtworkUrl } from '../../lib/gameArt.ts';
 import { PLATFORM_LABELS } from '../../types/platform.ts';
 import type { GameLibraryItem, PrimaryGameAction } from '../../lib/libraryStatus.ts';
 import type { CatalogGame } from '../../types/repository.ts';
@@ -38,7 +38,6 @@ export function GamePoster({
 
   return (
     <motion.article
-      layoutId={`game-card-${focusId}`}
       whileHover={{ scale: compact ? 1.035 : 1.025 }}
       className={`rh-game-card group ${selected ? 'rh-game-card-selected' : ''} ${compact ? 'rh-game-card-compact' : ''}`}
     >
@@ -110,10 +109,23 @@ export function GameArt({
 }) {
   const generated = createGameArt(game);
   const imageUrl = selectGameArtImageUrl(game, hero ? 'hero' : 'poster');
+  const [resolvedUrl, setResolvedUrl] = useState<string | null>(imageUrl);
   const [imageFailed, setImageFailed] = useState(false);
 
   useEffect(() => {
     setImageFailed(false);
+    let active = true;
+    setResolvedUrl(imageUrl);
+    if (imageUrl) {
+      resolveArtworkUrl(imageUrl).then((cached) => {
+        if (active && cached) {
+          setResolvedUrl(cached);
+        }
+      });
+    }
+    return () => {
+      active = false;
+    };
   }, [imageUrl]);
 
   return (
@@ -140,9 +152,9 @@ export function GameArt({
           </>
         )}
       </div>
-      {imageUrl && !imageFailed && (
+      {resolvedUrl && !imageFailed && (
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={imageUrl} alt="" loading="lazy" decoding="async" className="absolute inset-0 h-full w-full object-cover" onError={() => setImageFailed(true)} />
+        <img src={resolvedUrl} alt="" loading="lazy" decoding="async" className="absolute inset-0 h-full w-full object-cover" onError={() => setImageFailed(true)} />
       )}
     </div>
   );

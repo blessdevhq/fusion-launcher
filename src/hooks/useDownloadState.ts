@@ -10,7 +10,7 @@ import type {
   TorrentDownloadStatus
 } from '@/types/repository';
 
-const ACTIVE_STATUSES: TorrentDownloadStatus[] = ['resolving', 'downloading'];
+const ACTIVE_STATUSES: TorrentDownloadStatus[] = ['queued', 'resolving', 'downloading'];
 const RESUMABLE_STATUSES: TorrentDownloadStatus[] = ['paused', 'interrupted', 'error'];
 
 export interface DownloadState {

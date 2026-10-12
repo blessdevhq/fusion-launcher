@@ -2,22 +2,27 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 mod app_update;
 mod archive;
 mod builtin_demo;
 mod commands;
+pub mod deep_link;
 mod downloads;
 mod emulator_profiles;
+pub(crate) mod exe_integrity;
+pub mod execution;
 mod game_files;
 mod github_resolver;
+pub(crate) mod job;
 mod launcher;
 mod libtorrent_engine;
 mod logging;
 mod manifest;
 mod net;
 mod orchestrator;
+pub mod prelaunch_optimizer;
 mod rom_hasher;
 mod schema;
 mod scraper;
@@ -25,6 +30,7 @@ mod scrapers;
 mod security;
 mod setup_profiles;
 mod storage;
+pub mod system_files_detector;
 mod torrent;
 mod torrent_engine;
 
@@ -148,6 +154,22 @@ pub fn run() {
             // games on launch. No-op without a SteamGridDB key, and capped so a
             // large catalog never triggers a giant scrape.
             scraper::auto_scrape_missing_artwork(app.handle().clone(), app_state);
+
+            #[cfg(windows)]
+            let _ = deep_link::register_windows_protocol();
+
+            let app_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+                for arg in std::env::args().skip(1) {
+                    if arg.starts_with("fusion://") || arg.starts_with("fusion:") {
+                        if let Ok(action) = deep_link::parse_deep_link(&arg) {
+                            let _ = app_handle.emit("fusion:deep-link", action);
+                        }
+                    }
+                }
+            });
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -178,6 +200,7 @@ pub fn run() {
             commands::get_steamgriddb_status,
             commands::scrape_library,
             commands::cancel_library_scrape,
+            commands::cache_artwork,
             commands::check_requirements,
             commands::get_library_statuses,
             commands::list_platform_setup_profiles,
@@ -186,6 +209,13 @@ pub fn run() {
             commands::remove_profile_emulator,
             commands::select_profile_emulator,
             commands::import_profile_system_file,
+            commands::detect_system_file,
+            commands::auto_import_system_file,
+            commands::parse_deep_link,
+            commands::register_deep_link_protocol,
+            commands::inspect_game_file,
+            commands::add_custom_game,
+            commands::export_game_package,
             commands::list_emulator_configs,
             commands::save_emulator_config,
             commands::validate_emulator_config,
@@ -196,6 +226,7 @@ pub fn run() {
             commands::download_game,
             commands::start_game_download,
             commands::trust_executable,
+            commands::trust_updated_emulator,
             commands::get_download_root,
             commands::set_download_root,
             commands::get_library_root,

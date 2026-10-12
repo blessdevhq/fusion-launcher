@@ -9,8 +9,11 @@ import type {
 import type { Manifest } from '@/types/manifest';
 import type {
   CatalogGame,
+  DeepLinkAction,
   DiagnosticsBundle,
   DiagnosticsPaths,
+  CustomGameInput,
+  GameFileInspection,
   DownloadRecord,
   EmulatorConfig,
   GameSetupState,
@@ -18,6 +21,7 @@ import type {
   HealthReport,
   ImportAssetFileReport,
   ImportGameFileReport,
+  SmartImportReport,
   LibraryScrapeStatus,
   LibraryGameStatus,
   ManualGameMetadataInput,
@@ -84,6 +88,7 @@ const previewHandlers: Record<string, PreviewHandler> = {
   get_steamgriddb_status: () => previewApi.getSteamgriddbStatus(),
   scrape_library: () => previewApi.scrapeLibrary(),
   cancel_library_scrape: () => previewApi.cancelLibraryScrape(),
+  cache_artwork: ({ url }) => previewApi.cacheArtwork(String(url ?? '')),
   check_requirements: ({ gameId }) => previewApi.checkRequirements(String(gameId ?? '')),
   get_library_statuses: () => previewApi.getLibraryStatuses(),
   list_platform_setup_profiles: () => previewApi.listPlatformSetupProfiles(),
@@ -116,6 +121,23 @@ const previewHandlers: Record<string, PreviewHandler> = {
     String(requirementId ?? ''),
     String(sourcePath ?? '')
   ),
+  detect_system_file: ({ sourcePath }) => previewApi.detectSystemFile(String(sourcePath ?? '')),
+  auto_import_system_file: ({ sourcePath }) => previewApi.autoImportSystemFile(String(sourcePath ?? '')),
+  parse_deep_link: ({ uri }) => previewApi.parseDeepLink(String(uri ?? '')),
+  register_deep_link_protocol: () => previewApi.registerDeepLinkProtocol(),
+  inspect_game_file: ({ path }) => Promise.resolve({
+    path: String(path ?? ''),
+    fileName: String(path ?? '').split(/[\\/]/).pop() ?? 'game',
+    suggestedTitle: 'Imported Game',
+    platform: 'ps2',
+    setupProfileId: 'ps2-pcsx2',
+    expectedExtensions: ['.iso'],
+    sizeBytes: 1048576,
+    sha256: '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+    crc32: '01234567'
+  }),
+  add_custom_game: () => Promise.reject(new Error('Adding custom games is available in desktop mode.')),
+  export_game_package: ({ exportPath }) => Promise.resolve(String(exportPath ?? '')),
   list_emulator_configs: () => previewApi.listEmulatorConfigs(),
   save_emulator_config: ({ platform, exePath, launchArgsTemplate }) => previewApi.saveEmulatorConfig(
     String(platform ?? ''),
@@ -268,6 +290,9 @@ export const api = {
   cancelLibraryScrape() {
     return call<LibraryScrapeStatus>('cancel_library_scrape');
   },
+  cacheArtwork(url: string) {
+    return call<string>('cache_artwork', { url });
+  },
   checkRequirements(gameId: string) {
     return call<RequirementsReport>('check_requirements', { gameId });
   },
@@ -315,6 +340,12 @@ export const api = {
   },
   importProfileSystemFile(gameId: string, requirementId: string, sourcePath: string) {
     return call<ImportAssetFileReport>('import_profile_system_file', { gameId, requirementId, sourcePath });
+  },
+  detectSystemFile(sourcePath: string) {
+    return call<SmartImportReport>('detect_system_file', { sourcePath });
+  },
+  autoImportSystemFile(sourcePath: string) {
+    return call<SmartImportReport>('auto_import_system_file', { sourcePath });
   },
   listEmulatorConfigs() {
     return call<EmulatorConfig[]>('list_emulator_configs');
@@ -417,5 +448,20 @@ export const api = {
   },
   installAppUpdate() {
     return call<void>('install_app_update');
+  },
+  parseDeepLink(uri: string) {
+    return call<DeepLinkAction>('parse_deep_link', { uri });
+  },
+  registerDeepLinkProtocol() {
+    return call<void>('register_deep_link_protocol');
+  },
+  inspectGameFile(path: string) {
+    return call<GameFileInspection>('inspect_game_file', { path });
+  },
+  addCustomGame(input: CustomGameInput) {
+    return call<CatalogGame>('add_custom_game', { input });
+  },
+  exportGamePackage(input: CustomGameInput, exportPath: string) {
+    return call<string>('export_game_package', { input, exportPath });
   }
 };

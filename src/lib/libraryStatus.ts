@@ -13,7 +13,7 @@ export type LibrarySort = 'title' | 'platform' | 'status' | 'repository';
 export type PrimaryGameAction = 'play' | 'download' | 'import' | 'resume' | 'retry' | 'details';
 export type StatusTone = 'ready' | 'active' | 'paused' | 'error' | 'missing' | 'idle';
 
-const ACTIVE_DOWNLOAD_STATUSES: TorrentDownloadStatus[] = ['resolving', 'downloading', 'cancelling'];
+const ACTIVE_DOWNLOAD_STATUSES: TorrentDownloadStatus[] = ['queued', 'resolving', 'downloading', 'cancelling'];
 const RESUMABLE_DOWNLOAD_STATUSES: TorrentDownloadStatus[] = ['paused', 'interrupted'];
 
 export interface GameLibraryItem {
@@ -143,7 +143,10 @@ export function searchAndSortLibraryItems(
 }
 
 function matchesLibraryQuery(item: GameLibraryItem, query: string) {
-  return [
+  const terms = query.split(/\s+/).filter(Boolean);
+  if (terms.length === 0) return true;
+
+  const searchableFields = [
     item.game.title,
     item.game.platform,
     item.game.repositoryName,
@@ -156,7 +159,10 @@ function matchesLibraryQuery(item: GameLibraryItem, query: string) {
     ...(item.game.metadata?.tags ?? []),
     item.statusLabel,
     ...item.missingRequirements
-  ].some((value) => normalizeSearchText(value).includes(query));
+  ];
+
+  const combined = normalizeSearchText(searchableFields.join(' '));
+  return terms.every((term) => combined.includes(term));
 }
 
 function compareLibraryItems(left: GameLibraryItem, right: GameLibraryItem, sort: LibrarySort) {
@@ -217,6 +223,7 @@ function deriveStatusLabel({
   if (hasError) return { statusLabel: 'Download Error', statusTone: 'error' };
   if (downloadStatus === 'interrupted') return { statusLabel: 'Interrupted', statusTone: 'paused' };
   if (isPaused) return { statusLabel: 'Paused', statusTone: 'paused' };
+  if (downloadStatus === 'queued') return { statusLabel: 'Queued', statusTone: 'active' };
   if (downloadStatus === 'resolving') return { statusLabel: 'Resolving Magnet', statusTone: 'active' };
   if (downloadStatus === 'cancelling') return { statusLabel: 'Cancelling', statusTone: 'paused' };
   if (isDownloading) return { statusLabel: 'Downloading', statusTone: 'active' };
@@ -246,7 +253,12 @@ function derivePrimaryAction({
   if (readyToPlay) return { primaryAction: 'play', primaryActionLabel: 'Play' };
   if (hasError) return { primaryAction: 'retry', primaryActionLabel: 'Retry' };
   if (isPaused) return { primaryAction: 'resume', primaryActionLabel: 'Resume' };
-  if (downloadStatus === 'resolving' || downloadStatus === 'downloading' || downloadStatus === 'cancelling') {
+  if (
+    downloadStatus === 'queued' ||
+    downloadStatus === 'resolving' ||
+    downloadStatus === 'downloading' ||
+    downloadStatus === 'cancelling'
+  ) {
     return { primaryAction: 'details', primaryActionLabel: 'Details' };
   }
   if (installed && missingRequirements.some(isGameFileRequirement)) {

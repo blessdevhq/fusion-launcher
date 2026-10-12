@@ -5,6 +5,8 @@ import { listen } from '@tauri-apps/api/event';
 import { open } from '@tauri-apps/plugin-dialog';
 import { I18nProvider } from '@/components/I18nProvider';
 import { GameDetailsModal } from '@/components/GameDetailsModal';
+import { GamePortingStudioModal } from '@/components/GamePortingStudioModal';
+import { GlobalDropZone } from '@/components/GlobalDropZone';
 import { LaunchErrorModal } from '@/components/LaunchErrorModal';
 import { SettingsModal } from '@/components/SettingsModal';
 import { DownloadsScreen } from '@/components/dashboard/DownloadsScreen';
@@ -29,6 +31,7 @@ import { unknownSourcePrompt } from '@/lib/sourceTrust';
 import { useLauncherStore, type LauncherView } from '@/stores/launcherStore';
 import type {
   CatalogGame,
+  DeepLinkAction,
   DownloadProgressEvent,
   HealthReport,
   LaunchFailure,
@@ -77,6 +80,8 @@ export function Dashboard({
   const [librarySearch, setLibrarySearch] = useState('');
   const [librarySort, setLibrarySort] = useState<LibrarySort>('title');
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [portingStudioOpen, setPortingStudioOpen] = useState(false);
+  const [portingStudioInitialFile, setPortingStudioInitialFile] = useState<string | undefined>(undefined);
   const [settingsMessage, setSettingsMessage] = useState<string | null>(null);
   const [launcherMessage, setLauncherMessage] = useState<string | null>(null);
   const [sourceUrl, setSourceUrl] = useState('');
@@ -163,6 +168,96 @@ export function Dashboard({
       void unlistenPromise.then((unlisten) => unlisten());
     };
   }, [mergeDownloadEvent]);
+
+  useEffect(() => {
+    if (!isTauriRuntime()) return;
+
+    let active = true;
+    const unlistenPromise = listen<DeepLinkAction>('fusion:deep-link', async (event) => {
+      if (!active) return;
+      const payload = event.payload;
+
+      if (payload.action === 'addSource') {
+        const { url, name } = payload.params;
+        try {
+          setSourceUrl(url);
+          const preview = await api.previewRepository(url);
+          setSourcePreview(preview);
+          setSettingsOpen(true);
+          addActivityEvent({
+            title: t.dashboard.messages.sourceChecked,
+            detail: name ?? preview.name,
+            tone: 'info'
+          });
+        } catch (error) {
+          setLauncherMessage(error instanceof Error ? error.message : String(error));
+        }
+      } else if (payload.action === 'play') {
+        setSelectedGameId(payload.params.gameId);
+      } else if (payload.action === 'install') {
+        try {
+          const manifestData = await api.fetchManifest(payload.params.manifest);
+          const targetGame = manifestData.games[0];
+          if (targetGame) {
+            const outcome = await api.installGameFromManifest(payload.params.manifest, targetGame.title_id);
+            if (outcome) {
+              await refreshLauncherData();
+              addActivityEvent({
+                title: payload.params.title ?? targetGame.title,
+                detail: payload.params.manifest,
+                tone: 'success'
+              });
+            }
+          }
+        } catch (error) {
+          setLauncherMessage(error instanceof Error ? error.message : String(error));
+        }
+      } else if (payload.action === 'import') {
+        try {
+          const report = await api.autoImportSystemFile(payload.params.path);
+          if (report.success) {
+            await refreshLauncherData();
+            addActivityEvent({
+              title: report.label,
+              detail: report.status,
+              tone: 'success'
+            });
+          }
+        } catch (error) {
+          setLauncherMessage(error instanceof Error ? error.message : String(error));
+        }
+      } else if (payload.action === 'addGame') {
+        const { data, title } = payload.params;
+        try {
+          let jsonStr = data;
+          try {
+            const clean = data.replace(/-/g, '+').replace(/_/g, '/');
+            const decoded = atob(clean);
+            if (decoded.trim().startsWith('{')) {
+              jsonStr = decoded;
+            }
+          } catch {
+            // Already plain JSON string
+          }
+          const parsed = JSON.parse(jsonStr);
+          await api.addCustomGame(parsed);
+          await refreshLauncherData();
+          addActivityEvent({
+            title: title ?? parsed.title ?? 'Custom Game Added',
+            detail: parsed.platform ?? 'user-library',
+            tone: 'success'
+          });
+        } catch (error) {
+          setLauncherMessage(error instanceof Error ? error.message : String(error));
+        }
+      }
+    });
+
+    return () => {
+      active = false;
+      void unlistenPromise.then((unlisten) => unlisten());
+    };
+  }, [addActivityEvent, refreshLauncherData, t]);
 
   const items = useMemo(
     () => buildGameLibraryItems(storeCatalog, libraryStatuses, settings),
@@ -603,6 +698,10 @@ export function Dashboard({
             setNotificationsOpen(false);
             setSettingsOpen(true);
           }}
+          onOpenPortingStudio={() => {
+            setPortingStudioInitialFile(undefined);
+            setPortingStudioOpen(true);
+          }}
           onFocus={setFocusedItemId}
           refreshing={busyAction === 'refresh'}
           notificationsOpen={notificationsOpen}
@@ -617,6 +716,12 @@ export function Dashboard({
               setSelectedGameId(event.gameId);
               setNotificationsOpen(false);
             }
+          }}
+          games={items}
+          onSelectGame={(gameId) => setSelectedGameId(gameId)}
+          onNavigateToLibrary={(query) => {
+            if (query !== undefined) setLibrarySearch(query);
+            setActiveView('library');
           }}
         />
         {bannerMessage && <div className="rh-banner">{bannerMessage}</div>}
@@ -744,6 +849,36 @@ export function Dashboard({
             onOpenLogs={openLogs}
             onCheckAppUpdate={checkAppUpdate}
             onInstallAppUpdate={installAppUpdate}
+          />
+        )}
+
+        <GlobalDropZone
+          catalog={storeCatalog}
+          selectedGameId={selectedGameId}
+          onRefresh={async () => {
+            await refreshLauncherData();
+            await onRefresh();
+          }}
+          onSelectGame={(gameId) => setSelectedGameId(gameId)}
+          onActivityEvent={addActivityEvent}
+          onMessage={setLauncherMessage}
+          onOpenPortingStudio={(filePath) => {
+            setPortingStudioInitialFile(filePath);
+            setPortingStudioOpen(true);
+          }}
+        />
+
+        {portingStudioOpen && (
+          <GamePortingStudioModal
+            initialFilePath={portingStudioInitialFile}
+            onClose={() => {
+              setPortingStudioOpen(false);
+              setPortingStudioInitialFile(undefined);
+            }}
+            onGameAdded={async () => {
+              await refreshLauncherData();
+              await onRefresh();
+            }}
           />
         )}
       </AppShell>

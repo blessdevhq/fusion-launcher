@@ -1,5 +1,6 @@
 import type {
   CatalogGame,
+  DeepLinkAction,
   DiagnosticsBundle,
   DiagnosticsPaths,
   DownloadRecord,
@@ -9,6 +10,7 @@ import type {
   HealthReport,
   ImportAssetFileReport,
   ImportGameFileReport,
+  SmartImportReport,
   LibraryScrapeStatus,
   LaunchReport,
   LibraryGameStatus,
@@ -345,6 +347,9 @@ export const previewApi = {
     };
     return { running: false, pending: steamgriddbStatus.pendingBatch };
   },
+  async cacheArtwork(url: string): Promise<string> {
+    return url;
+  },
   async checkRequirements(gameId: string): Promise<RequirementsReport> {
     const setup = await previewApi.getGameSetupState(gameId);
     return {
@@ -526,6 +531,78 @@ export const previewApi = {
     const installedPath = previewJoin(PREVIEW_SYSTEM_ROOT, profile.platform, requirement.targetName ?? requirement.id);
     profileSystemFileImports[`${profile.id}:${requirement.id}`] = installedPath;
     return { status: 'installed', installedPath };
+  },
+  async detectSystemFile(sourcePath: string): Promise<SmartImportReport> {
+    const normalized = sourcePath.toLowerCase();
+    if (normalized.endsWith('prod.keys') || normalized.endsWith('.keys')) {
+      return {
+        success: true,
+        detectedKind: 'switch_keys',
+        platform: 'switch',
+        profileId: 'switch-manual',
+        requirementId: 'switch-prod-keys',
+        label: 'Switch prod.keys',
+        status: 'ready',
+        message: 'Nintendo Switch keys recognized.'
+      };
+    }
+    if (normalized.endsWith('firmware.zip') || normalized.includes('firmware')) {
+      return {
+        success: true,
+        detectedKind: 'switch_firmware',
+        platform: 'switch',
+        profileId: 'switch-manual',
+        requirementId: 'switch-firmware',
+        label: 'Switch firmware',
+        status: 'ready',
+        message: 'Nintendo Switch firmware recognized.'
+      };
+    }
+    if (normalized.endsWith('.pup') || normalized.includes('ps3updat')) {
+      return {
+        success: true,
+        detectedKind: 'ps3_firmware',
+        platform: 'ps3',
+        profileId: 'ps3-manual',
+        requirementId: 'ps3-firmware',
+        label: 'PlayStation 3 Firmware',
+        status: 'ready',
+        message: 'PlayStation 3 firmware recognized.'
+      };
+    }
+    if (normalized.includes('ps2') || normalized.includes('scph')) {
+      return {
+        success: true,
+        detectedKind: 'ps2_bios',
+        platform: 'ps2',
+        profileId: 'ps2-pcsx2',
+        requirementId: 'ps2-bios',
+        label: 'PlayStation 2 BIOS',
+        status: 'ready',
+        message: 'PlayStation 2 BIOS recognized.'
+      };
+    }
+    return {
+      success: false,
+      detectedKind: 'unknown',
+      label: 'Unknown file',
+      status: 'unrecognized',
+      message: 'File not recognized as a system requirement.'
+    };
+  },
+  async autoImportSystemFile(sourcePath: string): Promise<SmartImportReport> {
+    const detection = await this.detectSystemFile(sourcePath);
+    if (!detection.success || !detection.profileId || !detection.requirementId) {
+      return detection;
+    }
+    const installedPath = previewJoin(PREVIEW_SYSTEM_ROOT, detection.platform ?? 'system', detection.label);
+    profileSystemFileImports[`${detection.profileId}:${detection.requirementId}`] = installedPath;
+    return {
+      ...detection,
+      installedPath,
+      status: 'installed',
+      message: `Successfully installed ${detection.label}`
+    };
   },
   async listEmulatorConfigs(): Promise<EmulatorConfig[]> {
     return listDefaultEmulatorConfigs();
@@ -788,6 +865,41 @@ export const previewApi = {
     };
   },
   async installAppUpdate(): Promise<void> {
+    return undefined;
+  },
+  async parseDeepLink(uri: string): Promise<DeepLinkAction> {
+    try {
+      const url = new URL(uri);
+      const host = url.host.toLowerCase();
+      const path = url.pathname.replace(/^\//, '').toLowerCase();
+      const params = Object.fromEntries(url.searchParams.entries());
+
+      if (host === 'source' || path.startsWith('source')) {
+        if (params.url) {
+          return { action: 'addSource', params: { url: params.url, name: params.name } };
+        }
+      } else if (host === 'install' || path.startsWith('install')) {
+        const manifest = params.manifest || params.url;
+        if (manifest) {
+          return { action: 'install', params: { manifest, title: params.title } };
+        }
+      } else if (host === 'play' || path.startsWith('play')) {
+        const gameId = params.game || params.id;
+        if (gameId) {
+          return { action: 'play', params: { gameId } };
+        }
+      } else if (host === 'import' || path.startsWith('import')) {
+        const filePath = params.path || params.file;
+        if (filePath) {
+          return { action: 'import', params: { path: filePath } };
+        }
+      }
+    } catch {
+      // ignore
+    }
+    return { action: 'unknown', params: { uri } };
+  },
+  async registerDeepLinkProtocol(): Promise<void> {
     return undefined;
   }
 };
