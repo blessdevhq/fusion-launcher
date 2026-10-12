@@ -1090,3 +1090,120 @@ fn loads_repository_from_local_json_file() {
     assert_eq!(repo.metadata.id, "repo");
     assert!(url.starts_with("file:"));
 }
+
+#[test]
+fn select_profile_emulator_validates_candidates_and_canonicalizes() {
+    let dir = tempdir().unwrap();
+    let store = RepositoryStore::open(&dir.path().join("test.db")).unwrap();
+    let state = AppState {
+        store: std::sync::Arc::new(std::sync::Mutex::new(store)),
+        data_dir: dir.path().to_path_buf(),
+        local_data_dir: dir.path().to_path_buf(),
+        torrents: None,
+        direct_downloads: crate::downloads::DirectDownloadRegistry::default(),
+        running_games: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+        library_scrape: crate::scraper::LibraryScrapeRuntime::default(),
+    };
+
+    // 1. Rejects unknown profile
+    assert!(select_profile_emulator_internal("unknown-profile", "eden.exe", &state).is_err());
+
+    // 2. Rejects executable that does not match profile candidates
+    // switch-manual candidates: ["eden.exe", "eden-cli.exe", "Ryujinx.exe", "suyu.exe"]
+    let bad_exe = dir.path().join("malicious.exe");
+    std::fs::write(&bad_exe, b"not_switch").unwrap();
+    let err = select_profile_emulator_internal("switch-manual", &bad_exe.to_string_lossy(), &state)
+        .unwrap_err();
+    assert!(err.contains("does not match expected emulator executable"));
+
+    // 3. Accepts matching executable, canonicalizes path, and records integrity
+    let good_exe = dir.path().join("Ryujinx.exe");
+    std::fs::write(&good_exe, b"switch_emu").unwrap();
+    let config =
+        select_profile_emulator_internal("switch-manual", &good_exe.to_string_lossy(), &state)
+            .unwrap();
+    assert_eq!(config.platform, "switch");
+    assert_eq!(config.status, "valid");
+    let canon = good_exe
+        .canonicalize()
+        .unwrap()
+        .to_string_lossy()
+        .to_string();
+    assert_eq!(config.exe_path.as_deref(), Some(canon.as_str()));
+}
+
+#[test]
+fn save_emulator_config_validates_candidates_and_canonicalizes() {
+    let dir = tempdir().unwrap();
+    let store = RepositoryStore::open(&dir.path().join("test.db")).unwrap();
+    let state = AppState {
+        store: std::sync::Arc::new(std::sync::Mutex::new(store)),
+        data_dir: dir.path().to_path_buf(),
+        local_data_dir: dir.path().to_path_buf(),
+        torrents: None,
+        direct_downloads: crate::downloads::DirectDownloadRegistry::default(),
+        running_games: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+        library_scrape: crate::scraper::LibraryScrapeRuntime::default(),
+    };
+
+    // 1. Rejects mismatching executable for platform
+    let bad_exe = dir.path().join("notepad.exe");
+    std::fs::write(&bad_exe, b"notepad").unwrap();
+    let err = save_emulator_config_internal("switch", &bad_exe.to_string_lossy(), None, &state)
+        .unwrap_err();
+    assert!(err.contains("does not match expected emulator executable"));
+
+    // 2. Accepts matching executable for platform
+    let good_exe = dir.path().join("eden.exe");
+    std::fs::write(&good_exe, b"eden").unwrap();
+    let config =
+        save_emulator_config_internal("switch", &good_exe.to_string_lossy(), None, &state).unwrap();
+    assert_eq!(config.platform, "switch");
+    assert_eq!(config.status, "valid");
+    let canon = good_exe
+        .canonicalize()
+        .unwrap()
+        .to_string_lossy()
+        .to_string();
+    assert_eq!(config.exe_path.as_deref(), Some(canon.as_str()));
+}
+
+#[test]
+fn trust_updated_emulator_records_new_hash_and_mtime() {
+    let dir = tempdir().unwrap();
+    let store = RepositoryStore::open(&dir.path().join("test.db")).unwrap();
+    let state = AppState {
+        store: std::sync::Arc::new(std::sync::Mutex::new(store)),
+        data_dir: dir.path().to_path_buf(),
+        local_data_dir: dir.path().to_path_buf(),
+        torrents: None,
+        direct_downloads: crate::downloads::DirectDownloadRegistry::default(),
+        running_games: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+        library_scrape: crate::scraper::LibraryScrapeRuntime::default(),
+    };
+
+    let exe = dir.path().join("Ryujinx.exe");
+    std::fs::write(&exe, b"initial binary").unwrap();
+
+    // Configure profile emulator
+    select_profile_emulator_internal("switch-manual", &exe.to_string_lossy(), &state).unwrap();
+
+    // Trust it
+    let report1 = trust_updated_emulator_internal("switch-manual", &state).unwrap();
+    assert_eq!(report1.target, "switch-manual");
+    assert_eq!(
+        report1.exe_path,
+        exe.canonicalize().unwrap().to_string_lossy()
+    );
+
+    // Update the binary
+    std::thread::sleep(std::time::Duration::from_millis(10));
+    std::fs::write(&exe, b"updated binary").unwrap();
+
+    let report2 = trust_updated_emulator_internal("switch-manual", &state).unwrap();
+    assert_ne!(report1.current_sha256, report2.current_sha256);
+    assert_eq!(
+        report2.previous_sha256_prefix,
+        Some(report1.current_sha256_prefix)
+    );
+}

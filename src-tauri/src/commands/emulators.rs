@@ -19,27 +19,60 @@ pub fn list_emulator_configs(state: State<'_, AppState>) -> Result<Vec<EmulatorC
 }
 
 #[tauri::command]
-pub fn save_emulator_config(
+pub async fn save_emulator_config(
     platform: String,
     exe_path: String,
     launch_args_template: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<EmulatorConfig, String> {
-    validate_platform(&platform)?;
-    let normalized_path = exe_path.trim();
-    let status = validate_emulator_status(Some(normalized_path));
-    let template = normalize_launch_args_template(launch_args_template)
-        .or_else(|| setup_profiles::default_launch_args_for(&platform));
+    let state = state.inner().clone();
+    tokio::task::spawn_blocking(move || {
+        save_emulator_config_internal(&platform, exe_path.trim(), launch_args_template, &state)
+    })
+    .await
+    .map_err(|e| format!("Save emulator config task failed: {e}"))?
+}
 
-    if status == "valid" {
-        if let Ok(canon) = crate::launcher::canonical_emulator_path(normalized_path) {
-            let _ = crate::orchestrator::record_exe(&state, &canon);
+pub(crate) fn save_emulator_config_internal(
+    platform: &str,
+    exe_path: &str,
+    launch_args_template: Option<String>,
+    state: &AppState,
+) -> Result<EmulatorConfig, String> {
+    validate_platform(platform)?;
+    let normalized_path = exe_path.trim();
+    if normalized_path.is_empty() {
+        return Err("Emulator executable path is required.".to_string());
+    }
+
+    if let Some(profile) = setup_profiles::get_default_platform_setup_profile(platform) {
+        let file_name = Path::new(normalized_path)
+            .file_name()
+            .and_then(|f| f.to_str())
+            .ok_or_else(|| "Invalid emulator path: missing file name.".to_string())?;
+
+        let candidates = &profile.emulator.executable_candidates;
+        if !candidates.is_empty() && !candidates.iter().any(|c| c.eq_ignore_ascii_case(file_name)) {
+            return Err(format!(
+                "Selected file '{}' does not match expected emulator executable for {} (expected: {})",
+                file_name,
+                profile.display_name,
+                candidates.join(", ")
+            ));
         }
     }
 
-    lock_store(&state)?.upsert_emulator_config(
-        &platform,
-        Some(normalized_path),
+    let canon = crate::launcher::canonical_emulator_path(normalized_path)?;
+    crate::orchestrator::record_exe(state, &canon)?;
+    let canon_str = canon.to_string_lossy().to_string();
+
+    let status = validate_emulator_status(Some(&canon_str));
+    let template = normalize_launch_args_template(launch_args_template)
+        .or_else(|| setup_profiles::default_launch_args_for(platform));
+
+    lock_app_store(state)?.upsert_emulator_config(
+        platform,
+        Some(&canon_str),
         status,
         None,
         template.as_deref(),

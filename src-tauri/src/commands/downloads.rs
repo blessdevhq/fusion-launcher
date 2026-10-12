@@ -224,96 +224,6 @@ pub(crate) async fn download_asset_internal(
     }
 }
 
-pub(crate) async fn prepare_manifest_emulator_bundle_asset(
-    asset_id: &str,
-    state: &AppState,
-    app: &AppHandle,
-    target_dir: Option<&Path>,
-) -> Result<PathBuf, String> {
-    let content_dir = library_root_for_app_state(state);
-    let (asset, existing, expected_bundle_dir) = {
-        let store = lock_app_store(state)?;
-        let asset = store
-            .get_asset(asset_id)?
-            .ok_or_else(|| format!("Unknown asset: {asset_id}"))?;
-        if !is_manifest_emulator_bundle(&asset) {
-            return Err(format!(
-                "asset_is_not_manifest_emulator_bundle:{}",
-                asset.id
-            ));
-        }
-        let source = asset
-            .sources
-            .first()
-            .ok_or_else(|| format!("Asset {} has no sources.", asset.display_name))?;
-        let expected_bundle_dir = resolve_asset_target_with_override(
-            &store,
-            &content_dir,
-            &asset,
-            source,
-            target_dir,
-        )
-        .map_err(|blocked| blocked.message)?
-        .parent()
-        .map(Path::to_path_buf)
-        .ok_or_else(|| format!("Emulator asset target has no parent: {}", asset.id))?;
-        let existing = store
-            .get_download(&asset.id)?
-            .filter(|record| is_download_ready_status(&record.status));
-        (asset, existing, expected_bundle_dir)
-    };
-
-    if let Some(record) = existing {
-        let path = record
-            .local_path
-            .as_deref()
-            .map(PathBuf::from)
-            .ok_or_else(|| format!("emulator_asset_download_missing_path:{asset_id}"))?;
-        if path.is_dir() && path_is_existing_bundle_dir(&expected_bundle_dir, &path) {
-            return Ok(path);
-        }
-        if path.is_file()
-            && path
-                .parent()
-                .is_some_and(|parent| path_is_existing_bundle_dir(&expected_bundle_dir, parent))
-        {
-            let total_bytes = file_size(&path);
-            let source_kind = asset
-                .sources
-                .first()
-                .map(direct_source_kind)
-                .unwrap_or("http");
-            let final_path = post_process_manifest_emulator_bundle_archive(&asset, &path).await?;
-            let record = record_completed_asset_download(
-                state,
-                app,
-                &asset,
-                source_kind,
-                &final_path,
-                record.sha256.as_deref(),
-                total_bytes,
-            )?;
-            return record
-                .local_path
-                .map(PathBuf::from)
-                .ok_or_else(|| format!("emulator_asset_download_missing_path:{asset_id}"));
-        }
-    }
-
-    let record = download_asset_internal(asset_id, state, app, target_dir).await?;
-    let path = record
-        .local_path
-        .map(PathBuf::from)
-        .ok_or_else(|| format!("emulator_asset_download_missing_path:{asset_id}"))?;
-    if path.is_dir() {
-        Ok(path)
-    } else {
-        Err(format!(
-            "emulator_asset_not_extracted:{}",
-            path.display()
-        ))
-    }
-}
 
 fn record_completed_asset_download(
     state: &AppState,
@@ -442,16 +352,6 @@ pub(super) fn extract_game_archive_if_needed(
     }
 
     Ok(extract_dir)
-}
-
-fn path_is_existing_bundle_dir(expected: &Path, actual: &Path) -> bool {
-    if !expected.exists() || !actual.exists() {
-        return false;
-    }
-    match (fs::canonicalize(expected), fs::canonicalize(actual)) {
-        (Ok(expected), Ok(actual)) => expected == actual,
-        _ => false,
-    }
 }
 
 #[tauri::command]

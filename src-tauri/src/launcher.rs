@@ -276,7 +276,9 @@ pub fn launch_game(
                     .and_then(|profile| profile.launch.preferred_file.clone())
             });
         let launch_args_template = select_launch_args_template(
-            game.launch.as_ref().and_then(|l| l.args_template.as_deref()),
+            game.launch
+                .as_ref()
+                .and_then(|l| l.args_template.as_deref()),
             profile.as_ref().map(|p| p.launch.args_template.as_str()),
             emulator_config_launch_args.as_deref(),
             profile
@@ -466,7 +468,9 @@ fn verify_emulator_exe(state: &AppState, emulator_path: &str) -> Result<(), Laun
             .store
             .lock()
             .map_err(|_| LaunchFailure::spawn_failed("Repository store lock is poisoned."))?;
-        store.get_config(&key).map_err(LaunchFailure::spawn_failed)?
+        store
+            .get_config(&key)
+            .map_err(LaunchFailure::spawn_failed)?
     };
     match crate::exe_integrity::check(path, stored.as_deref())
         .map_err(LaunchFailure::spawn_failed)?
@@ -498,9 +502,7 @@ pub(crate) fn manifest_template_is_safe(template: &str, allowed_flags: &[String]
         return false;
     };
     tokens.iter().all(|t| {
-        t == "{game_path}"
-            || t == "{rom_path}"
-            || allowed_flags.iter().any(|allowed| allowed == t)
+        t == "{game_path}" || t == "{rom_path}" || allowed_flags.iter().any(|allowed| allowed == t)
     })
 }
 
@@ -744,12 +746,21 @@ mod tests {
         assert!(manifest_template_is_safe("{game_path}", &allowed));
         assert!(manifest_template_is_safe("{rom_path}", &allowed));
         assert!(manifest_template_is_safe("-f {game_path}", &allowed));
-        assert!(manifest_template_is_safe("-f --aspect-ratio=16:9 {rom_path}", &allowed));
+        assert!(manifest_template_is_safe(
+            "-f --aspect-ratio=16:9 {rom_path}",
+            &allowed
+        ));
 
         // Rejected cases
-        assert!(!manifest_template_is_safe("--arbitrary-flag {game_path}", &allowed));
+        assert!(!manifest_template_is_safe(
+            "--arbitrary-flag {game_path}",
+            &allowed
+        ));
         assert!(!manifest_template_is_safe("--cfg={game_path}", &allowed));
-        assert!(!manifest_template_is_safe("{emulator_path} {game_path}", &allowed));
+        assert!(!manifest_template_is_safe(
+            "{emulator_path} {game_path}",
+            &allowed
+        ));
     }
 
     #[test]
@@ -799,12 +810,8 @@ mod tests {
         .unwrap_err();
         assert!(err.contains("must not start with '-'"));
 
-        let err_rom = parse_launch_args(
-            "C:/Emulators/retro.exe",
-            "-flag",
-            "{rom_path}",
-        )
-        .unwrap_err();
+        let err_rom =
+            parse_launch_args("C:/Emulators/retro.exe", "-flag", "{rom_path}").unwrap_err();
         assert!(err_rom.contains("must not start with '-'"));
     }
 }

@@ -111,28 +111,56 @@ pub(super) fn remove_profile_emulator_from_store(
 }
 
 #[tauri::command]
-pub fn select_profile_emulator(
+pub async fn select_profile_emulator(
     profile_id: String,
     executable_path: String,
     state: State<'_, AppState>,
 ) -> Result<ProfileEmulatorConfig, String> {
-    let profile = setup_profiles::get_platform_setup_profile(profile_id.trim())
+    let state = state.inner().clone();
+    tokio::task::spawn_blocking(move || {
+        select_profile_emulator_internal(profile_id.trim(), executable_path.trim(), &state)
+    })
+    .await
+    .map_err(|e| format!("Select profile emulator task failed: {e}"))?
+}
+
+pub(crate) fn select_profile_emulator_internal(
+    profile_id: &str,
+    executable_path: &str,
+    state: &AppState,
+) -> Result<ProfileEmulatorConfig, String> {
+    let profile = setup_profiles::get_platform_setup_profile(profile_id)
         .ok_or_else(|| format!("Unknown setup profile: {profile_id}"))?;
     let normalized_path = executable_path.trim();
     if normalized_path.is_empty() {
         return Err("Emulator executable path is required.".to_string());
     }
-    let status = validate_emulator_status(Some(normalized_path));
-    if status == "valid" {
-        if let Ok(canon) = crate::launcher::canonical_emulator_path(normalized_path) {
-            let _ = crate::orchestrator::record_exe(&state, &canon);
-        }
+
+    let file_name = Path::new(normalized_path)
+        .file_name()
+        .and_then(|f| f.to_str())
+        .ok_or_else(|| "Invalid emulator path: missing file name.".to_string())?;
+
+    let candidates = &profile.emulator.executable_candidates;
+    if !candidates.is_empty() && !candidates.iter().any(|c| c.eq_ignore_ascii_case(file_name)) {
+        return Err(format!(
+            "Selected file '{}' does not match expected emulator executable for {} (expected: {})",
+            file_name,
+            profile.display_name,
+            candidates.join(", ")
+        ));
     }
-    let store = lock_store(&state)?;
+
+    let canon = crate::launcher::canonical_emulator_path(normalized_path)?;
+    crate::orchestrator::record_exe(state, &canon)?;
+    let canon_str = canon.to_string_lossy().to_string();
+
+    let status = validate_emulator_status(Some(&canon_str));
+    let store = lock_app_store(state)?;
     let config = store.upsert_profile_emulator_config(
         &profile.id,
         &profile.platform,
-        Some(normalized_path),
+        Some(&canon_str),
         status,
         None,
         Some(&profile.launch.args_template),
@@ -152,11 +180,23 @@ pub struct TrustUpdatedEmulatorReport {
 }
 
 #[tauri::command]
-pub fn trust_updated_emulator(
+pub async fn trust_updated_emulator(
     target: String,
     state: State<'_, AppState>,
 ) -> Result<TrustUpdatedEmulatorReport, String> {
-    let store = lock_store(&state)?;
+    let state = state.inner().clone();
+    tokio::task::spawn_blocking(move || {
+        trust_updated_emulator_internal(target.trim(), &state)
+    })
+    .await
+    .map_err(|e| format!("Trust updated emulator task failed: {e}"))?
+}
+
+pub(crate) fn trust_updated_emulator_internal(
+    target: &str,
+    state: &AppState,
+) -> Result<TrustUpdatedEmulatorReport, String> {
+    let store = lock_app_store(state)?;
     let trimmed = target.trim();
     let exe_path = if let Some(config) = store.get_profile_emulator_config(trimmed)? {
         config.exe_path

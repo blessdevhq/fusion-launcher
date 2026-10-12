@@ -145,11 +145,7 @@ pub fn list_platform_setup_profiles() -> Vec<PlatformSetupProfile> {
                     Some("Optional firmware package provided by the user."),
                 ),
             ],
-            launch_with_flags(
-                "{game_path}",
-                None,
-                &["-f", "--fullscreen"],
-            ),
+            launch_with_flags("{game_path}", None, &["-f", "--fullscreen"]),
         ),
         profile(
             "snes-manual",
