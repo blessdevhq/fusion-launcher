@@ -271,7 +271,10 @@ impl RepositoryStore {
             .map_err(|error| error.to_string())
     }
 
-    pub fn get_repository_trust_level(&self, repository_id: &str) -> Result<Option<String>, String> {
+    pub fn get_repository_trust_level(
+        &self,
+        repository_id: &str,
+    ) -> Result<Option<String>, String> {
         self.conn
             .query_row(
                 "SELECT trust_level FROM repositories WHERE id = ?1",

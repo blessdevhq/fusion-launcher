@@ -254,6 +254,9 @@ impl RepositoryStore {
         if user_version < 1 {
             self.migrate_v0_to_v1_inner()?;
         }
+        if user_version < 2 {
+            self.migrate_v1_to_v2_inner()?;
+        }
 
         Ok(())
     }
@@ -325,6 +328,39 @@ impl RepositoryStore {
             }
 
             self.conn.execute_batch("PRAGMA user_version = 1;")?;
+            Ok(())
+        })();
+
+        match result {
+            Ok(()) => {
+                self.conn.execute_batch("COMMIT")?;
+                Ok(())
+            }
+            Err(error) => {
+                let _ = self.conn.execute_batch("ROLLBACK");
+                Err(error)
+            }
+        }
+    }
+
+    fn migrate_v1_to_v2_inner(&self) -> rusqlite::Result<()> {
+        self.conn.execute_batch("BEGIN IMMEDIATE")?;
+        let result = (|| -> rusqlite::Result<()> {
+            let builtin_urls = [
+                crate::builtin_demo::BUILTIN_DEMO_REPOSITORY_URL,
+                crate::builtin_demo::LEGACY_BUILTIN_DEMO_REPOSITORY_URL,
+            ];
+            self.conn.execute(
+                r#"
+                UPDATE repositories
+                SET trust_level = 'community'
+                WHERE trust_level = 'official'
+                  AND url NOT IN (?1, ?2)
+                "#,
+                params![builtin_urls[0], builtin_urls[1]],
+            )?;
+
+            self.conn.execute_batch("PRAGMA user_version = 2;")?;
             Ok(())
         })();
 

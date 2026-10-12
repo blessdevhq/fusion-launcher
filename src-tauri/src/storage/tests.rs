@@ -753,7 +753,10 @@ fn manifest_emulator_records_preserved_across_store_reopen() {
     {
         let store = RepositoryStore::open(&db_path).unwrap();
         let value = store.get_config("manifest_emulator:switch-game-1").unwrap();
-        assert!(value.is_some(), "manifest_emulator record must persist across store reopen");
+        assert!(
+            value.is_some(),
+            "manifest_emulator record must persist across store reopen"
+        );
     }
 }
 
@@ -794,6 +797,17 @@ fn migration_from_v0_legacy_database_with_mixed_records() {
                 updated_at TEXT NOT NULL
             );
 
+            CREATE TABLE repositories (
+                id TEXT PRIMARY KEY,
+                url TEXT NOT NULL,
+                name TEXT NOT NULL,
+                version TEXT NOT NULL,
+                schema_version INTEGER NOT NULL,
+                trust_level TEXT NOT NULL DEFAULT 'unknown',
+                connected_at TEXT NOT NULL,
+                raw_json TEXT NOT NULL
+            );
+
             -- Valid normal profile config that must be preserved
             INSERT INTO profile_emulator_configs
                 (profile_id, platform, exe_path, status, last_validated_at, version, launch_args_template)
@@ -819,11 +833,21 @@ fn migration_from_v0_legacy_database_with_mixed_records() {
             -- Normal app_config key that must be preserved
             INSERT INTO app_config (key, value, updated_at)
             VALUES ('download_root', 'F:/CustomGames', '2026-06-01T00:00:00Z');
+
+            -- External repo falsely claiming 'official' trust level (must be demoted to 'community')
+            INSERT INTO repositories (id, url, name, version, schema_version, trust_level, connected_at, raw_json)
+            VALUES ('attacker-repo', 'https://attacker.com/repo.json', 'Attacker Repo', '1.0.0', 1, 'official', '2026-01-01', '{}');
+
+            -- Builtin demo repo claiming 'official' (must remain 'official')
+            INSERT INTO repositories (id, url, name, version, schema_version, trust_level, connected_at, raw_json)
+            VALUES ('builtin-repo', 'fusion-launcher://builtin/demo-repository.json', 'Builtin Demo', '1.0.0', 1, 'official', '2026-01-01', '{}');
             "#,
         )
         .unwrap();
 
-        let v: i32 = conn.query_row("PRAGMA user_version;", [], |row| row.get(0)).unwrap();
+        let v: i32 = conn
+            .query_row("PRAGMA user_version;", [], |row| row.get(0))
+            .unwrap();
         assert_eq!(v, 0);
     }
 
@@ -831,12 +855,33 @@ fn migration_from_v0_legacy_database_with_mixed_records() {
     {
         let store = RepositoryStore::open(&db_path).unwrap();
 
-        // Verify user_version was bumped to 1
-        let v: i32 = store.conn.query_row("PRAGMA user_version;", [], |row| row.get(0)).unwrap();
-        assert_eq!(v, 1, "user_version must be bumped to 1 after migration");
+        // Verify user_version was bumped to 2
+        let v: i32 = store
+            .conn
+            .query_row("PRAGMA user_version;", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(v, 2, "user_version must be bumped to 2 after migration");
+
+        // Verify attacker repo was demoted, but builtin was kept official
+        let attacker = store
+            .get_repository_trust_level("attacker-repo")
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            attacker, "community",
+            "External repo claiming official must be demoted by v2 migration"
+        );
+        let builtin = store
+            .get_repository_trust_level("builtin-repo")
+            .unwrap()
+            .unwrap();
+        assert_eq!(builtin, "official", "Builtin repo must remain official");
 
         // Verify valid profile was preserved
-        let nes = store.get_profile_emulator_config("nes-mesen").unwrap().unwrap();
+        let nes = store
+            .get_profile_emulator_config("nes-mesen")
+            .unwrap()
+            .unwrap();
         assert_eq!(nes.exe_path.as_deref(), Some("C:/Games/Mesen.exe"));
         assert_eq!(nes.version.as_deref(), Some("2.1.1"));
 
@@ -848,10 +893,16 @@ fn migration_from_v0_legacy_database_with_mixed_records() {
 
         // Verify poisoned records were purged
         let poisoned_switch = store.get_profile_emulator_config("switch-manual").unwrap();
-        assert!(poisoned_switch.is_none(), "Poisoned Switch manifest config must be wiped");
+        assert!(
+            poisoned_switch.is_none(),
+            "Poisoned Switch manifest config must be wiped"
+        );
 
         let poisoned_config = store.get_config("manifest_emulator:poisoned-game").unwrap();
-        assert!(poisoned_config.is_none(), "Poisoned manifest_emulator config must be wiped");
+        assert!(
+            poisoned_config.is_none(),
+            "Poisoned manifest_emulator config must be wiped"
+        );
 
         // 3. User now sets up a new legitimate Switch manifest emulator
         store
@@ -867,12 +918,18 @@ fn migration_from_v0_legacy_database_with_mixed_records() {
         let store = RepositoryStore::open(&db_path).unwrap();
 
         // The newly saved Switch manifest emulator must NOT be wiped on restart!
-        let legit = store.get_config("manifest_emulator:legit-switch-game").unwrap();
-        assert!(legit.is_some(), "Legitimate Switch emulator config must persist across restarts");
+        let legit = store
+            .get_config("manifest_emulator:legit-switch-game")
+            .unwrap();
+        assert!(
+            legit.is_some(),
+            "Legitimate Switch emulator config must persist across restarts"
+        );
 
-        let nes = store.get_profile_emulator_config("nes-mesen").unwrap().unwrap();
+        let nes = store
+            .get_profile_emulator_config("nes-mesen")
+            .unwrap()
+            .unwrap();
         assert_eq!(nes.version.as_deref(), Some("2.1.1"));
     }
 }
-
-
