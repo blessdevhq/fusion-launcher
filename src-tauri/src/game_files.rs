@@ -81,7 +81,19 @@ pub fn resolve_game_path(
                 candidate.display()
             )));
         }
-        validate_game_file(&candidate, expected_extensions)?;
+        let canonical_game_dir = game_path
+            .canonicalize()
+            .map_err(|e| corrupt(format!("Failed to canonicalize game directory: {e}")))?;
+        let canonical_candidate = candidate
+            .canonicalize()
+            .map_err(|e| corrupt(format!("Failed to canonicalize game candidate: {e}")))?;
+        if !canonical_candidate.starts_with(&canonical_game_dir) {
+            return Err(corrupt(format!(
+                "Preferred game file escaped game directory: {}",
+                candidate.display()
+            )));
+        }
+        validate_game_file(&canonical_candidate, expected_extensions)?;
         return make_absolute(&candidate);
     }
 
@@ -321,7 +333,9 @@ fn corrupt(message: impl Into<String>) -> GamePathError {
 
 #[cfg(test)]
 mod tests {
-    use super::{normalize_expected_extensions, resolve_game_path, GamePathErrorKind};
+    use super::{
+        normalize_expected_extensions, resolve_game_path, safe_relative_path, GamePathErrorKind,
+    };
 
     fn valid_nes_bytes() -> Vec<u8> {
         let mut bytes = b"NES\x1A".to_vec();
@@ -468,4 +482,72 @@ mod tests {
 
         assert_eq!(resolved, game_path);
     }
+
+    #[test]
+    fn preferred_file_inside_dir_is_accepted() {
+        let temp = tempfile::tempdir().unwrap();
+        let game_dir = temp.path().join("game-dir");
+        std::fs::create_dir(&game_dir).unwrap();
+        let rom = game_dir.join("game.nsp");
+        std::fs::write(&rom, b"rom-content").unwrap();
+
+        let expected_extensions = normalize_expected_extensions(&[".nsp".to_string()]).unwrap();
+        let resolved = resolve_game_path(&game_dir, &expected_extensions, Some("game.nsp")).unwrap();
+
+        assert_eq!(resolved, rom);
+    }
+
+    #[test]
+    fn preferred_file_path_traversal_is_rejected() {
+        let temp = tempfile::tempdir().unwrap();
+        let game_dir = temp.path().join("game-dir");
+        std::fs::create_dir(&game_dir).unwrap();
+        let rom = game_dir.join("game.nsp");
+        std::fs::write(&rom, b"rom-content").unwrap();
+
+        // Lexical traversal like ../other.nsp gets stripped by safe_relative_path -> falls back to scan or missing
+        assert!(safe_relative_path("../outside.nsp").is_none());
+        assert!(safe_relative_path("C:\\Windows\\System32\\cmd.exe").is_none());
+        assert!(safe_relative_path("/etc/passwd").is_none());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn preferred_file_junction_escape_is_rejected() {
+        let temp = tempfile::tempdir().unwrap();
+        let game_dir = temp.path().join("game-dir");
+        let outside_dir = temp.path().join("outside-dir");
+        std::fs::create_dir_all(&game_dir).unwrap();
+        std::fs::create_dir_all(&outside_dir).unwrap();
+        let outside_rom = outside_dir.join("outside.nsp");
+        std::fs::write(&outside_rom, b"outside-rom-content").unwrap();
+
+        let junction = game_dir.join("escaped_junction");
+        let status = std::process::Command::new("cmd")
+            .args([
+                "/C",
+                "mklink",
+                "/J",
+                junction.to_str().unwrap(),
+                outside_dir.to_str().unwrap(),
+            ])
+            .status();
+
+        if let Ok(s) = status {
+            if s.success() {
+                let expected_extensions =
+                    normalize_expected_extensions(&[".nsp".to_string()]).unwrap();
+                let result = resolve_game_path(
+                    &game_dir,
+                    &expected_extensions,
+                    Some("escaped_junction/outside.nsp"),
+                );
+                assert!(result.is_err());
+                let err = result.unwrap_err();
+                assert_eq!(err.kind, GamePathErrorKind::Corrupt);
+                assert!(err.message.contains("escaped game directory"));
+            }
+        }
+    }
 }
+

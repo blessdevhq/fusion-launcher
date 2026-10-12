@@ -263,22 +263,83 @@ fn persist_manifest_emulator_bundle(
         .map(|_| ())
 }
 
-/// Read the persisted emulator bundle for a game, if any, as an install override.
 fn manifest_emulator_override(
     state: &AppState,
     game_id: &str,
 ) -> Result<Option<EmulatorSourceOverride>, String> {
-    let Some(raw) = lock_store(state)?.get_config(&manifest_emulator_config_key(game_id))? else {
-        return Ok(None);
-    };
-    let bundle: PersistedEmulatorBundle =
-        serde_json::from_str(&raw).map_err(|error| error.to_string())?;
-    Ok(Some(EmulatorSourceOverride {
-        url: bundle.url,
-        sha256: bundle.sha256,
-        asset_id: bundle.asset_id,
-        executable: bundle.executable,
-    }))
+    let store = lock_store(state)?;
+    if let Some(raw) = store.get_config(&manifest_emulator_config_key(game_id))? {
+        let bundle: PersistedEmulatorBundle =
+            serde_json::from_str(&raw).map_err(|error| error.to_string())?;
+        return Ok(Some(EmulatorSourceOverride {
+            url: bundle.url,
+            sha256: bundle.sha256,
+            asset_id: bundle.asset_id,
+            executable: bundle.executable,
+        }));
+    }
+
+    // Auto-heal: if app_config was cleared by a security migration, recover from the repository catalog
+    if let Ok(Some(game)) = store.get_game(game_id) {
+        let trust_level = store
+            .get_repository_trust_level(&game.repository_id)
+            .ok()
+            .flatten();
+        let is_trusted = matches!(trust_level.as_deref(), Some("official"));
+        if !is_trusted {
+            return Err(format!(
+                "Refusing to auto-heal emulator bundle from untrusted or unverified repository: {} (trust level: {:?})",
+                game.repository_id,
+                trust_level.as_deref().unwrap_or("none")
+            ));
+        }
+        if let Ok(Some(raw_json)) = store.get_repository_raw_json(&game.repository_id) {
+            if let Ok(manifest) = serde_json::from_str::<crate::manifest::Manifest>(&raw_json) {
+                if let Some(mg) = manifest.games.iter().find(|g| g.title_id == game.source_id) {
+                    if let Some(bundle_url) = mg
+                        .assets
+                        .core_bundle_url
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                    {
+                        let Some(sha256) = mg
+                            .assets
+                            .core_bundle_sha256
+                            .as_deref()
+                            .map(str::trim)
+                            .filter(|s| s.len() == 64 && s.chars().all(|c| c.is_ascii_hexdigit()))
+                        else {
+                            return Err(format!(
+                                "Refusing to auto-heal emulator bundle without valid SHA-256 integrity hash for game: {game_id}"
+                            ));
+                        };
+                        let repo_id = manifest.repository_id();
+                        let bundle = PersistedEmulatorBundle {
+                            url: bundle_url.to_string(),
+                            sha256: Some(sha256.to_string()),
+                            asset_id: Some(crate::security::global_id(
+                                &repo_id,
+                                &mg.emulator_asset_id(),
+                            )),
+                            executable: non_empty_executable(&mg.launch_config.executable),
+                        };
+                        if let Ok(json) = serde_json::to_string(&bundle) {
+                            let _ = store.set_config(&manifest_emulator_config_key(game_id), &json);
+                        }
+                        return Ok(Some(EmulatorSourceOverride {
+                            url: bundle.url,
+                            sha256: bundle.sha256,
+                            asset_id: bundle.asset_id,
+                            executable: bundle.executable,
+                        }));
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(None)
 }
 
 /// Register any required system files (Switch `prod.keys`, BIOS, …) that shipped
@@ -372,9 +433,49 @@ pub(crate) async fn install_emulator_internal(
     }
 }
 
-/// Install an emulator that has a bundled platform profile (PS1, SNES, …). A
-/// manifest `source_override` may replace the profile's resolved download URL
-/// and hash; otherwise the profile's version strategy is used.
+/// Manifest-supplied executable must be a plain relative path to an .exe.
+fn validate_relative_exe(raw: &str) -> Result<String, String> {
+    let bad = || format!("emulator_executable_invalid:{raw}");
+    let norm = raw.trim().replace('\\', "/");
+    if norm.is_empty() || norm.starts_with('/') || norm.contains(':') || norm.contains('\0') {
+        return Err(bad()); // absolute, drive letter, UNC, ADS
+    }
+    let mut last = "";
+    for seg in norm.split('/') {
+        // Win32 strips trailing dots/spaces, so ".", ".." and ".. " all end up as traversal
+        if seg.is_empty() || seg.ends_with('.') || seg.ends_with(' ') {
+            return Err(bad());
+        }
+        last = seg;
+    }
+    if !last.to_ascii_lowercase().ends_with(".exe") {
+        return Err(bad());
+    }
+    Ok(norm)
+}
+
+fn require_pinned_sha256(raw: Option<&str>) -> Result<&str, String> {
+    match raw.map(str::trim) {
+        Some(h) if h.len() == 64 && h.bytes().all(|b| b.is_ascii_hexdigit()) => Ok(h),
+        _ => Err("emulator_hash_required:manifest emulator bundle must pin a 64-char sha256".into()),
+    }
+}
+
+/// Resolved file must live inside the install dir (catches ../, junctions, symlinks).
+fn ensure_inside(dir: &Path, file: &Path) -> Result<(), String> {
+    let d = dir.canonicalize().map_err(|e| e.to_string())?;
+    let f = file.canonicalize().map_err(|e| e.to_string())?;
+    if f.starts_with(&d) {
+        Ok(())
+    } else {
+        Err(format!("emulator_path_escape:{}", f.display()))
+    }
+}
+
+/// Install an emulator that has a bundled platform profile (PS1, SNES, …).
+///
+/// SECURITY: A platform with a bundled profile takes its binary only from the
+/// profile registry. A manifest never chooses the URL or hash of an executable.
 async fn install_profile_emulator(
     app: &AppHandle,
     state: &AppState,
@@ -382,36 +483,22 @@ async fn install_profile_emulator(
     source_override: Option<EmulatorSourceOverride>,
     target_dir: Option<&Path>,
 ) -> Result<EmulatorInstallResult, String> {
-    if let Some(asset_id) = source_override
-        .as_ref()
-        .and_then(|source| source.asset_id.as_deref())
-    {
-        let bundle_dir =
-            commands::prepare_manifest_emulator_bundle_asset(asset_id, state, app, target_dir)
-                .await?;
-        if let Some((exe_path, version)) = existing_emulator(state, &profile, Some(&bundle_dir))? {
-            if path_is_inside(&bundle_dir, Path::new(&exe_path)) {
-                return Ok(EmulatorInstallResult {
-                    profile_id: profile.id,
-                    exe_path,
-                    version,
-                    from_cache: true,
-                });
-            }
-        }
-
-        let exe_path = resolve_bundle_executable(
-            &bundle_dir,
-            &profile.exe_relative_path,
-            &profile.display_name,
-        )?;
-        persist_emulator(state, &profile, "manifest", &exe_path)?;
-        return Ok(EmulatorInstallResult {
-            profile_id: profile.id,
-            exe_path: exe_path.to_string_lossy().to_string(),
-            version: "manifest".to_string(),
-            from_cache: false,
-        });
+    if source_override.is_some() {
+        tracing::warn!(
+            "ignoring manifest emulator override for profile '{}'",
+            profile.id
+        );
+        crate::logging::log_event(
+            &state.data_dir,
+            "security_warning",
+            &[
+                (
+                    "message",
+                    "ignoring manifest emulator override for bundled profile",
+                ),
+                ("profile", profile.id.as_str()),
+            ],
+        );
     }
 
     let install_dir = emulator_profile_install_dir(state, &profile, target_dir);
@@ -426,20 +513,7 @@ async fn install_profile_emulator(
         });
     }
 
-    let resolved = match &source_override {
-        Some(source) => {
-            let url = validate_repository_url(&source.url, false)
-                .map_err(|error| format!("invalid_emulator_url:{error}"))?;
-            ResolvedAsset {
-                filename: file_name_from_url(url.as_str())
-                    .unwrap_or_else(|| format!("{}.zip", profile.id)),
-                url: url.to_string(),
-                size: 0,
-                version: "manifest".to_string(),
-            }
-        }
-        None => resolve_profile_asset(state, &profile).await?,
-    };
+    let resolved = resolve_profile_asset(state, &profile).await?;
     if resolved.size > MAX_EMULATOR_ARCHIVE_BYTES {
         return Err(format!(
             "emulator_archive_too_large:{} is {} bytes",
@@ -454,16 +528,9 @@ async fn install_profile_emulator(
         &format!("Downloading {}...", profile.display_name),
         10,
     );
-    // A manifest-supplied hash takes precedence over the profile's pinned hash.
-    let expected_sha256 = match source_override
-        .as_ref()
-        .and_then(|source| source.sha256.as_deref())
-    {
-        Some(sha) => Some(sha),
-        None => match &profile.version_strategy {
-            VersionStrategy::Fixed { sha256, .. } => Some(sha256.as_str()),
-            VersionStrategy::GithubLatest { .. } => None,
-        },
+    let expected_sha256 = match &profile.version_strategy {
+        VersionStrategy::Fixed { sha256, .. } => Some(sha256.as_str()),
+        VersionStrategy::GithubLatest { .. } => None,
     };
     let archive_path =
         download_emulator_archive(state, &resolved, expected_sha256, &profile.display_name).await?;
@@ -475,14 +542,9 @@ async fn install_profile_emulator(
         &profile.display_name,
     )
     .await?;
+    ensure_inside(&install_dir, &exe_path)?;
     persist_emulator(state, &profile, &resolved.version, &exe_path)?;
-    if source_override
-        .as_ref()
-        .and_then(|source| source.asset_id.as_deref())
-        .is_none()
-    {
-        let _ = fs::remove_file(archive_path);
-    }
+    let _ = fs::remove_file(archive_path);
 
     Ok(EmulatorInstallResult {
         profile_id: profile.id,
@@ -493,10 +555,8 @@ async fn install_profile_emulator(
 }
 
 /// Install an emulator for a platform that has no bundled profile (Switch). The
-/// download URL, executable name, and optional hash all come from the manifest.
-/// The result is persisted under the platform's default setup profile
-/// (`switch-manual` for Switch) so the launcher resolves it like any other
-/// configured emulator.
+/// download URL, executable name, and pinned hash come from the manifest, and are
+/// strictly validated to prevent path traversal and unverified execution.
 async fn install_manifest_emulator(
     app: &AppHandle,
     state: &AppState,
@@ -509,15 +569,16 @@ async fn install_manifest_emulator(
             "emulator_source_missing:{platform} has no bundled emulator; the manifest must provide core_bundle_url."
         )
     })?;
-    let executable = source
+    let raw_executable = source
         .executable
         .as_deref()
         .map(str::trim)
         .filter(|name| !name.is_empty())
         .ok_or_else(|| {
             format!("emulator_executable_unknown:{platform} manifest must set launch_config.executable.")
-        })?
-        .to_string();
+        })?;
+    let executable = validate_relative_exe(raw_executable)?;
+    let pinned_sha = require_pinned_sha256(source.sha256.as_deref())?;
 
     let default_profile = crate::setup_profiles::get_default_platform_setup_profile(platform);
     let profile_id = default_profile
@@ -559,6 +620,8 @@ async fn install_manifest_emulator(
         }
 
         let exe_path = resolve_bundle_executable(&bundle_dir, &executable, &display_name)?;
+        ensure_inside(&bundle_dir, &exe_path)?;
+        record_exe(state, &exe_path)?;
         let exe = exe_path.to_string_lossy().to_string();
         lock_store(state)?.upsert_emulator_config(
             platform,
@@ -632,8 +695,7 @@ async fn install_manifest_emulator(
         10,
     );
     let archive_path =
-        download_emulator_archive(state, &resolved, source.sha256.as_deref(), &display_name)
-            .await?;
+        download_emulator_archive(state, &resolved, Some(pinned_sha), &display_name).await?;
     let exe_path = extract_emulator_archive(
         &archive_path,
         &install_dir,
@@ -642,6 +704,8 @@ async fn install_manifest_emulator(
         &display_name,
     )
     .await?;
+    ensure_inside(&install_dir, &exe_path)?;
+    record_exe(state, &exe_path)?;
 
     // Persist under the platform's default profile (e.g. switch-manual) so
     // get_emulator_status_internal and launch_game both resolve it.
@@ -1093,12 +1157,22 @@ async fn download_emulator_archive(
     Ok(archive_path)
 }
 
+pub(crate) fn record_exe(state: &AppState, exe_path: &Path) -> Result<(), String> {
+    let canonical = crate::launcher::canonical_emulator_path(&exe_path.to_string_lossy())?;
+    let record = crate::exe_integrity::make_record(&canonical)?;
+    let json = serde_json::to_string(&record).map_err(|e| e.to_string())?;
+    lock_store(state)?
+        .set_config(&crate::exe_integrity::record_key(&canonical), &json)
+        .map(|_| ())
+}
+
 fn persist_emulator(
     state: &AppState,
     profile: &EmulatorProfile,
     version: &str,
     exe_path: &Path,
 ) -> Result<(), String> {
+    record_exe(state, exe_path)?;
     let exe = exe_path.to_string_lossy().to_string();
     let launch_args = profile.launch_args_template();
     let store = lock_store(state)?;
@@ -1281,5 +1355,60 @@ mod tests {
 
         assert!(path_is_inside(&bundle_dir, &bundle_exe));
         assert!(!path_is_inside(&bundle_dir, &stale_exe));
+    }
+
+    #[test]
+    fn rejects_escapes_in_manifest_relative_exe() {
+        for bad in [
+            "..\\x.exe",
+            "../x.exe",
+            "a/../../b.exe",
+            "C:\\Windows\\cmd.exe",
+            "\\\\srv\\share\\a.exe",
+            "/etc/x.exe",
+            "a.exe:ads",
+            "run.bat",
+            "",
+            "   ",
+            "trailing_dot./x.exe",
+        ] {
+            assert!(
+                validate_relative_exe(bad).is_err(),
+                "Expected {bad:?} to be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn accepts_plain_relative_exe() {
+        for ok in ["eden.exe", "bin/eden.exe", "Ryujinx\\Ryujinx.exe"] {
+            assert!(
+                validate_relative_exe(ok).is_ok(),
+                "Expected {ok:?} to be accepted"
+            );
+        }
+    }
+
+    #[test]
+    fn hash_must_be_pinned_64_char_hex() {
+        assert!(require_pinned_sha256(None).is_err());
+        assert!(require_pinned_sha256(Some("abc")).is_err());
+        assert!(require_pinned_sha256(Some(&"z".repeat(64))).is_err());
+        assert!(require_pinned_sha256(Some(&"a".repeat(64))).is_ok());
+    }
+
+    #[test]
+    fn ensure_inside_catches_escapes() {
+        let dir = tempfile::tempdir().unwrap();
+        let inside = dir.path().join("sub").join("bin.exe");
+        std::fs::create_dir_all(inside.parent().unwrap()).unwrap();
+        std::fs::write(&inside, b"bin").unwrap();
+
+        let outside_dir = tempfile::tempdir().unwrap();
+        let outside = outside_dir.path().join("cmd.exe");
+        std::fs::write(&outside, b"cmd").unwrap();
+
+        assert!(ensure_inside(dir.path(), &inside).is_ok());
+        assert!(ensure_inside(dir.path(), &outside).is_err());
     }
 }

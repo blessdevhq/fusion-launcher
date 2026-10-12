@@ -33,9 +33,15 @@ pub(super) async fn fetch_repository_schema(
     allow_dev_http: bool,
 ) -> Result<RepositorySchema, String> {
     let parsed = validate_repository_url(url, allow_dev_http)?;
-    let client = reqwest::Client::builder()
+    let mut builder = reqwest::Client::builder()
         .timeout(Duration::from_secs(12))
-        .user_agent(crate::net::HTTP_USER_AGENT)
+        .user_agent(crate::net::HTTP_USER_AGENT);
+    if !allow_dev_http {
+        builder = crate::net::resolve_and_pin_host(builder, &parsed)
+            .await
+            .map_err(|error| format!("SSRF protection rejected repository host: {error}"))?;
+    }
+    let client = builder
         .build()
         .map_err(|error| format!("Failed to initialize repository client: {error}"))?;
     let response = client

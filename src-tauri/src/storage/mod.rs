@@ -18,7 +18,7 @@ use crate::security::global_id;
 use crate::setup_profiles;
 
 pub struct RepositoryStore {
-    conn: Connection,
+    pub(crate) conn: Connection,
 }
 
 #[derive(Debug, Clone)]

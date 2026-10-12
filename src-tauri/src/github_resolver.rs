@@ -27,7 +27,15 @@ pub async fn resolve_github_latest(
     asset_pattern: &str,
 ) -> Result<ResolvedAsset, String> {
     let api_url = format!("https://api.github.com/repos/{repo}/releases/latest");
-    let client = reqwest::Client::new();
+    let parsed_url = url::Url::parse(&api_url).map_err(|e| e.to_string())?;
+    let mut builder = reqwest::Client::builder()
+        .redirect(crate::net::github_redirect_policy());
+    builder = crate::net::resolve_and_pin_host(builder, &parsed_url)
+        .await
+        .map_err(|error| format!("SSRF protection rejected GitHub API target: {error}"))?;
+    let client = builder
+        .build()
+        .map_err(|error| format!("Failed to create GitHub client: {error}"))?;
     let release = client
         .get(api_url)
         .header("User-Agent", "Fusion Launcher/0.1")

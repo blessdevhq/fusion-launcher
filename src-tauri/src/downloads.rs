@@ -306,6 +306,16 @@ pub async fn download_http_streaming(
     mut on_progress: impl FnMut(u64, Option<u64>),
     mut is_cancelled: impl FnMut() -> bool,
 ) -> Result<DownloadedFile, String> {
+    let parsed_url = Url::parse(url).map_err(|error| format!("Invalid URL: {error}"))?;
+    if parsed_url.scheme() != "https" {
+        return Err("Insecure URL scheme: only HTTPS is permitted.".to_string());
+    }
+    if let Some(host) = parsed_url.host_str() {
+        if crate::net::is_forbidden_target_host(host) {
+            return Err(format!("Download target host is forbidden: {host}"));
+        }
+    }
+
     if let Some(parent) = destination.parent() {
         tokio::fs::create_dir_all(parent)
             .await
@@ -342,9 +352,26 @@ pub async fn download_http_streaming(
         let _ = tokio::fs::remove_file(&part_path).await;
     }
 
-    let client = reqwest::Client::builder()
+    let redirect_policy = match Url::parse(url).ok().and_then(|u| u.host_str().map(str::to_string)) {
+        Some(host)
+            if host == "github.com"
+                || host.ends_with(".github.com")
+                || host == "githubusercontent.com"
+                || host.ends_with(".githubusercontent.com") =>
+        {
+            crate::net::github_redirect_policy()
+        }
+        _ => crate::net::https_only_redirect_policy(),
+    };
+
+    let mut builder = reqwest::Client::builder()
         .connect_timeout(DOWNLOAD_CONNECT_TIMEOUT)
         .user_agent(DOWNLOAD_USER_AGENT)
+        .redirect(redirect_policy);
+    builder = crate::net::resolve_and_pin_host(builder, &parsed_url)
+        .await
+        .map_err(|error| format!("SSRF protection rejected download target: {error}"))?;
+    let client = builder
         .build()
         .map_err(|error| format!("Failed to initialize downloader: {error}"))?;
     let mut request = client.get(url);
@@ -674,6 +701,44 @@ mod tests {
 
         assert_eq!(error, DOWNLOAD_CANCELLED_MESSAGE);
         assert!(!part.exists());
+    }
+
+    #[tokio::test]
+    async fn rejects_http_download_to_forbidden_or_insecure_host() {
+        let temp = tempfile::tempdir().unwrap();
+        let destination = temp.path().join("file.bin");
+
+        let err_http = download_http_streaming(
+            "http://example.com/file.bin",
+            &destination,
+            StreamOptions {
+                expected_sha256: None,
+                expected_size_bytes: None,
+                max_bytes: None,
+                resume: false,
+            },
+            |_, _| {},
+            || false,
+        )
+        .await
+        .unwrap_err();
+        assert!(err_http.contains("only HTTPS is permitted"));
+
+        let err_ssrf = download_http_streaming(
+            "https://127.0.0.1/file.bin",
+            &destination,
+            StreamOptions {
+                expected_sha256: None,
+                expected_size_bytes: None,
+                max_bytes: None,
+                resume: false,
+            },
+            |_, _| {},
+            || false,
+        )
+        .await
+        .unwrap_err();
+        assert!(err_ssrf.contains("forbidden"));
     }
 
     #[tokio::test]

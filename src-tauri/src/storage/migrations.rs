@@ -16,7 +16,15 @@ impl RepositoryStore {
         self.conn.execute_batch(
             r#"
             PRAGMA foreign_keys = ON;
-
+            PRAGMA busy_timeout = 5000;
+            PRAGMA synchronous = NORMAL;
+            "#,
+        )?;
+        let _: String = self
+            .conn
+            .query_row("PRAGMA journal_mode = WAL;", [], |row| row.get(0))?;
+        self.conn.execute_batch(
+            r#"
             CREATE TABLE IF NOT EXISTS repositories (
               id TEXT PRIMARY KEY,
               url TEXT NOT NULL,
@@ -85,6 +93,7 @@ impl RepositoryStore {
               save_dir TEXT NOT NULL,
               status TEXT NOT NULL CHECK (
                 status IN (
+                  'queued',
                   'resolving',
                   'downloading',
                   'paused',
@@ -217,6 +226,7 @@ impl RepositoryStore {
         )?;
 
         self.migrate_downloads_schema()?;
+        self.migrate_torrent_downloads_schema()?;
         self.ensure_column(
             "catalog_games",
             "expected_extensions_json",
@@ -237,9 +247,131 @@ impl RepositoryStore {
         )?;
         self.ensure_column("repositories", "content_hash", "TEXT")?;
         self.ensure_column("repositories", "last_refreshed_at", "TEXT")?;
-        self.migrate_legacy_emulator_configs_inner()?;
+
+        let user_version: i32 = self
+            .conn
+            .query_row("PRAGMA user_version;", [], |row| row.get(0))?;
+        if user_version < 1 {
+            self.migrate_v0_to_v1_inner()?;
+        }
 
         Ok(())
+    }
+
+    fn migrate_v0_to_v1_inner(&self) -> rusqlite::Result<()> {
+        self.conn.execute_batch("BEGIN IMMEDIATE")?;
+        let result = (|| -> rusqlite::Result<()> {
+            self.conn.execute(
+                "DELETE FROM profile_emulator_configs WHERE version = 'manifest'",
+                [],
+            )?;
+            self.conn.execute(
+                "DELETE FROM emulator_configs WHERE version = 'manifest'",
+                [],
+            )?;
+            self.conn.execute(
+                "DELETE FROM app_config WHERE key LIKE 'manifest_emulator:%'",
+                [],
+            )?;
+
+            let legacy_configs = {
+                let mut statement = self.conn.prepare(
+                    r#"
+                    SELECT platform, exe_path, status, last_validated_at, version, launch_args_template
+                    FROM emulator_configs
+                    ORDER BY platform
+                    "#,
+                )?;
+                let rows = statement.query_map([], map_emulator_config_row)?;
+                rows.collect::<rusqlite::Result<Vec<_>>>()?
+            };
+
+            for config in legacy_configs {
+                if config.version.as_deref() == Some("manifest") {
+                    continue;
+                }
+                let Some(profile) =
+                    setup_profiles::get_default_platform_setup_profile(&config.platform)
+                else {
+                    continue;
+                };
+                let exists = self
+                    .conn
+                    .query_row(
+                        "SELECT 1 FROM profile_emulator_configs WHERE profile_id = ?1",
+                        params![profile.id],
+                        |row| row.get::<_, i64>(0),
+                    )
+                    .optional()?;
+                if exists.is_some() {
+                    continue;
+                }
+                self.conn.execute(
+                    r#"
+                    INSERT INTO profile_emulator_configs (
+                      profile_id, platform, exe_path, status, last_validated_at, version, launch_args_template
+                    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                    "#,
+                    params![
+                        profile.id,
+                        config.platform,
+                        config.exe_path,
+                        config.status,
+                        config.last_validated_at,
+                        config.version,
+                        config.launch_args_template
+                    ],
+                )?;
+            }
+
+            self.conn.execute_batch("PRAGMA user_version = 1;")?;
+            Ok(())
+        })();
+
+        match result {
+            Ok(()) => {
+                self.conn.execute_batch("COMMIT")?;
+                Ok(())
+            }
+            Err(error) => {
+                let _ = self.conn.execute_batch("ROLLBACK");
+                Err(error)
+            }
+        }
+    }
+
+    pub fn sanitize_manifest_emulator_records(&self) -> Result<usize, String> {
+        self.sanitize_manifest_emulator_records_inner()
+            .map_err(|error| error.to_string())
+    }
+
+    fn sanitize_manifest_emulator_records_inner(&self) -> rusqlite::Result<usize> {
+        self.conn.execute_batch("BEGIN IMMEDIATE")?;
+        let res = (|| -> rusqlite::Result<usize> {
+            let count1 = self.conn.execute(
+                "DELETE FROM profile_emulator_configs WHERE version = 'manifest'",
+                [],
+            )?;
+            let count2 = self.conn.execute(
+                "DELETE FROM emulator_configs WHERE version = 'manifest'",
+                [],
+            )?;
+            let count3 = self.conn.execute(
+                "DELETE FROM app_config WHERE key LIKE 'manifest_emulator:%'",
+                [],
+            )?;
+            Ok(count1 + count2 + count3)
+        })();
+        match res {
+            Ok(count) => {
+                self.conn.execute_batch("COMMIT")?;
+                Ok(count)
+            }
+            Err(err) => {
+                let _ = self.conn.execute_batch("ROLLBACK");
+                Err(err)
+            }
+        }
     }
 
     pub fn migrate_legacy_emulator_configs(&self) -> Result<usize, String> {
@@ -264,6 +396,9 @@ impl RepositoryStore {
 
             let mut migrated = 0;
             for config in legacy_configs {
+                if config.version.as_deref() == Some("manifest") {
+                    continue;
+                }
                 let Some(profile) =
                     setup_profiles::get_default_platform_setup_profile(&config.platform)
                 else {
@@ -373,6 +508,85 @@ impl RepositoryStore {
                 r#"
                 DROP TABLE downloads;
                 ALTER TABLE downloads_next RENAME TO downloads;
+                "#,
+            )?;
+            Ok(())
+        })();
+
+        if let Err(error) = result {
+            let _ = self.conn.execute_batch("ROLLBACK");
+            return Err(error);
+        }
+
+        self.conn.execute_batch("COMMIT")?;
+        Ok(())
+    }
+
+    fn migrate_torrent_downloads_schema(&self) -> rusqlite::Result<()> {
+        let create_sql = self
+            .conn
+            .query_row(
+                "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'torrent_downloads'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?
+            .unwrap_or_default();
+
+        if create_sql.contains("'queued'") {
+            return Ok(());
+        }
+
+        self.conn.execute_batch("BEGIN IMMEDIATE")?;
+        let result = (|| -> rusqlite::Result<()> {
+            self.conn.execute_batch(
+                r#"
+                DROP TABLE IF EXISTS torrent_downloads_next;
+                CREATE TABLE torrent_downloads_next (
+                  game_id TEXT PRIMARY KEY,
+                  magnet_uri TEXT NOT NULL,
+                  save_dir TEXT NOT NULL,
+                  status TEXT NOT NULL CHECK (
+                    status IN (
+                      'queued',
+                      'resolving',
+                      'downloading',
+                      'paused',
+                      'interrupted',
+                      'completed',
+                      'cancelling',
+                      'cancelled',
+                      'error'
+                    )
+                  ),
+                  progress_percent REAL NOT NULL DEFAULT 0,
+                  downloaded_bytes INTEGER NOT NULL DEFAULT 0,
+                  total_bytes INTEGER NOT NULL DEFAULT 0,
+                  download_speed_bytes_per_sec INTEGER NOT NULL DEFAULT 0,
+                  upload_speed_bytes_per_sec INTEGER NOT NULL DEFAULT 0,
+                  peers_count INTEGER NOT NULL DEFAULT 0,
+                  torrent_id INTEGER,
+                  error_message TEXT,
+                  created_at TEXT NOT NULL,
+                  updated_at TEXT NOT NULL,
+                  completed_at TEXT
+                );
+                INSERT INTO torrent_downloads_next (
+                  game_id, magnet_uri, save_dir, status, progress_percent,
+                  downloaded_bytes, total_bytes, download_speed_bytes_per_sec,
+                  upload_speed_bytes_per_sec, peers_count, torrent_id, error_message,
+                  created_at, updated_at, completed_at
+                )
+                SELECT
+                  game_id, magnet_uri, save_dir, status, progress_percent,
+                  downloaded_bytes, total_bytes, download_speed_bytes_per_sec,
+                  upload_speed_bytes_per_sec, peers_count, torrent_id, error_message,
+                  created_at, updated_at, completed_at
+                FROM torrent_downloads;
+
+                DROP TABLE torrent_downloads;
+                ALTER TABLE torrent_downloads_next RENAME TO torrent_downloads;
+                CREATE INDEX IF NOT EXISTS idx_torrent_downloads_status ON torrent_downloads(status);
                 "#,
             )?;
             Ok(())

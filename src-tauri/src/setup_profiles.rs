@@ -114,7 +114,7 @@ pub fn list_platform_setup_profiles() -> Vec<PlatformSetupProfile> {
                 Some("bios/scph5501.bin"),
                 Some("Import a BIOS image dumped from hardware you own."),
             )],
-            launch("-batch \"{game_path}\"", None),
+            launch_with_flags("-batch \"{game_path}\"", None, &["-f", "-fullscreen"]),
         ),
         profile(
             "switch-manual",
@@ -145,7 +145,11 @@ pub fn list_platform_setup_profiles() -> Vec<PlatformSetupProfile> {
                     Some("Optional firmware package provided by the user."),
                 ),
             ],
-            launch("{game_path}", None),
+            launch_with_flags(
+                "{game_path}",
+                None,
+                &["-f", "--fullscreen"],
+            ),
         ),
         profile(
             "snes-manual",
@@ -187,6 +191,41 @@ pub fn list_platform_setup_profiles() -> Vec<PlatformSetupProfile> {
             vec![],
             launch("{game_path}", None),
         ),
+        profile(
+            "ps3-manual",
+            "ps3",
+            "PlayStation 3 / RPCS3",
+            emulator_manual("RPCS3", &["rpcs3.exe"]),
+            game_files(&[".iso", ".pkg"], true, &["*.iso"], &[]),
+            vec![system_file(
+                "ps3-firmware",
+                "PlayStation 3 Firmware",
+                "firmware",
+                true,
+                &[".pup"],
+                Some("PS3UPDAT.PUP"),
+                Some("Import official PlayStation 3 system firmware update file."),
+            )],
+            launch("\"{game_path}\"", None),
+        ),
+        profile(
+            "gamecube-manual",
+            "gamecube",
+            "GameCube / Dolphin",
+            emulator_manual("Dolphin", &["Dolphin.exe", "dolphin-emu.exe"]),
+            game_files(&[".iso", ".rvz", ".gcm"], false, &[], &[]),
+            vec![],
+            launch("-b -e \"{game_path}\"", None),
+        ),
+        profile(
+            "wii-manual",
+            "wii",
+            "Wii / Dolphin",
+            emulator_manual("Dolphin", &["Dolphin.exe", "dolphin-emu.exe"]),
+            game_files(&[".iso", ".rvz", ".wbfs"], false, &[], &[]),
+            vec![],
+            launch("-b -e \"{game_path}\"", None),
+        ),
     ]
 }
 
@@ -206,6 +245,9 @@ pub fn get_default_platform_setup_profile(platform: &str) -> Option<PlatformSetu
         "psp" => "psp-ppsspp",
         "ps1" => "ps1-manual",
         "switch" => "switch-manual",
+        "ps3" => "ps3-manual",
+        "gamecube" => "gamecube-manual",
+        "wii" => "wii-manual",
         _ => return None,
     };
     get_platform_setup_profile(profile_id)
@@ -348,10 +390,30 @@ fn system_file(
 }
 
 fn launch(args_template: &str, preferred_file: Option<&str>) -> PlatformSetupLaunch {
+    launch_with_flags(args_template, preferred_file, &[])
+}
+
+fn launch_with_flags(
+    args_template: &str,
+    preferred_file: Option<&str>,
+    extra_allowed_flags: &[&str],
+) -> PlatformSetupLaunch {
+    let mut flags: Vec<String> = extra_allowed_flags
+        .iter()
+        .map(|s| (*s).to_string())
+        .collect();
+    if let Some(tokens) = shlex::split(args_template) {
+        for token in tokens {
+            if token != "{game_path}" && token != "{rom_path}" && !flags.contains(&token) {
+                flags.push(token);
+            }
+        }
+    }
     PlatformSetupLaunch {
         args_template: args_template.to_string(),
         working_directory: Some("emulator_dir".to_string()),
         preferred_file: preferred_file.map(ToString::to_string),
+        allowed_flags: flags,
     }
 }
 
@@ -433,5 +495,11 @@ mod tests {
         );
         assert_eq!(platform_emulator_name("nes"), Some("Mesen2".to_string()));
         assert_eq!(mvp_platforms().count(), 8);
+    }
+
+    #[test]
+    fn switch_profile_allowed_flags_are_strictly_boolean() {
+        let switch = get_default_platform_setup_profile("switch").unwrap();
+        assert_eq!(switch.launch.allowed_flags, vec!["-f", "--fullscreen"]);
     }
 }

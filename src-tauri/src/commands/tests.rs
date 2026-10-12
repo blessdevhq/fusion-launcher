@@ -110,6 +110,72 @@ fn manifest_emulator_zip_rejects_path_traversal_without_deleting_archive() {
 }
 
 #[test]
+fn game_archive_zip_extracts_and_resolves_game_file() {
+    let temp = tempdir().unwrap();
+    let game_dir = temp.path().join("Games").join("nes").join("super-mario");
+    std::fs::create_dir_all(&game_dir).unwrap();
+    let archive_path = game_dir.join("super-mario.zip");
+    write_zip(&archive_path, &[("mario.nes", &valid_nes_bytes())]);
+
+    let catalog_game = CatalogGameView {
+        id: "super-mario".to_string(),
+        source_id: "super-mario".to_string(),
+        repository_id: "repo-1".to_string(),
+        repository_name: "Retro Repo".to_string(),
+        platform: "nes".to_string(),
+        title: "Super Mario Bros".to_string(),
+        description: None,
+        cover_image_url: None,
+        trailer_url: None,
+        artwork: None,
+        metadata: None,
+        content_mode: None,
+        setup_profile_id: Some("nes-mesen".to_string()),
+        expected_extensions: vec![".nes".to_string()],
+        downloads: vec![],
+        required_system_file_ids: vec![],
+        launch: None,
+    };
+
+    let extracted = extract_game_archive_if_needed(&catalog_game, &archive_path).unwrap();
+
+    assert_eq!(extracted, game_dir.join("mario.nes"));
+    assert!(extracted.is_file());
+    assert!(!archive_path.exists());
+}
+
+#[test]
+fn game_non_archive_file_is_returned_untouched() {
+    let temp = tempdir().unwrap();
+    let rom_path = temp.path().join("game.nes");
+    std::fs::write(&rom_path, valid_nes_bytes()).unwrap();
+
+    let catalog_game = CatalogGameView {
+        id: "game".to_string(),
+        source_id: "game".to_string(),
+        repository_id: "repo-1".to_string(),
+        repository_name: "Retro Repo".to_string(),
+        platform: "nes".to_string(),
+        title: "Game".to_string(),
+        description: None,
+        cover_image_url: None,
+        trailer_url: None,
+        artwork: None,
+        metadata: None,
+        content_mode: None,
+        setup_profile_id: Some("nes-mesen".to_string()),
+        expected_extensions: vec![".nes".to_string()],
+        downloads: vec![],
+        required_system_file_ids: vec![],
+        launch: None,
+    };
+
+    let result = extract_game_archive_if_needed(&catalog_game, &rom_path).unwrap();
+    assert_eq!(result, rom_path);
+    assert!(rom_path.exists());
+}
+
+#[test]
 fn default_asset_targets_split_system_and_manifest_emulators() {
     let temp = tempdir().unwrap();
     let store = RepositoryStore::open(&temp.path().join("fusion-launcher.db")).unwrap();

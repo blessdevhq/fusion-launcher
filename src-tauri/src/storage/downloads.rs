@@ -182,6 +182,36 @@ impl RepositoryStore {
             .ok_or_else(|| "Torrent download record was not persisted.".to_string())
     }
 
+    pub fn upsert_torrent_download_queued(
+        &self,
+        game_id: &str,
+        magnet_uri: &str,
+        save_dir: &str,
+    ) -> Result<TorrentDownloadRecord, String> {
+        let now = Utc::now().to_rfc3339();
+        self.conn
+            .execute(
+                r#"
+            INSERT INTO torrent_downloads (
+              game_id, magnet_uri, save_dir, status, progress_percent,
+              downloaded_bytes, total_bytes, download_speed_bytes_per_sec,
+              upload_speed_bytes_per_sec, peers_count, torrent_id, error_message,
+              created_at, updated_at, completed_at
+            ) VALUES (?1, ?2, ?3, 'queued', 0, 0, 0, 0, 0, 0, NULL, NULL, ?4, ?4, NULL)
+            ON CONFLICT(game_id) DO UPDATE SET
+              magnet_uri = excluded.magnet_uri,
+              save_dir = excluded.save_dir,
+              status = 'queued',
+              updated_at = excluded.updated_at
+            "#,
+                params![game_id, magnet_uri, save_dir, now],
+            )
+            .map_err(|error| error.to_string())?;
+
+        self.get_torrent_download(game_id)?
+            .ok_or_else(|| "Torrent download record was not persisted.".to_string())
+    }
+
     pub fn get_torrent_download(
         &self,
         game_id: &str,
@@ -225,12 +255,13 @@ impl RepositoryStore {
                 WHEN 'resolving' THEN 0
                 WHEN 'downloading' THEN 0
                 WHEN 'cancelling' THEN 0
-                WHEN 'error' THEN 1
-                WHEN 'interrupted' THEN 2
-                WHEN 'paused' THEN 2
-                WHEN 'completed' THEN 3
-                WHEN 'cancelled' THEN 4
-                ELSE 5
+                WHEN 'queued' THEN 1
+                WHEN 'error' THEN 2
+                WHEN 'interrupted' THEN 3
+                WHEN 'paused' THEN 3
+                WHEN 'completed' THEN 4
+                WHEN 'cancelled' THEN 5
+                ELSE 6
               END,
               updated_at DESC
             "#,
@@ -313,7 +344,7 @@ impl RepositoryStore {
               upload_speed_bytes_per_sec, peers_count, torrent_id, error_message,
               created_at, updated_at, completed_at
             FROM torrent_downloads
-            WHERE status IN ('resolving', 'downloading', 'interrupted', 'paused', 'cancelling')
+            WHERE status IN ('resolving', 'downloading', 'interrupted', 'paused', 'cancelling', 'queued')
             ORDER BY updated_at ASC
             "#,
             )
@@ -324,6 +355,39 @@ impl RepositoryStore {
             .map_err(|error| error.to_string())?;
         rows.collect::<rusqlite::Result<Vec<_>>>()
             .map_err(|error| error.to_string())
+    }
+
+    pub fn get_next_queued_torrent_download(
+        &self,
+    ) -> Result<Option<TorrentDownloadRecord>, String> {
+        let mut statement = self
+            .conn
+            .prepare(
+                r#"
+            SELECT
+              game_id, magnet_uri, save_dir, status, progress_percent,
+              downloaded_bytes, total_bytes, download_speed_bytes_per_sec,
+              upload_speed_bytes_per_sec, peers_count, torrent_id, error_message,
+              created_at, updated_at, completed_at
+            FROM torrent_downloads
+            WHERE status = 'queued'
+            ORDER BY created_at ASC
+            LIMIT 1
+            "#,
+            )
+            .map_err(|error| error.to_string())?;
+
+        let mut rows = statement
+            .query_map([], map_torrent_download_row)
+            .map_err(|error| error.to_string())?;
+
+        if let Some(record) = rows.next() {
+            let mut record = record.map_err(|error| error.to_string())?;
+            self.enrich_torrent_download_record(&mut record)?;
+            Ok(Some(record))
+        } else {
+            Ok(None)
+        }
     }
 
     pub fn update_torrent_handle(

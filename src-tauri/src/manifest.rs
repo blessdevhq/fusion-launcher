@@ -155,10 +155,13 @@ pub(crate) async fn fetch_manifest_inner(url: &str) -> Result<Manifest, AppError
     // Enforce the project's HTTPS-only policy before touching the network.
     let endpoint = validate_repository_url(url, false).map_err(AppError::InvalidUrl)?;
 
-    let client = reqwest::Client::builder()
+    let mut client_builder = reqwest::Client::builder()
         .timeout(MANIFEST_TIMEOUT)
-        .user_agent(crate::net::HTTP_USER_AGENT)
-        .build()?; // reqwest::Error -> AppError (Network)
+        .user_agent(crate::net::HTTP_USER_AGENT);
+    client_builder = crate::net::resolve_and_pin_host(client_builder, &endpoint)
+        .await
+        .map_err(AppError::InvalidUrl)?;
+    let client = client_builder.build()?;
 
     let response = client
         .get(endpoint)
@@ -449,6 +452,8 @@ impl Game {
             launch: Some(GameLaunchConfig {
                 args_template,
                 preferred_file: None,
+                inject_mods: self.launch_config.inject_mods.clone(),
+                shader_cache_url: self.assets.shader_cache_url.clone(),
             }),
         }
     }
@@ -484,7 +489,7 @@ fn expected_extensions_for(platform: &str) -> Vec<String> {
         "dreamcast" => &["cdi", "gdi", "chd"],
         _ => &[],
     };
-    extensions.iter().map(|ext| ext.to_string()).collect()
+    extensions.iter().map(|ext| format!(".{ext}")).collect()
 }
 
 #[cfg(test)]
@@ -633,7 +638,7 @@ mod tests {
         let game = &schema.catalog[0];
         assert_eq!(game.id, "0100F2C0115B6000");
         assert_eq!(game.platform, "switch");
-        assert_eq!(game.expected_extensions, vec!["nsp", "xci"]);
+        assert_eq!(game.expected_extensions, vec![".nsp", ".xci"]);
 
         // The ROM magnet becomes the single download source.
         match &game.downloads[..] {

@@ -39,6 +39,7 @@ struct TorrentRecord {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum TorrentRecordState {
+    Queued,
     Resolving,
     Downloading,
     Paused,
@@ -50,6 +51,7 @@ enum TorrentRecordState {
 impl TorrentRecordState {
     fn as_str(self) -> &'static str {
         match self {
+            Self::Queued => "queued",
             Self::Resolving => "resolving",
             Self::Downloading => "downloading",
             Self::Paused => "paused",
@@ -146,14 +148,44 @@ impl TorrentManager {
         let save_dir = save_dir.trim().to_string();
         let output_folder = PathBuf::from(&save_dir);
 
-        {
+        let is_slot_available = {
             let records = self.records.lock().await;
-            ensure_can_start_download(&records, &game_id)?;
-        }
+            ensure_can_track_game(&records, &game_id)?;
+            active_download_count(&records) < MAX_ACTIVE_DOWNLOADS
+        };
 
         tokio::fs::create_dir_all(&output_folder)
             .await
             .map_err(|error| format!("Failed to create save directory: {error}"))?;
+
+        if !is_slot_available {
+            let record = {
+                let store = lock_store(&self.store)?;
+                store.upsert_torrent_download_queued(&game_id, &magnet_uri, &save_dir)?
+            };
+
+            {
+                let mut records = self.records.lock().await;
+                records.insert(
+                    game_id.clone(),
+                    TorrentRecord {
+                        game_id: game_id.clone(),
+                        save_dir: save_dir.clone(),
+                        torrent_id: None,
+                        state: TorrentRecordState::Queued,
+                        error: None,
+                    },
+                );
+            }
+
+            emit_download_record(&self.app, &record);
+
+            return Ok(TorrentStartReport {
+                game_id,
+                state: TorrentRecordState::Queued.as_str().to_string(),
+                save_dir: output_folder.to_string_lossy().to_string(),
+            });
+        }
 
         {
             let store = lock_store(&self.store)?;
@@ -162,8 +194,6 @@ impl TorrentManager {
 
         {
             let mut records = self.records.lock().await;
-            ensure_can_start_download(&records, &game_id)?;
-
             records.insert(
                 game_id.clone(),
                 TorrentRecord {
@@ -237,13 +267,42 @@ impl TorrentManager {
 
         let record = lock_store(&self.store)?.set_torrent_status(&game_id, "paused", None)?;
         emit_download_record(&self.app, &record);
+        self.process_next_queued_download().await;
         Ok(record)
     }
 
     pub async fn resume_download(&self, game_id: String) -> Result<TorrentDownloadRecord, String> {
+        let is_slot_available = {
+            let records = self.records.lock().await;
+            active_download_count_excluding(&records, &game_id) < MAX_ACTIVE_DOWNLOADS
+        };
+
+        if !is_slot_available {
+            let record = lock_store(&self.store)?.set_torrent_status(&game_id, "queued", None)?;
+            {
+                let mut records = self.records.lock().await;
+                if let Some(record) = records.get_mut(&game_id) {
+                    record.state = TorrentRecordState::Queued;
+                    record.error = None;
+                } else {
+                    records.insert(
+                        game_id.clone(),
+                        TorrentRecord {
+                            game_id: game_id.clone(),
+                            save_dir: record.save_dir.clone(),
+                            torrent_id: None,
+                            state: TorrentRecordState::Queued,
+                            error: None,
+                        },
+                    );
+                }
+            }
+            emit_download_record(&self.app, &record);
+            return Ok(record);
+        }
+
         let torrent_id = {
             let records = self.records.lock().await;
-            ensure_can_start_download_excluding(&records, &game_id)?;
             records.get(&game_id).and_then(|record| record.torrent_id)
         };
 
@@ -278,7 +337,6 @@ impl TorrentManager {
 
         {
             let mut records = self.records.lock().await;
-            ensure_can_start_download_excluding(&records, &game_id)?;
             records.insert(
                 record.game_id.clone(),
                 TorrentRecord::from_persisted(&record, TorrentRecordState::Resolving),
@@ -354,6 +412,7 @@ impl TorrentManager {
 
         let cancelled = lock_store(&self.store)?.set_torrent_status(&game_id, "cancelled", None)?;
         emit_download_record(&self.app, &cancelled);
+        self.process_next_queued_download().await;
         Ok(cancelled)
     }
 
@@ -386,6 +445,13 @@ impl TorrentManager {
                 "paused" => {
                     self.restore_paused_record(record).await;
                 }
+                "queued" => {
+                    let mut records = self.records.lock().await;
+                    records.insert(
+                        record.game_id.clone(),
+                        TorrentRecord::from_persisted(&record, TorrentRecordState::Queued),
+                    );
+                }
                 "resolving" | "downloading" | "interrupted" => {
                     let interrupted = match lock_store(&self.store)
                         .and_then(|store| store.mark_torrent_interrupted(&record.game_id))
@@ -398,6 +464,8 @@ impl TorrentManager {
                 _ => {}
             }
         }
+
+        self.process_next_queued_download().await;
     }
 
     async fn finish_startup_cancellation(
@@ -459,76 +527,26 @@ impl TorrentManager {
         Ok(())
     }
 
+    pub async fn process_next_queued_download(&self) {
+        trigger_next_queued(
+            Arc::clone(&self.engine),
+            Arc::clone(&self.records),
+            Arc::clone(&self.store),
+            self.app.clone(),
+        )
+        .await;
+    }
+
     fn spawn_add_torrent_task(&self, game_id: String, magnet_uri: String, save_dir: String) {
-        let engine = Arc::clone(&self.engine);
-        let records = Arc::clone(&self.records);
-        let store = Arc::clone(&self.store);
-        let app = self.app.clone();
-
-        tauri::async_runtime::spawn(async move {
-            let add_result = engine.add_magnet(magnet_uri, save_dir).await;
-
-            match add_result {
-                Ok(id) => {
-                    let desired_state = {
-                        let mut records = records.lock().await;
-                        records.get_mut(&game_id).map(|record| {
-                            record.torrent_id = Some(id);
-                            record.error = None;
-                            match record.state {
-                                TorrentRecordState::Paused => TorrentRecordState::Paused,
-                                TorrentRecordState::Cancelling => record.state,
-                                _ => {
-                                    record.state = TorrentRecordState::Downloading;
-                                    TorrentRecordState::Downloading
-                                }
-                            }
-                        })
-                    };
-
-                    match desired_state {
-                        Some(TorrentRecordState::Paused) => {
-                            let _ = engine.pause(id).await;
-                            if let Ok(record) = lock_store(&store).and_then(|store| {
-                                store.update_torrent_handle(&game_id, id as i64, "paused")
-                            }) {
-                                emit_download_record(&app, &record);
-                            }
-                        }
-                        Some(TorrentRecordState::Cancelling) => {
-                            let _ = engine.delete(id, true).await;
-                            if let Ok(record) = lock_store(&store).and_then(|store| {
-                                store.set_torrent_status(&game_id, "cancelled", None)
-                            }) {
-                                emit_download_record(&app, &record);
-                            }
-                        }
-                        Some(_) => {
-                            let _ = engine.resume(id).await;
-                            if let Ok(record) = lock_store(&store).and_then(|store| {
-                                store.update_torrent_handle(&game_id, id as i64, "downloading")
-                            }) {
-                                emit_download_record(&app, &record);
-                            }
-                            spawn_polling_task(engine, records, store, app, game_id, id);
-                        }
-                        None => {
-                            let _ = engine.delete(id, true).await;
-                        }
-                    }
-                }
-                Err(error) => {
-                    set_torrent_error(
-                        &records,
-                        &store,
-                        &app,
-                        &game_id,
-                        format!("Failed to start magnet download: {error}"),
-                    )
-                    .await;
-                }
-            }
-        });
+        spawn_add_torrent_task_inner(
+            Arc::clone(&self.engine),
+            Arc::clone(&self.records),
+            Arc::clone(&self.store),
+            self.app.clone(),
+            game_id,
+            magnet_uri,
+            save_dir,
+        );
     }
 
     fn spawn_polling_for_game(&self, game_id: String, torrent_id: usize) {
@@ -541,6 +559,149 @@ impl TorrentManager {
             torrent_id,
         );
     }
+}
+
+async fn trigger_next_queued(
+    engine: Arc<dyn TorrentEngine>,
+    records: Arc<Mutex<HashMap<String, TorrentRecord>>>,
+    store: Arc<StoreMutex<RepositoryStore>>,
+    app: AppHandle,
+) {
+    let next_task = {
+        let records_guard = records.lock().await;
+        if active_download_count(&records_guard) >= MAX_ACTIVE_DOWNLOADS {
+            return;
+        }
+
+        let in_memory_id = records_guard
+            .values()
+            .find(|r| r.state == TorrentRecordState::Queued)
+            .map(|r| r.game_id.clone());
+
+        if let Some(game_id) = in_memory_id {
+            let store_guard = match lock_store(&store) {
+                Ok(s) => s,
+                Err(_) => return,
+            };
+            store_guard
+                .get_torrent_download(&game_id)
+                .ok()
+                .flatten()
+                .map(|r| (r.game_id, r.magnet_uri, r.save_dir))
+        } else {
+            let store_guard = match lock_store(&store) {
+                Ok(s) => s,
+                Err(_) => return,
+            };
+            store_guard
+                .get_next_queued_torrent_download()
+                .ok()
+                .flatten()
+                .map(|r| (r.game_id, r.magnet_uri, r.save_dir))
+        }
+    };
+
+    let Some((game_id, magnet_uri, save_dir)) = next_task else {
+        return;
+    };
+
+    if let Ok(record) =
+        lock_store(&store).and_then(|s| s.set_torrent_status(&game_id, "resolving", None))
+    {
+        emit_download_record(&app, &record);
+    }
+
+    {
+        let mut records_guard = records.lock().await;
+        records_guard.insert(
+            game_id.clone(),
+            TorrentRecord {
+                game_id: game_id.clone(),
+                save_dir: save_dir.clone(),
+                torrent_id: None,
+                state: TorrentRecordState::Resolving,
+                error: None,
+            },
+        );
+    }
+
+    spawn_add_torrent_task_inner(engine, records, store, app, game_id, magnet_uri, save_dir);
+}
+
+fn spawn_add_torrent_task_inner(
+    engine: Arc<dyn TorrentEngine>,
+    records: Arc<Mutex<HashMap<String, TorrentRecord>>>,
+    store: Arc<StoreMutex<RepositoryStore>>,
+    app: AppHandle,
+    game_id: String,
+    magnet_uri: String,
+    save_dir: String,
+) {
+    tauri::async_runtime::spawn(async move {
+        let add_result = engine.add_magnet(magnet_uri, save_dir).await;
+
+        match add_result {
+            Ok(id) => {
+                let desired_state = {
+                    let mut records_guard = records.lock().await;
+                    records_guard.get_mut(&game_id).map(|record| {
+                        record.torrent_id = Some(id);
+                        record.error = None;
+                        match record.state {
+                            TorrentRecordState::Paused => TorrentRecordState::Paused,
+                            TorrentRecordState::Cancelling => record.state,
+                            _ => {
+                                record.state = TorrentRecordState::Downloading;
+                                TorrentRecordState::Downloading
+                            }
+                        }
+                    })
+                };
+
+                match desired_state {
+                    Some(TorrentRecordState::Paused) => {
+                        let _ = engine.pause(id).await;
+                        if let Ok(record) = lock_store(&store).and_then(|store| {
+                            store.update_torrent_handle(&game_id, id as i64, "paused")
+                        }) {
+                            emit_download_record(&app, &record);
+                        }
+                    }
+                    Some(TorrentRecordState::Cancelling) => {
+                        let _ = engine.delete(id, true).await;
+                        if let Ok(record) = lock_store(&store)
+                            .and_then(|store| store.set_torrent_status(&game_id, "cancelled", None))
+                        {
+                            emit_download_record(&app, &record);
+                        }
+                    }
+                    Some(_) => {
+                        let _ = engine.resume(id).await;
+                        if let Ok(record) = lock_store(&store).and_then(|store| {
+                            store.update_torrent_handle(&game_id, id as i64, "downloading")
+                        }) {
+                            emit_download_record(&app, &record);
+                        }
+                        spawn_polling_task(engine, records, store, app, game_id, id);
+                    }
+                    None => {
+                        let _ = engine.delete(id, true).await;
+                    }
+                }
+            }
+            Err(error) => {
+                set_torrent_error(
+                    &records,
+                    &store,
+                    &app,
+                    &game_id,
+                    format!("Failed to start magnet download: {error}"),
+                )
+                .await;
+                trigger_next_queued(engine, records, store, app).await;
+            }
+        }
+    });
 }
 
 impl TorrentRecord {
@@ -673,7 +834,7 @@ fn validate_start_request(game_id: &str, magnet_uri: &str, save_dir: &str) -> Re
     Ok(())
 }
 
-fn ensure_can_start_download(
+fn ensure_can_track_game(
     records: &HashMap<String, TorrentRecord>,
     game_id: &str,
 ) -> Result<(), String> {
@@ -685,6 +846,16 @@ fn ensure_can_start_download(
             return Err(format!("Torrent already tracked for game: {game_id}"));
         }
     }
+
+    Ok(())
+}
+
+#[cfg(test)]
+fn ensure_can_start_download(
+    records: &HashMap<String, TorrentRecord>,
+    game_id: &str,
+) -> Result<(), String> {
+    ensure_can_track_game(records, game_id)?;
 
     if active_download_count(records) >= MAX_ACTIVE_DOWNLOADS {
         return Err(ACTIVE_DOWNLOAD_LIMIT_ERROR.to_string());
@@ -895,6 +1066,13 @@ fn spawn_polling_task(
 
             if let Some(error) = status.error {
                 set_torrent_error(&records, &store, &app, &game_id, error).await;
+                trigger_next_queued(
+                    Arc::clone(&engine),
+                    Arc::clone(&records),
+                    Arc::clone(&store),
+                    app.clone(),
+                )
+                .await;
                 break;
             }
 
@@ -907,6 +1085,13 @@ fn spawn_polling_task(
                     }
                 }
                 let _ = engine.delete(torrent_id, false).await;
+                trigger_next_queued(
+                    Arc::clone(&engine),
+                    Arc::clone(&records),
+                    Arc::clone(&store),
+                    app.clone(),
+                )
+                .await;
                 break;
             }
         }
@@ -1136,6 +1321,31 @@ mod tests {
             ensure_can_start_download(&records, "game-1").unwrap_err(),
             "Torrent already tracked for game: game-1"
         );
+    }
+
+    #[test]
+    fn queued_record_blocks_duplicate_tracking() {
+        let mut records = HashMap::new();
+        records.insert(
+            "game-1".to_string(),
+            test_record("game-1", TorrentRecordState::Queued),
+        );
+
+        assert_eq!(
+            ensure_can_track_game(&records, "game-1").unwrap_err(),
+            "Torrent already tracked for game: game-1"
+        );
+    }
+
+    #[test]
+    fn queued_record_does_not_count_towards_active_download_limit() {
+        let mut records = HashMap::new();
+        records.insert(
+            "game-1".to_string(),
+            test_record("game-1", TorrentRecordState::Queued),
+        );
+
+        assert!(ensure_can_start_download(&records, "game-2").is_ok());
     }
 
     #[test]

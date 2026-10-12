@@ -36,7 +36,16 @@ pub fn validate_repository_url(input: &str, allow_dev_http: bool) -> Result<Url,
 
 pub fn validate_http_url(url: &Url, allow_dev_http: bool) -> Result<(), String> {
     match url.scheme() {
-        "https" => Ok(()),
+        "https" => {
+            if let Some(host) = url.host_str() {
+                if crate::net::is_forbidden_target_host(host) {
+                    return Err(format!(
+                        "Forbidden HTTPS host: {host} (private, loopback, or SSRF target)"
+                    ));
+                }
+            }
+            Ok(())
+        }
         "http" if allow_dev_http && is_loopback_host(url.host_str()) => Ok(()),
         "http" => Err(
             "Only HTTPS repository and asset URLs are allowed outside local development."

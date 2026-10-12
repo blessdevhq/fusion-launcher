@@ -123,6 +123,11 @@ pub fn select_profile_emulator(
         return Err("Emulator executable path is required.".to_string());
     }
     let status = validate_emulator_status(Some(normalized_path));
+    if status == "valid" {
+        if let Ok(canon) = crate::launcher::canonical_emulator_path(normalized_path) {
+            let _ = crate::orchestrator::record_exe(&state, &canon);
+        }
+    }
     let store = lock_store(&state)?;
     let config = store.upsert_profile_emulator_config(
         &profile.id,
@@ -133,6 +138,59 @@ pub fn select_profile_emulator(
         Some(&profile.launch.args_template),
     )?;
     Ok(config)
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TrustUpdatedEmulatorReport {
+    pub target: String,
+    pub exe_path: String,
+    pub previous_sha256_prefix: Option<String>,
+    pub current_sha256_prefix: String,
+    pub current_sha256: String,
+    pub mtime_ms: u128,
+}
+
+#[tauri::command]
+pub fn trust_updated_emulator(
+    target: String,
+    state: State<'_, AppState>,
+) -> Result<TrustUpdatedEmulatorReport, String> {
+    let store = lock_store(&state)?;
+    let trimmed = target.trim();
+    let exe_path = if let Some(config) = store.get_profile_emulator_config(trimmed)? {
+        config.exe_path
+    } else if let Some(config) = store.get_emulator_config(trimmed)? {
+        config.exe_path
+    } else {
+        None
+    };
+
+    let raw_path = exe_path.ok_or_else(|| format!("No emulator configured for {trimmed}"))?;
+    let canon = crate::launcher::canonical_emulator_path(&raw_path)?;
+    let key = crate::exe_integrity::record_key(&canon);
+
+    let previous_sha256_prefix = store
+        .get_config(&key)?
+        .and_then(|raw| serde_json::from_str::<crate::exe_integrity::ExeRecord>(&raw).ok())
+        .map(|rec| rec.sha256.chars().take(8).collect::<String>());
+
+    let new_record = crate::exe_integrity::make_record(&canon)?;
+    let current_sha256 = new_record.sha256.clone();
+    let current_sha256_prefix = current_sha256.chars().take(8).collect::<String>();
+    let mtime_ms = new_record.mtime_ms;
+
+    let json = serde_json::to_string(&new_record).map_err(|e| e.to_string())?;
+    store.set_config(&key, &json)?;
+
+    Ok(TrustUpdatedEmulatorReport {
+        target: trimmed.to_string(),
+        exe_path: canon.to_string_lossy().to_string(),
+        previous_sha256_prefix,
+        current_sha256_prefix,
+        current_sha256,
+        mtime_ms,
+    })
 }
 
 #[tauri::command]
@@ -163,3 +221,36 @@ pub fn import_profile_system_file(
         Path::new(source_path.trim()),
     )
 }
+
+#[tauri::command]
+pub fn detect_system_file(
+    source_path: String,
+) -> Result<crate::system_files_detector::SystemFileDetection, String> {
+    crate::system_files_detector::detect_system_file(Path::new(source_path.trim()))
+}
+
+#[tauri::command]
+pub fn auto_import_system_file(
+    source_path: String,
+    state: State<'_, AppState>,
+) -> Result<crate::system_files_detector::SmartImportReport, String> {
+    let content_dir = library_root_for_app_state(&state);
+    let store = lock_store(&state)?;
+    crate::system_files_detector::auto_import_system_file_internal(
+        &store,
+        &content_dir,
+        Path::new(source_path.trim()),
+    )
+}
+
+#[tauri::command]
+pub fn parse_deep_link(uri: String) -> Result<crate::deep_link::DeepLinkAction, String> {
+    crate::deep_link::parse_deep_link(&uri)
+}
+
+#[tauri::command]
+pub fn register_deep_link_protocol() -> Result<(), String> {
+    crate::deep_link::register_windows_protocol()
+}
+
+

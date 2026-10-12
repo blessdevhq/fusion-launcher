@@ -7,10 +7,24 @@ license = "GPL-3.0-or-later"
 repository = "https://github.com/blessdevhq/fusion-launcher"
 homepage = "https://github.com/blessdevhq/fusion-launcher#readme"
 edition = "2021"
+default-run = "fusion-launcher"
 
 [lib]
 name = "fusion_launcher_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
+
+[features]
+default = []
+rqbit-fallback = ["dep:librqbit"]
+
+[[bin]]
+name = "fusion-launcher"
+path = "src/main.rs"
+
+[[bin]]
+name = "fusion-torrent"
+path = "src/bin/fusion_torrent.rs"
+required-features = ["rqbit-fallback"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -18,6 +32,7 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 chrono = { version = "0.4", features = ["serde"] }
 async-trait = "0.1"
+base64 = "0.22"
 crc32fast = "1.4"
 fs2 = "0.4"
 glob = "0.3"
@@ -43,6 +58,7 @@ tracing-appender = "0.2"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 url = "2"
 zip = { version = "2.4", default-features = false, features = ["deflate"] }
+librqbit = { version = "9.0.1", optional = true }
 
 [dev-dependencies]
 tempfile = "3"

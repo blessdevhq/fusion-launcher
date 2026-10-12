@@ -28,6 +28,8 @@ pub struct LaunchReport {
     pub game_path: String,
     pub resolved_game_path: String,
     pub args: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub optimization: Option<crate::prelaunch_optimizer::OptimizationReport>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -51,13 +53,18 @@ struct GameExitedEvent {
 
 impl LaunchFailure {
     fn emulator_not_configured(platform: &str) -> Self {
+        let message = if platform.eq_ignore_ascii_case("switch") {
+            "No emulator configured for Switch. If an emulator was previously installed via an unverified manifest, it was reset for security. Please reinstall it from a verified repository or configure the emulator in Settings.".to_string()
+        } else {
+            "Configure an emulator for this platform before launching.".to_string()
+        };
         Self {
             kind: "EmulatorNotConfigured".to_string(),
             platform: Some(platform.to_string()),
             game_id: None,
             path: None,
             assets: Vec::new(),
-            message: Some("Configure an emulator for this platform before launching.".to_string()),
+            message: Some(message),
         }
     }
 
@@ -131,6 +138,19 @@ impl LaunchFailure {
         }
     }
 
+    fn executable_changed(emulator_path: &str) -> Self {
+        Self {
+            kind: "ExecutableUntrusted".to_string(),
+            platform: None,
+            game_id: None,
+            path: Some(emulator_path.to_string()),
+            assets: Vec::new(),
+            message: Some(
+                "The emulator executable has been modified since installation.".to_string(),
+            ),
+        }
+    }
+
     fn spawn_failed(message: impl Into<String>) -> Self {
         Self {
             kind: "SpawnFailed".to_string(),
@@ -151,7 +171,7 @@ pub fn launch_game(
     app: AppHandle,
 ) -> Result<LaunchReport, LaunchFailure> {
     let content_dir = crate::commands::library_root_for_app_state(&state);
-    let (emulator_path, game_path, launch_args_template, expected_extensions, preferred_file) = {
+    let (emulator_path, game_path, launch_args_template, expected_extensions, preferred_file, game) = {
         let store = state
             .store
             .lock()
@@ -255,18 +275,15 @@ pub fn launch_game(
                     .as_ref()
                     .and_then(|profile| profile.launch.preferred_file.clone())
             });
-        let launch_args_template = game
-            .launch
-            .as_ref()
-            .and_then(|launch| launch.args_template.clone())
-            .or_else(|| {
-                profile
-                    .as_ref()
-                    .map(|profile| profile.launch.args_template.clone())
-            })
-            .or(emulator_config_launch_args)
-            .filter(|template| !template.trim().is_empty())
-            .unwrap_or_else(|| "{game_path}".to_string());
+        let launch_args_template = select_launch_args_template(
+            game.launch.as_ref().and_then(|l| l.args_template.as_deref()),
+            profile.as_ref().map(|p| p.launch.args_template.as_str()),
+            emulator_config_launch_args.as_deref(),
+            profile
+                .as_ref()
+                .map(|p| p.launch.allowed_flags.as_slice())
+                .unwrap_or_default(),
+        );
 
         (
             emulator_path,
@@ -274,6 +291,7 @@ pub fn launch_game(
             launch_args_template,
             expected_extensions,
             preferred_file,
+            game,
         )
     };
 
@@ -309,6 +327,21 @@ pub fn launch_game(
         &launch_args_template,
     )
     .map_err(LaunchFailure::spawn_failed)?;
+
+    let optimization = {
+        let report = crate::prelaunch_optimizer::prepare_game_optimizations(
+            &content_dir,
+            Path::new(&emulator_path),
+            &game,
+        );
+        if report.mods_injected > 0 || report.shader_cache_installed {
+            Some(report)
+        } else {
+            None
+        }
+    };
+
+    verify_emulator_exe(&state, &emulator_path)?;
 
     let mut command = Command::new(&emulator_path);
     command
@@ -367,6 +400,7 @@ pub fn launch_game(
         game_path,
         resolved_game_path: resolved_game_path_string,
         args,
+        optimization,
     })
 }
 
@@ -423,11 +457,72 @@ fn validate_emulator_path(emulator_path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn canonical_emulator_path(emulator_path: &str) -> Result<PathBuf, String> {
+#[allow(clippy::result_large_err)]
+fn verify_emulator_exe(state: &AppState, emulator_path: &str) -> Result<(), LaunchFailure> {
+    let path = Path::new(emulator_path);
+    let key = crate::exe_integrity::record_key(path);
+    let stored = {
+        let store = state
+            .store
+            .lock()
+            .map_err(|_| LaunchFailure::spawn_failed("Repository store lock is poisoned."))?;
+        store.get_config(&key).map_err(LaunchFailure::spawn_failed)?
+    };
+    match crate::exe_integrity::check(path, stored.as_deref())
+        .map_err(LaunchFailure::spawn_failed)?
+    {
+        crate::exe_integrity::ExeCheck::NoRecord | crate::exe_integrity::ExeCheck::Ok => Ok(()),
+        crate::exe_integrity::ExeCheck::Refreshed(rec) => {
+            if let Ok(json) = serde_json::to_string(&rec) {
+                if let Ok(store) = state.store.lock() {
+                    let _ = store.set_config(&key, &json);
+                }
+            }
+            Ok(())
+        }
+        crate::exe_integrity::ExeCheck::Changed { .. } => {
+            Err(LaunchFailure::executable_changed(emulator_path))
+        }
+    }
+}
+
+pub(crate) fn canonical_emulator_path(emulator_path: &str) -> Result<PathBuf, String> {
     let path = Path::new(emulator_path.trim());
     validate_emulator_path(path)?;
     fs::canonicalize(path)
         .map_err(|error| format!("Failed to resolve emulator executable path: {error}"))
+}
+
+pub(crate) fn manifest_template_is_safe(template: &str, allowed_flags: &[String]) -> bool {
+    let Some(tokens) = shlex::split(template) else {
+        return false;
+    };
+    tokens.iter().all(|t| {
+        t == "{game_path}"
+            || t == "{rom_path}"
+            || allowed_flags.iter().any(|allowed| allowed == t)
+    })
+}
+
+pub(crate) fn select_launch_args_template(
+    manifest_template: Option<&str>,
+    profile_default: Option<&str>,
+    configured: Option<&str>,
+    allowed_flags: &[String],
+) -> String {
+    if let Some(cfg) = configured.filter(|s| !s.trim().is_empty()) {
+        return cfg.to_string();
+    }
+    if let Some(m) = manifest_template.filter(|s| !s.trim().is_empty()) {
+        if manifest_template_is_safe(m, allowed_flags) {
+            return m.to_string();
+        }
+        tracing::warn!("Rejected unsafe manifest args_template: {m}");
+    }
+    profile_default
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or("{game_path}")
+        .to_string()
 }
 
 fn parse_launch_args(
@@ -446,7 +541,13 @@ fn parse_launch_args(
 
     parsed
         .iter()
-        .map(|arg| expand_placeholders(arg, emulator_path, game_path))
+        .map(|arg| {
+            let out = expand_placeholders(arg, emulator_path, game_path)?;
+            if matches!(arg.as_str(), "{game_path}" | "{rom_path}") && out.starts_with('-') {
+                return Err("Game path must not start with '-'".to_string());
+            }
+            Ok(out)
+        })
         .collect()
 }
 
@@ -504,8 +605,8 @@ fn launch_error(emulator_path: &str, error: std::io::Error) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        canonical_emulator_path, parse_launch_args, resolve_downloaded_game_path,
-        validate_emulator_path,
+        canonical_emulator_path, manifest_template_is_safe, parse_launch_args,
+        resolve_downloaded_game_path, select_launch_args_template, validate_emulator_path,
     };
     use crate::storage::RepositoryStore;
 
@@ -635,5 +736,75 @@ mod tests {
         let resolved = resolve_downloaded_game_path(&store, "repo::game").unwrap();
 
         assert_eq!(resolved, game_dir_string);
+    }
+
+    #[test]
+    fn manifest_template_safe_cases() {
+        let allowed = vec!["-f".to_string(), "--aspect-ratio=16:9".to_string()];
+        assert!(manifest_template_is_safe("{game_path}", &allowed));
+        assert!(manifest_template_is_safe("{rom_path}", &allowed));
+        assert!(manifest_template_is_safe("-f {game_path}", &allowed));
+        assert!(manifest_template_is_safe("-f --aspect-ratio=16:9 {rom_path}", &allowed));
+
+        // Rejected cases
+        assert!(!manifest_template_is_safe("--arbitrary-flag {game_path}", &allowed));
+        assert!(!manifest_template_is_safe("--cfg={game_path}", &allowed));
+        assert!(!manifest_template_is_safe("{emulator_path} {game_path}", &allowed));
+    }
+
+    #[test]
+    fn select_launch_args_template_fallback_and_priority() {
+        let allowed = vec!["-f".to_string()];
+        // Configured override wins unconditionally
+        assert_eq!(
+            select_launch_args_template(
+                Some("-f {game_path}"),
+                Some("{game_path}"),
+                Some("--custom-config"),
+                &allowed
+            ),
+            "--custom-config"
+        );
+
+        // Safe manifest template is used
+        assert_eq!(
+            select_launch_args_template(
+                Some("-f {game_path}"),
+                Some("{game_path}"),
+                None,
+                &allowed
+            ),
+            "-f {game_path}"
+        );
+
+        // Unsafe manifest template falls back to profile default
+        assert_eq!(
+            select_launch_args_template(
+                Some("--dangerous-flag {game_path}"),
+                Some("-default {game_path}"),
+                None,
+                &allowed
+            ),
+            "-default {game_path}"
+        );
+    }
+
+    #[test]
+    fn parse_launch_args_rejects_dash_prefixed_game_path() {
+        let err = parse_launch_args(
+            "C:/Emulators/retro.exe",
+            "--malicious-flag",
+            "-f {game_path}",
+        )
+        .unwrap_err();
+        assert!(err.contains("must not start with '-'"));
+
+        let err_rom = parse_launch_args(
+            "C:/Emulators/retro.exe",
+            "-flag",
+            "{rom_path}",
+        )
+        .unwrap_err();
+        assert!(err_rom.contains("must not start with '-'"));
     }
 }

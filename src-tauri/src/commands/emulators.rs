@@ -31,6 +31,12 @@ pub fn save_emulator_config(
     let template = normalize_launch_args_template(launch_args_template)
         .or_else(|| setup_profiles::default_launch_args_for(&platform));
 
+    if status == "valid" {
+        if let Ok(canon) = crate::launcher::canonical_emulator_path(normalized_path) {
+            let _ = crate::orchestrator::record_exe(&state, &canon);
+        }
+    }
+
     lock_store(&state)?.upsert_emulator_config(
         &platform,
         Some(normalized_path),

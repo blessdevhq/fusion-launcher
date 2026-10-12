@@ -9,7 +9,7 @@
 //
 // Usage: npm run sidecar:build
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, copyFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, copyFileSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -68,34 +68,113 @@ const buildDir = path.join(root, '.tmp', 'sidecar-build');
 rmSync(buildDir, { recursive: true, force: true });
 mkdirSync(buildDir, { recursive: true });
 
-// --console keeps stdout/stdin wired so the parent can read the JSON stream;
-// --windowed/--noconsole would detach stdout and break the contract.
-run(
-  'pyinstaller',
-  [
-    '--onefile',
-    '--console',
-    '--name',
-    'fusion-torrent',
-    '--distpath',
-    path.join(buildDir, 'dist'),
-    '--workpath',
-    path.join(buildDir, 'work'),
-    '--specpath',
-    buildDir,
-    scriptPath,
-  ],
-  'PyInstaller'
-);
+// Read package version to embed valid PE version resources on Windows.
+// Legitimate metadata (CompanyName, FileDescription, LegalCopyright) avoids generic AV heuristics.
+let versionArgs = [];
+if (isWindows) {
+  try {
+    const pkg = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'));
+    const semver = (pkg.version || '0.4.0').split('.').map((p) => parseInt(p, 10) || 0);
+    const [vMajor, vMinor, vPatch] = [semver[0] || 0, semver[1] || 0, semver[2] || 0];
+    const versionInfoPath = path.join(buildDir, 'version_info.txt');
+    const versionInfoContent = `# UTF-8
+VSVersionInfo(
+  ffi=FixedFileInfo(
+    filevers=(${vMajor}, ${vMinor}, ${vPatch}, 0),
+    prodvers=(${vMajor}, ${vMinor}, ${vPatch}, 0),
+    mask=0x3f,
+    flags=0x0,
+    OS=0x40004,
+    fileType=0x1,
+    subtype=0x0,
+    date=(0, 0)
+  ),
+  kids=[
+    StringFileInfo(
+      [
+        StringTable(
+          '040904B0',
+          [
+            StringStruct('CompanyName', 'Fusion Launcher'),
+            StringStruct('FileDescription', 'Fusion Launcher P2P Download Engine'),
+            StringStruct('FileVersion', '${pkg.version}.0'),
+            StringStruct('InternalName', 'fusion-torrent'),
+            StringStruct('LegalCopyright', 'Licensed under GPL-3.0-or-later'),
+            StringStruct('OriginalFilename', 'fusion-torrent.exe'),
+            StringStruct('ProductName', 'Fusion Launcher'),
+            StringStruct('ProductVersion', '${pkg.version}.0'),
+          ]
+        )
+      ]
+    ),
+    VarFileInfo([VarStruct('Translation', [1033, 1200])])
+  ]
+)
+`;
+    writeFileSync(versionInfoPath, versionInfoContent, 'utf8');
+    versionArgs = ['--version-file', versionInfoPath];
+  } catch (err) {
+    console.warn('Could not generate version_info.txt for sidecar:', err.message);
+  }
+}
 
-const built = path.join(buildDir, 'dist', `fusion-torrent${exeSuffix}`);
-if (!existsSync(built)) {
-  throw new Error(`PyInstaller did not produce the expected binary: ${built}`);
+const hasPyInstaller = isWindows
+  ? spawnSync('where pyinstaller', { encoding: 'utf8', shell: true }).status === 0
+  : spawnSync('which', ['pyinstaller'], { encoding: 'utf8' }).status === 0;
+
+const isRelease = process.env.NODE_ENV === 'production' || !!process.env.CI || process.argv.includes('--release');
+
+if (!hasPyInstaller && isRelease) {
+  throw new Error(
+    'Production release build requires PyInstaller with python-libtorrent to guarantee MSE/PE encryption against DPI. Silently falling back to unencrypted librqbit is prohibited in release mode.'
+  );
 }
 
 const outDir = path.join(root, 'src-tauri', 'binaries');
 mkdirSync(outDir, { recursive: true });
 const dest = path.join(outDir, `fusion-torrent-${triple}${exeSuffix}`);
-copyFileSync(built, dest);
 
-console.log(`Sidecar built: ${path.relative(root, dest)}`);
+if (hasPyInstaller) {
+  console.log(`Building production sidecar with PyInstaller for target ${triple}...`);
+  run(
+    'pyinstaller',
+    [
+      '--onefile',
+      '--console',
+      '--name',
+      'fusion-torrent',
+      '--distpath',
+      path.join(buildDir, 'dist'),
+      '--workpath',
+      path.join(buildDir, 'work'),
+      '--specpath',
+      buildDir,
+      ...versionArgs,
+      scriptPath,
+    ],
+    'PyInstaller'
+  );
+
+  const built = path.join(buildDir, 'dist', `fusion-torrent${exeSuffix}`);
+  if (!existsSync(built)) {
+    throw new Error(`PyInstaller did not produce the expected binary: ${built}`);
+  }
+  copyFileSync(built, dest);
+  console.log(`PyInstaller sidecar built: ${path.relative(root, dest)}`);
+} else {
+  console.warn(
+    `[DEV WARNING] PyInstaller not found. Falling back to native Rust sidecar (bin: fusion-torrent) without MSE/PE obfuscation.`
+  );
+  run(
+    'cargo',
+    ['build', '--release', '--bin', 'fusion-torrent', '--manifest-path', 'src-tauri/Cargo.toml'],
+    'Cargo'
+  );
+
+  const built = path.join(root, 'src-tauri', 'target', 'release', `fusion-torrent${exeSuffix}`);
+  if (!existsSync(built)) {
+    throw new Error(`Cargo did not produce the expected binary: ${built}`);
+  }
+  copyFileSync(built, dest);
+  console.log(`Native dev fallback sidecar built: ${path.relative(root, dest)}`);
+}

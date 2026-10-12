@@ -15,12 +15,21 @@ impl RepositoryStore {
             .content_hash
             .clone()
             .unwrap_or_else(|| hex::encode(Sha256::digest(raw_json.as_bytes())));
-        let trust_level = repo
-            .metadata
-            .trust_level
-            .as_deref()
-            .filter(|value| !value.trim().is_empty())
-            .unwrap_or("unknown");
+        let trust_level = if crate::builtin_demo::is_builtin_repository_url(url) {
+            "official"
+        } else {
+            let declared = repo
+                .metadata
+                .trust_level
+                .as_deref()
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or("unknown");
+            if declared == "official" {
+                "community"
+            } else {
+                declared
+            }
+        };
 
         tx.execute(
             "DELETE FROM repository_assets WHERE repository_id = ?1",
@@ -244,6 +253,28 @@ impl RepositoryStore {
         self.conn
             .query_row(
                 "SELECT url FROM repositories WHERE id = ?1",
+                params![repository_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|error| error.to_string())
+    }
+
+    pub fn get_repository_raw_json(&self, repository_id: &str) -> Result<Option<String>, String> {
+        self.conn
+            .query_row(
+                "SELECT raw_json FROM repositories WHERE id = ?1",
+                params![repository_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|error| error.to_string())
+    }
+
+    pub fn get_repository_trust_level(&self, repository_id: &str) -> Result<Option<String>, String> {
+        self.conn
+            .query_row(
+                "SELECT trust_level FROM repositories WHERE id = ?1",
                 params![repository_id],
                 |row| row.get(0),
             )

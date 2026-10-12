@@ -218,6 +218,29 @@ pub async fn refresh_repository(
             .get_repository_url(&repository_id)?
             .ok_or_else(|| format!("Unknown repository: {repository_id}"))?
     };
+
+    if url.starts_with("manifest:inline:") {
+        let store = lock_store(&state)?;
+        return store
+            .list_repositories()?
+            .into_iter()
+            .find(|repo| repo.id == repository_id)
+            .ok_or_else(|| format!("Unknown repository: {repository_id}"));
+    }
+
+    if crate::manifest::fetch_manifest_inner(&url).await.is_ok() {
+        let summary = crate::orchestrator::add_manifest_source_inner(&state, &url).await?;
+        logging::log_event(
+            &state.data_dir,
+            "repository_refreshed",
+            &[
+                ("url", url.as_str()),
+                ("repository_id", summary.id.as_str()),
+            ],
+        );
+        return Ok(summary);
+    }
+
     let repo = if builtin_demo::is_builtin_repository_url(&url) {
         load_builtin_demo_repository()?
     } else if is_file_repository_url(&url) {

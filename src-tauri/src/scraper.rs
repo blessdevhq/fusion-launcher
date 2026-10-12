@@ -664,6 +664,19 @@ async fn enrich_artwork_steamgriddb(
         }
     }
     emit_metadata(app, "metadata:ready", &game.id, "ready");
+
+    let covers_root = state.local_data_dir.clone();
+    let cover_url = payload.cover.clone();
+    let hero_url = payload.hero.clone();
+    tauri::async_runtime::spawn(async move {
+        if let Some(url) = cover_url {
+            let _ = ensure_artwork_cached(&covers_root, &url).await;
+        }
+        if let Some(url) = hero_url {
+            let _ = ensure_artwork_cached(&covers_root, &url).await;
+        }
+    });
+
     Ok(result)
 }
 
@@ -1145,4 +1158,102 @@ fn emit_batch_progress(
             current_game_id,
         },
     );
+}
+
+pub async fn ensure_artwork_cached(base_dir: &Path, url: &str) -> Result<String, String> {
+    let trimmed = url.trim();
+    if trimmed.is_empty() || trimmed.contains("...") {
+        return Err("Invalid artwork URL".to_string());
+    }
+    if !trimmed.starts_with("http://") && !trimmed.starts_with("https://") {
+        return Ok(trimmed.to_string());
+    }
+
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(trimmed.as_bytes());
+    let hash = hex::encode(hasher.finalize());
+
+    let ext = if trimmed.to_lowercase().ends_with(".png") {
+        "png"
+    } else if trimmed.to_lowercase().ends_with(".webp") {
+        "webp"
+    } else {
+        "jpg"
+    };
+
+    let covers_dir = base_dir.join("covers");
+    std::fs::create_dir_all(&covers_dir)
+        .map_err(|e| format!("Failed to create covers directory: {e}"))?;
+    let target = covers_dir.join(format!("{hash}.{ext}"));
+
+    if target.exists() && target.metadata().map(|m| m.len() > 0).unwrap_or(false) {
+        return Ok(target.to_string_lossy().to_string());
+    }
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let response = client
+        .get(trimmed)
+        .header("User-Agent", "Fusion Launcher Artwork Cache/0.4")
+        .send()
+        .await
+        .map_err(|e| format!("Failed to fetch artwork from {trimmed}: {e}"))?;
+
+    if !response.status().is_success() {
+        return Err(format!(
+            "Artwork request returned HTTP {}",
+            response.status()
+        ));
+    }
+
+    let bytes = response
+        .bytes()
+        .await
+        .map_err(|e| format!("Failed to read artwork response: {e}"))?;
+
+    let tmp_file = covers_dir.join(format!("{hash}.tmp"));
+    std::fs::write(&tmp_file, &bytes)
+        .map_err(|e| format!("Failed to write cached artwork: {e}"))?;
+    std::fs::rename(&tmp_file, &target)
+        .map_err(|e| format!("Failed to finalize cached artwork: {e}"))?;
+
+    Ok(target.to_string_lossy().to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn rejects_invalid_artwork_urls() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(ensure_artwork_cached(dir.path(), "").await.is_err());
+        assert!(
+            ensure_artwork_cached(dir.path(), "https://example.com/...png")
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn returns_existing_cached_file_without_network() {
+        let dir = tempfile::tempdir().unwrap();
+        let covers = dir.path().join("covers");
+        std::fs::create_dir_all(&covers).unwrap();
+
+        use sha2::{Digest, Sha256};
+        let url = "https://example.com/art.png";
+        let mut hasher = Sha256::new();
+        hasher.update(url.as_bytes());
+        let hash = hex::encode(hasher.finalize());
+        let target = covers.join(format!("{hash}.png"));
+        std::fs::write(&target, b"mock-image-data").unwrap();
+
+        let cached = ensure_artwork_cached(dir.path(), url).await.unwrap();
+        assert_eq!(PathBuf::from(cached), target);
+    }
 }

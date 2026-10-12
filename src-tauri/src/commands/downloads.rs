@@ -83,9 +83,14 @@ pub(crate) async fn download_asset_internal(
     emit_direct_download_record(app, &started);
     let download_result = {
         let asset_id = asset.id.clone();
+        let asset_name = asset.display_name.clone();
+        let progress_target_path = target_path.clone();
         let progress_cancel_token = cancel_token.clone();
         let stream_cancel_token = cancel_token.clone();
         let mut speed_meter = crate::downloads::DirectDownloadSpeedMeter::new();
+        let mut last_sqlite_flush = std::time::Instant::now();
+        const SQLITE_FLUSH_INTERVAL: std::time::Duration = std::time::Duration::from_millis(1500);
+
         crate::downloads::download_source_to_file_with_progress_and_cancel(
             source,
             &destination,
@@ -94,18 +99,50 @@ pub(crate) async fn download_asset_internal(
                     return;
                 }
                 let speed_bytes_per_sec = speed_meter.sample(downloaded);
-                if let Ok(store) = lock_app_store(state) {
-                    if let Ok(record) = persist_direct_download_progress(
-                        &store,
-                        &asset_id,
-                        downloaded,
-                        total,
-                        speed_bytes_per_sec,
-                    ) {
-                        drop(store);
-                        emit_direct_download_record(app, &record);
+                let should_flush_sqlite = last_sqlite_flush.elapsed() >= SQLITE_FLUSH_INTERVAL;
+
+                if should_flush_sqlite {
+                    last_sqlite_flush = std::time::Instant::now();
+                    if let Ok(store) = lock_app_store(state) {
+                        if let Ok(record) = persist_direct_download_progress(
+                            &store,
+                            &asset_id,
+                            downloaded,
+                            total,
+                            speed_bytes_per_sec,
+                        ) {
+                            drop(store);
+                            emit_direct_download_record(app, &record);
+                            return;
+                        }
                     }
                 }
+
+                let progress_percent = match total {
+                    Some(t) if t > 0 => (downloaded as f64 / t as f64) * 100.0,
+                    _ => 0.0,
+                };
+                let ui_record = TorrentDownloadRecord {
+                    game_id: asset_id.clone(),
+                    subject_type: Some("asset".to_string()),
+                    display_name: Some(asset_name.clone()),
+                    parent_game_id: None,
+                    magnet_uri: String::new(),
+                    save_dir: progress_target_path.clone(),
+                    status: "downloading".to_string(),
+                    progress_percent,
+                    downloaded_bytes: downloaded,
+                    total_bytes: total.unwrap_or(0),
+                    download_speed_bytes_per_sec: speed_bytes_per_sec,
+                    upload_speed_bytes_per_sec: 0,
+                    peers_count: 0,
+                    torrent_id: None,
+                    error_message: None,
+                    created_at: String::new(),
+                    updated_at: String::new(),
+                    completed_at: None,
+                };
+                emit_direct_download_record(app, &ui_record);
             },
             move || stream_cancel_token.is_cancelled(),
         )
@@ -349,6 +386,64 @@ pub(super) fn extract_manifest_emulator_bundle_archive(
     Ok(extract_dir)
 }
 
+async fn post_process_game_archive(
+    game: &CatalogGameView,
+    archive_path: &Path,
+) -> Result<PathBuf, String> {
+    let game = game.clone();
+    let archive_path = archive_path.to_path_buf();
+    tokio::task::spawn_blocking(move || {
+        extract_game_archive_if_needed(&game, &archive_path)
+    })
+    .await
+    .map_err(|error| format!("Game archive extraction task failed: {error}"))?
+}
+
+pub(super) fn extract_game_archive_if_needed(
+    game: &CatalogGameView,
+    downloaded_path: &Path,
+) -> Result<PathBuf, String> {
+    let extension = downloaded_path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .unwrap_or_default();
+
+    if !extension.eq_ignore_ascii_case("zip") && !extension.eq_ignore_ascii_case("7z") {
+        return Ok(downloaded_path.to_path_buf());
+    }
+
+    if game.expected_extensions.iter().any(|ext| {
+        ext.eq_ignore_ascii_case(".zip")
+            || ext.eq_ignore_ascii_case("zip")
+            || ext.eq_ignore_ascii_case(".7z")
+            || ext.eq_ignore_ascii_case("7z")
+    }) {
+        return Ok(downloaded_path.to_path_buf());
+    }
+
+    let extract_dir = downloaded_path
+        .parent()
+        .map(Path::to_path_buf)
+        .ok_or_else(|| format!("Game archive has no parent: {}", downloaded_path.display()))?;
+
+    crate::archive::extract_archive_safely(downloaded_path, &extract_dir)?;
+    let _ = fs::remove_file(downloaded_path);
+
+    if let Ok(normalized_extensions) =
+        crate::game_files::normalize_expected_extensions(&game.expected_extensions)
+    {
+        if let Ok(resolved) = crate::game_files::resolve_game_path(
+            &extract_dir,
+            &normalized_extensions,
+            game.launch.as_ref().and_then(|launch| launch.preferred_file.as_deref()),
+        ) {
+            return Ok(resolved);
+        }
+    }
+
+    Ok(extract_dir)
+}
+
 fn path_is_existing_bundle_dir(expected: &Path, actual: &Path) -> bool {
     if !expected.exists() || !actual.exists() {
         return false;
@@ -446,8 +541,9 @@ pub async fn download_game(
 
     match download_source_to_file(source, &destination).await {
         Ok(file) => {
-            let local_path = file.path.to_string_lossy().to_string();
-            let total_bytes = source_size_bytes(source).unwrap_or_else(|| file_size(&file.path));
+            let processed_path = post_process_game_archive(&game, &file.path).await?;
+            let local_path = processed_path.to_string_lossy().to_string();
+            let total_bytes = source_size_bytes(source).unwrap_or_else(|| file_size(&processed_path));
             let (record, _) = lock_store(&state)?.record_direct_game_download_completed(
                 &game.id,
                 direct_source_kind(source),
@@ -567,9 +663,14 @@ pub(crate) async fn start_game_download_internal(
 
             let download_result = {
                 let game_id = game.id.clone();
+                let game_title = game.title.clone();
+                let progress_target_path = target_path.clone();
                 let progress_cancel_token = cancel_token.clone();
                 let stream_cancel_token = cancel_token.clone();
                 let mut speed_meter = crate::downloads::DirectDownloadSpeedMeter::new();
+                let mut last_sqlite_flush = std::time::Instant::now();
+                const SQLITE_FLUSH_INTERVAL: std::time::Duration = std::time::Duration::from_millis(1500);
+
                 crate::downloads::download_source_to_file_with_progress_and_cancel(
                     source,
                     &destination,
@@ -578,18 +679,50 @@ pub(crate) async fn start_game_download_internal(
                             return;
                         }
                         let speed_bytes_per_sec = speed_meter.sample(downloaded);
-                        if let Ok(store) = lock_app_store(state) {
-                            if let Ok(record) = persist_direct_download_progress(
-                                &store,
-                                &game_id,
-                                downloaded,
-                                total,
-                                speed_bytes_per_sec,
-                            ) {
-                                drop(store);
-                                emit_direct_download_record(app, &record);
+                        let should_flush_sqlite = last_sqlite_flush.elapsed() >= SQLITE_FLUSH_INTERVAL;
+
+                        if should_flush_sqlite {
+                            last_sqlite_flush = std::time::Instant::now();
+                            if let Ok(store) = lock_app_store(state) {
+                                if let Ok(record) = persist_direct_download_progress(
+                                    &store,
+                                    &game_id,
+                                    downloaded,
+                                    total,
+                                    speed_bytes_per_sec,
+                                ) {
+                                    drop(store);
+                                    emit_direct_download_record(app, &record);
+                                    return;
+                                }
                             }
                         }
+
+                        let progress_percent = match total {
+                            Some(t) if t > 0 => (downloaded as f64 / t as f64) * 100.0,
+                            _ => 0.0,
+                        };
+                        let ui_record = TorrentDownloadRecord {
+                            game_id: game_id.clone(),
+                            subject_type: Some("game".to_string()),
+                            display_name: Some(game_title.clone()),
+                            parent_game_id: None,
+                            magnet_uri: String::new(),
+                            save_dir: progress_target_path.clone(),
+                            status: "downloading".to_string(),
+                            progress_percent,
+                            downloaded_bytes: downloaded,
+                            total_bytes: total.unwrap_or(0),
+                            download_speed_bytes_per_sec: speed_bytes_per_sec,
+                            upload_speed_bytes_per_sec: 0,
+                            peers_count: 0,
+                            torrent_id: None,
+                            error_message: None,
+                            created_at: String::new(),
+                            updated_at: String::new(),
+                            completed_at: None,
+                        };
+                        emit_direct_download_record(app, &ui_record);
                     },
                     move || stream_cancel_token.is_cancelled(),
                 )
@@ -632,8 +765,23 @@ pub(crate) async fn start_game_download_internal(
                     return Err(error);
                 }
             };
-            let local_path = file.path.to_string_lossy().to_string();
-            let total_bytes = size_bytes.unwrap_or_else(|| file_size(&file.path));
+            let processed_path = match post_process_game_archive(&game, &file.path).await {
+                Ok(path) => path,
+                Err(error) => {
+                    let target_path = file.path.to_string_lossy().to_string();
+                    let failed = lock_app_store(state)?.record_direct_game_download_failed(
+                        &game.id,
+                        source_kind,
+                        &target_path,
+                        expected_bytes,
+                        &error,
+                    )?;
+                    emit_direct_download_record(app, &failed);
+                    return Err(error);
+                }
+            };
+            let local_path = processed_path.to_string_lossy().to_string();
+            let total_bytes = size_bytes.unwrap_or_else(|| file_size(&processed_path));
             let (record, torrent) = lock_app_store(state)?.record_direct_game_download_completed(
                 &game.id,
                 source_kind,
