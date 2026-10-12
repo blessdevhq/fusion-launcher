@@ -71,14 +71,16 @@ pub(crate) fn is_forbidden_ip(ip: std::net::IpAddr) -> bool {
             }
             // IPv4-mapped IPv6 (::ffff:0:0/96)
             if octets[0..10] == [0; 10] && octets[10] == 0xff && octets[11] == 0xff {
-                let mapped = std::net::Ipv4Addr::new(octets[12], octets[13], octets[14], octets[15]);
+                let mapped =
+                    std::net::Ipv4Addr::new(octets[12], octets[13], octets[14], octets[15]);
                 return is_forbidden_ip(std::net::IpAddr::V4(mapped));
             }
             // IPv4-compatible IPv6 (deprecated ::a.b.c.d)
             if octets[0..12] == [0; 12]
                 && (octets[12] != 0 || octets[13] != 0 || octets[14] != 0 || octets[15] != 1)
             {
-                let mapped = std::net::Ipv4Addr::new(octets[12], octets[13], octets[14], octets[15]);
+                let mapped =
+                    std::net::Ipv4Addr::new(octets[12], octets[13], octets[14], octets[15]);
                 return is_forbidden_ip(std::net::IpAddr::V4(mapped));
             }
             // IPv6 Unique Local Address (ULA: fc00::/7 -> fc00.. - fdff..)
@@ -158,7 +160,9 @@ pub(crate) fn github_redirect_policy() -> reqwest::redirect::Policy {
     reqwest::redirect::Policy::custom(|attempt| {
         let is_https = attempt.url().scheme() == "https";
         let is_allowed = attempt.url().host_str().is_some_and(|h| {
-            ALLOWED.iter().any(|a| h == *a || h.ends_with(&format!(".{a}")))
+            ALLOWED
+                .iter()
+                .any(|a| h == *a || h.ends_with(&format!(".{a}")))
         });
         if !is_https {
             attempt.error("Insecure HTTP redirect rejected")
@@ -273,13 +277,25 @@ mod tests {
     #[tokio::test]
     async fn resolve_and_pin_host_rejects_forbidden_targets() {
         let loopback_url = url::Url::parse("https://127.0.0.1/catalog.json").unwrap();
-        assert!(resolve_and_pin_host(reqwest::Client::builder(), &loopback_url).await.is_err());
+        assert!(
+            resolve_and_pin_host(reqwest::Client::builder(), &loopback_url)
+                .await
+                .is_err()
+        );
 
         let localhost_url = url::Url::parse("https://localhost/catalog.json").unwrap();
-        assert!(resolve_and_pin_host(reqwest::Client::builder(), &localhost_url).await.is_err());
+        assert!(
+            resolve_and_pin_host(reqwest::Client::builder(), &localhost_url)
+                .await
+                .is_err()
+        );
 
         // Fake-IP address is allowed through
         let fake_ip_url = url::Url::parse("https://198.18.0.10/catalog.json").unwrap();
-        assert!(resolve_and_pin_host(reqwest::Client::builder(), &fake_ip_url).await.is_ok());
+        assert!(
+            resolve_and_pin_host(reqwest::Client::builder(), &fake_ip_url)
+                .await
+                .is_ok()
+        );
     }
 }

@@ -1,6 +1,6 @@
-use std::collections::HashSet;
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
+use std::collections::HashSet;
 
 pub const EXECUTION_PLAN_VERSION: u32 = 1;
 
@@ -55,10 +55,7 @@ pub enum StepAction {
         is_executable: bool,
     },
     /// Verify the integrity and provenance of an artifact.
-    VerifyArtifact {
-        artifact_id: String,
-        sha256: String,
-    },
+    VerifyArtifact { artifact_id: String, sha256: String },
     /// Extract a verified archive into its target managed directory.
     ExtractArtifact {
         artifact_id: String,
@@ -75,9 +72,7 @@ pub enum StepAction {
         profile_id: String,
     },
     /// Final readiness verification. Must be the last step of the plan.
-    VerifyReadiness {
-        game_id: String,
-    },
+    VerifyReadiness { game_id: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -457,9 +452,18 @@ mod tests {
         assert_eq!(plan.version, EXECUTION_PLAN_VERSION);
         assert_eq!(plan.game_id, "nes::mario");
         assert_eq!(plan.steps.len(), 3);
-        assert!(matches!(plan.steps[0].action, StepAction::EnsureEmulator { .. }));
-        assert!(matches!(plan.steps[1].action, StepAction::FetchArtifact { .. }));
-        assert!(matches!(plan.steps[2].action, StepAction::VerifyReadiness { .. }));
+        assert!(matches!(
+            plan.steps[0].action,
+            StepAction::EnsureEmulator { .. }
+        ));
+        assert!(matches!(
+            plan.steps[1].action,
+            StepAction::FetchArtifact { .. }
+        ));
+        assert!(matches!(
+            plan.steps[2].action,
+            StepAction::VerifyReadiness { .. }
+        ));
     }
 
     #[test]
@@ -516,6 +520,9 @@ mod tests {
 
         let plan = PlanResolver::resolve_plan(&game, &setup_state).unwrap();
         assert_eq!(plan.steps.len(), 1);
-        assert!(matches!(plan.steps[0].action, StepAction::VerifyReadiness { .. }));
+        assert!(matches!(
+            plan.steps[0].action,
+            StepAction::VerifyReadiness { .. }
+        ));
     }
 }

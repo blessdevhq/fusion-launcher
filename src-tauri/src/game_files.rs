@@ -492,7 +492,8 @@ mod tests {
         std::fs::write(&rom, b"rom-content").unwrap();
 
         let expected_extensions = normalize_expected_extensions(&[".nsp".to_string()]).unwrap();
-        let resolved = resolve_game_path(&game_dir, &expected_extensions, Some("game.nsp")).unwrap();
+        let resolved =
+            resolve_game_path(&game_dir, &expected_extensions, Some("game.nsp")).unwrap();
 
         assert_eq!(resolved, rom);
     }
@@ -550,4 +551,3 @@ mod tests {
         }
     }
 }
-

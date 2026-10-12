@@ -28,8 +28,7 @@ pub async fn resolve_github_latest(
 ) -> Result<ResolvedAsset, String> {
     let api_url = format!("https://api.github.com/repos/{repo}/releases/latest");
     let parsed_url = url::Url::parse(&api_url).map_err(|e| e.to_string())?;
-    let mut builder = reqwest::Client::builder()
-        .redirect(crate::net::github_redirect_policy());
+    let mut builder = reqwest::Client::builder().redirect(crate::net::github_redirect_policy());
     builder = crate::net::resolve_and_pin_host(builder, &parsed_url)
         .await
         .map_err(|error| format!("SSRF protection rejected GitHub API target: {error}"))?;

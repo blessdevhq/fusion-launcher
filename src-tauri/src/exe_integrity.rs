@@ -1,6 +1,6 @@
-use std::{fs, io::Read, path::Path, time::UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::{fs, io::Read, path::Path, time::UNIX_EPOCH};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExeRecord {

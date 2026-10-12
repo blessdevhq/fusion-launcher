@@ -352,7 +352,10 @@ pub async fn download_http_streaming(
         let _ = tokio::fs::remove_file(&part_path).await;
     }
 
-    let redirect_policy = match Url::parse(url).ok().and_then(|u| u.host_str().map(str::to_string)) {
+    let redirect_policy = match Url::parse(url)
+        .ok()
+        .and_then(|u| u.host_str().map(str::to_string))
+    {
         Some(host)
             if host == "github.com"
                 || host.ends_with(".github.com")
