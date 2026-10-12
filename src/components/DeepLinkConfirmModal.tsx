@@ -5,14 +5,15 @@ import {
   AlertCircle,
   ArrowLeft,
   ChevronRight,
+  Cpu,
   ExternalLink,
   HardDrive,
-  Layers,
-  PackageCheck,
   ShieldAlert,
   X,
 } from 'lucide-react';
 import { api } from '@/lib/api';
+import { getUiText } from '@/lib/i18n';
+import { useLauncherStore } from '@/stores/launcherStore';
 import type { Manifest, ManifestGame } from '@/types/manifest';
 
 export interface PendingDeepLinkRequest {
@@ -30,10 +31,10 @@ interface DeepLinkConfirmModalProps {
   onClose: () => void;
 }
 
-function extractDownloadHosts(game: ManifestGame): string[] {
+function extractDownloadHosts(game: ManifestGame, torrentLabel: string, fallbackLabel: string): string[] {
   const hosts: string[] = [];
   if (game.assets.heavy_rom_magnet) {
-    hosts.push('Torrent / Magnet');
+    hosts.push(torrentLabel);
   }
   const addHost = (urlStr?: string | null) => {
     if (!urlStr) return;
@@ -46,10 +47,13 @@ function extractDownloadHosts(game: ManifestGame): string[] {
   };
   addHost(game.assets.core_bundle_url);
   addHost(game.assets.shader_cache_url);
-  return hosts.length > 0 ? hosts : ['No remote download source declared'];
+  return hosts.length > 0 ? hosts : [fallbackLabel];
 }
 
 export function DeepLinkConfirmModal({ request, onClose }: DeepLinkConfirmModalProps) {
+  const language = useLauncherStore((s) => s.settings.language);
+  const t = getUiText(language).deepLinkModal;
+
   const [step, setStep] = useState<1 | 2>(1);
   const [cooldown, setCooldown] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -59,7 +63,7 @@ export function DeepLinkConfirmModal({ request, onClose }: DeepLinkConfirmModalP
 
   const activeRequestIdRef = useRef<string>(request.id);
 
-  // Reset when request changes
+  // Invalidate in-flight operations when request changes
   useEffect(() => {
     activeRequestIdRef.current = request.id;
     setStep(1);
@@ -73,8 +77,17 @@ export function DeepLinkConfirmModal({ request, onClose }: DeepLinkConfirmModalP
       setCooldown(false);
     }, 1500);
 
-    return () => clearTimeout(timer);
+    return () => {
+      clearTimeout(timer);
+    };
   }, [request.id]);
+
+  // Clean up on unmount so any in-flight fetch is completely dropped
+  useEffect(() => {
+    return () => {
+      activeRequestIdRef.current = '';
+    };
+  }, []);
 
   // Reset 1.5s countdown on step change
   useEffect(() => {
@@ -86,9 +99,15 @@ export function DeepLinkConfirmModal({ request, onClose }: DeepLinkConfirmModalP
     return () => clearTimeout(timer);
   }, [step]);
 
+  const handleClose = () => {
+    activeRequestIdRef.current = '';
+    onClose();
+  };
+
   const handleConfirmSource = async () => {
+    const currentId = request.id;
     if (cooldown || busy) return;
-    if (activeRequestIdRef.current !== request.id) return;
+    if (!activeRequestIdRef.current || activeRequestIdRef.current !== currentId) return;
     setBusy(true);
     setErrorMessage(null);
     try {
@@ -97,38 +116,49 @@ export function DeepLinkConfirmModal({ request, onClose }: DeepLinkConfirmModalP
       } else if (request.onConfirm) {
         await request.onConfirm();
       }
-      onClose();
+      handleClose();
     } catch (err) {
-      setErrorMessage(err instanceof Error ? err.message : String(err));
+      if (activeRequestIdRef.current === currentId) {
+        setErrorMessage(err instanceof Error ? err.message : String(err));
+      }
     } finally {
-      setBusy(false);
+      if (activeRequestIdRef.current === currentId) {
+        setBusy(false);
+      }
     }
   };
 
   const handleFetchManifestStep1 = async () => {
+    const currentId = request.id;
     if (cooldown || busy) return;
-    if (activeRequestIdRef.current !== request.id) return;
+    if (!activeRequestIdRef.current || activeRequestIdRef.current !== currentId) return;
     setBusy(true);
     setErrorMessage(null);
     try {
       const data = await api.fetchManifest(request.url);
-      if (activeRequestIdRef.current !== request.id) return;
+      // Strictly ignore result if dialog was closed or replaced during the network request
+      if (!activeRequestIdRef.current || activeRequestIdRef.current !== currentId) return;
       if (!data.games || data.games.length === 0) {
-        throw new Error('Manifest contains no installable games.');
+        throw new Error(t.noGamesError);
       }
       setManifest(data);
       setSelectedTitleId(data.games[0].title_id);
       setStep(2);
     } catch (err) {
-      setErrorMessage(err instanceof Error ? err.message : String(err));
+      if (activeRequestIdRef.current === currentId) {
+        setErrorMessage(err instanceof Error ? err.message : String(err));
+      }
     } finally {
-      setBusy(false);
+      if (activeRequestIdRef.current === currentId) {
+        setBusy(false);
+      }
     }
   };
 
   const handleConfirmInstallStep2 = async () => {
+    const currentId = request.id;
     if (cooldown || busy || !selectedTitleId) return;
-    if (activeRequestIdRef.current !== request.id) return;
+    if (!activeRequestIdRef.current || activeRequestIdRef.current !== currentId) return;
     setBusy(true);
     setErrorMessage(null);
     try {
@@ -137,17 +167,22 @@ export function DeepLinkConfirmModal({ request, onClose }: DeepLinkConfirmModalP
       } else if (request.onConfirm) {
         await request.onConfirm();
       }
-      onClose();
+      handleClose();
     } catch (err) {
-      setErrorMessage(err instanceof Error ? err.message : String(err));
+      if (activeRequestIdRef.current === currentId) {
+        setErrorMessage(err instanceof Error ? err.message : String(err));
+      }
     } finally {
-      setBusy(false);
+      if (activeRequestIdRef.current === currentId) {
+        setBusy(false);
+      }
     }
   };
 
   const selectedGame = manifest?.games.find((g) => g.title_id === selectedTitleId) ?? manifest?.games[0];
-  const downloadHosts = selectedGame ? extractDownloadHosts(selectedGame) : [];
-  const hasCoreBundle = Boolean(selectedGame?.assets.core_bundle_url?.trim());
+  const downloadHosts = selectedGame
+    ? extractDownloadHosts(selectedGame, t.torrentMagnet, t.noRemoteSource)
+    : [];
 
   return (
     <div className="fixed inset-0 z-[70] grid place-items-center bg-black/75 px-5 backdrop-blur-sm">
@@ -160,29 +195,29 @@ export function DeepLinkConfirmModal({ request, onClose }: DeepLinkConfirmModalP
             <div className="flex items-center gap-2">
               <h2 className="text-xl font-bold tracking-tight text-white">
                 {request.type === 'addSource'
-                  ? 'Connect External Repository'
+                  ? t.connectSourceTitle
                   : step === 1
-                  ? 'Inspect Game Manifest'
-                  : 'Confirm Game Installation'}
+                  ? t.inspectManifestTitle
+                  : t.confirmInstallTitle}
               </h2>
               {request.type === 'install' && (
                 <span className="rounded-full border border-white/20 px-2 py-0.5 text-[11px] font-medium text-white/60">
-                  Step {step}/2
+                  {t.stepIndicator(step, 2)}
                 </span>
               )}
             </div>
             <p className="mt-1 text-sm text-white/70">
               {request.type === 'addSource'
-                ? 'An external link requested access to add a repository. Verify the target host before proceeding.'
+                ? t.connectSourceDesc
                 : step === 1
-                ? 'An external link requested installing a game. Fusion Launcher will inspect the manifest before anything is saved.'
-                : 'Review the game details and download sources parsed from the remote manifest.'}
+                ? t.inspectManifestDesc
+                : t.confirmInstallDesc}
             </p>
           </div>
           <button
-            onClick={onClose}
+            onClick={handleClose}
             className="grid h-9 w-9 place-items-center rounded-md border border-white/10 text-white/60 transition hover:text-white"
-            title="Cancel"
+            title={t.cancel}
           >
             <X className="h-4 w-4" />
           </button>
@@ -201,7 +236,7 @@ export function DeepLinkConfirmModal({ request, onClose }: DeepLinkConfirmModalP
             <div className="rounded-lg border border-white/10 bg-black/40 p-3">
               <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-white/50">
                 <ExternalLink className="h-3.5 w-3.5" />
-                Target Host
+                {t.targetHost}
               </div>
               <div className="mt-1 text-base font-bold text-white selection:bg-white/20">
                 {request.host}
@@ -210,7 +245,7 @@ export function DeepLinkConfirmModal({ request, onClose }: DeepLinkConfirmModalP
 
             <div className="rounded-lg border border-white/10 bg-black/40 p-3">
               <div className="text-xs font-semibold uppercase tracking-wider text-white/50">
-                Full HTTPS Resource
+                {t.fullResource}
               </div>
               <div className="mt-1 break-all font-mono text-xs text-white/80 select-all">
                 {request.url}
@@ -228,7 +263,7 @@ export function DeepLinkConfirmModal({ request, onClose }: DeepLinkConfirmModalP
                   htmlFor="deep-link-game-select"
                   className="block text-xs font-semibold uppercase tracking-wider text-white/50"
                 >
-                  Select Game ({manifest.games.length} available in manifest)
+                  {t.selectGame(manifest.games.length)}
                 </label>
                 <select
                   id="deep-link-game-select"
@@ -248,7 +283,7 @@ export function DeepLinkConfirmModal({ request, onClose }: DeepLinkConfirmModalP
             <div className="grid grid-cols-2 gap-3">
               <div className="rounded-lg border border-white/10 bg-black/40 p-3">
                 <div className="text-xs font-semibold uppercase tracking-wider text-white/50">
-                  Game Title
+                  {t.gameTitle}
                 </div>
                 <div className="mt-1 truncate text-sm font-bold text-white" title={selectedGame.title}>
                   {selectedGame.title}
@@ -257,7 +292,7 @@ export function DeepLinkConfirmModal({ request, onClose }: DeepLinkConfirmModalP
 
               <div className="rounded-lg border border-white/10 bg-black/40 p-3">
                 <div className="text-xs font-semibold uppercase tracking-wider text-white/50">
-                  Platform
+                  {t.platform}
                 </div>
                 <div className="mt-1 text-sm font-bold uppercase text-white">
                   {selectedGame.platform}
@@ -268,7 +303,7 @@ export function DeepLinkConfirmModal({ request, onClose }: DeepLinkConfirmModalP
             <div className="rounded-lg border border-white/10 bg-black/40 p-3">
               <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-white/50">
                 <HardDrive className="h-3.5 w-3.5" />
-                Download Hosts / Transport
+                {t.downloadHosts}
               </div>
               <div className="mt-1 space-y-1">
                 {downloadHosts.map((h, i) => (
@@ -281,27 +316,11 @@ export function DeepLinkConfirmModal({ request, onClose }: DeepLinkConfirmModalP
 
             <div className="rounded-lg border border-white/10 bg-black/40 p-3">
               <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-white/50">
-                <Layers className="h-3.5 w-3.5" />
-                Core Bundle (Emulator)
+                <Cpu className="h-3.5 w-3.5 text-fusion-primary" />
+                {t.emulatorNotice}
               </div>
-              <div className="mt-1 flex items-center gap-2 text-xs">
-                {hasCoreBundle ? (
-                  <>
-                    <span className="inline-flex items-center gap-1 rounded bg-emerald-500/20 px-2 py-0.5 font-medium text-emerald-300">
-                      <PackageCheck className="h-3.5 w-3.5" />
-                      Included in manifest
-                    </span>
-                    {selectedGame.assets.core_bundle_sha256 && (
-                      <span className="font-mono text-[11px] text-white/50">
-                        SHA-256: {selectedGame.assets.core_bundle_sha256.slice(0, 8)}...
-                      </span>
-                    )}
-                  </>
-                ) : (
-                  <span className="text-white/60">
-                    None (relies on user-configured or pre-installed emulator)
-                  </span>
-                )}
+              <div className="mt-1 text-xs text-white/70">
+                {t.emulatorNoticeDesc}
               </div>
             </div>
           </div>
@@ -319,15 +338,15 @@ export function DeepLinkConfirmModal({ request, onClose }: DeepLinkConfirmModalP
               className="inline-flex items-center gap-1.5 rounded-lg border border-white/15 px-3 py-2 text-sm font-medium text-white/80 transition hover:bg-white/5 hover:text-white"
             >
               <ArrowLeft className="h-4 w-4" />
-              Back
+              {t.back}
             </button>
           ) : (
             <button
               type="button"
-              onClick={onClose}
+              onClick={handleClose}
               className="rounded-lg border border-white/15 px-4 py-2 text-sm font-medium text-white/80 transition hover:bg-white/5 hover:text-white"
             >
-              Cancel
+              {t.cancel}
             </button>
           )}
 
@@ -335,10 +354,10 @@ export function DeepLinkConfirmModal({ request, onClose }: DeepLinkConfirmModalP
             {step === 2 && (
               <button
                 type="button"
-                onClick={onClose}
+                onClick={handleClose}
                 className="rounded-lg border border-white/15 px-4 py-2 text-sm font-medium text-white/80 transition hover:bg-white/5 hover:text-white"
               >
-                Cancel
+                {t.cancel}
               </button>
             )}
 
@@ -353,7 +372,7 @@ export function DeepLinkConfirmModal({ request, onClose }: DeepLinkConfirmModalP
                     : 'bg-fusion-primary text-white shadow-lg shadow-fusion-primary/30 hover:bg-fusion-primary/90'
                 }`}
               >
-                {busy ? 'Processing...' : cooldown ? 'Confirming in 1.5s...' : 'Confirm & Proceed'}
+                {busy ? t.processing : cooldown ? t.confirmCooldown : t.confirmProceed}
               </button>
             ) : step === 1 ? (
               <button
@@ -366,7 +385,7 @@ export function DeepLinkConfirmModal({ request, onClose }: DeepLinkConfirmModalP
                     : 'bg-fusion-primary text-white shadow-lg shadow-fusion-primary/30 hover:bg-fusion-primary/90'
                 }`}
               >
-                {busy ? 'Fetching...' : cooldown ? 'Inspect in 1.5s...' : 'Inspect Manifest'}
+                {busy ? t.fetching : cooldown ? t.inspectCooldown : t.inspectManifest}
                 <ChevronRight className="h-4 w-4" />
               </button>
             ) : (
@@ -380,7 +399,7 @@ export function DeepLinkConfirmModal({ request, onClose }: DeepLinkConfirmModalP
                     : 'bg-fusion-primary text-white shadow-lg shadow-fusion-primary/30 hover:bg-fusion-primary/90'
                 }`}
               >
-                {busy ? 'Installing...' : cooldown ? 'Confirming in 1.5s...' : 'Confirm & Install'}
+                {busy ? t.installing : cooldown ? t.confirmCooldown : t.confirmInstall}
               </button>
             )}
           </div>

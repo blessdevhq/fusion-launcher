@@ -803,6 +803,36 @@ export const en = {
     authorCardBadge: (name: string) => `Config by ${name}`,
     authorCardLink: 'Creator Page',
     previewCardTitle: 'Live In-App Preview'
+  },
+  deepLinkModal: {
+    connectSourceTitle: 'Connect External Repository',
+    inspectManifestTitle: 'Inspect Game Manifest',
+    confirmInstallTitle: 'Confirm Game Installation',
+    stepIndicator: (step: number, total: number) => `Step ${step}/${total}`,
+    connectSourceDesc: 'An external link requested access to add a repository. Verify the target host before proceeding.',
+    inspectManifestDesc: 'An external link requested installing a game. Fusion Launcher will inspect the manifest before anything is saved.',
+    confirmInstallDesc: 'Review the game details and download sources parsed from the remote manifest.',
+    targetHost: 'Target Host',
+    fullResource: 'Full HTTPS Resource',
+    selectGame: (count: number) => `Select Game (${count} available in manifest)`,
+    gameTitle: 'Game Title',
+    platform: 'Platform',
+    downloadHosts: 'Download Hosts / Transport',
+    torrentMagnet: 'Torrent / Magnet',
+    noRemoteSource: 'No remote download source declared',
+    emulatorNotice: 'Emulator',
+    emulatorNoticeDesc: 'Uses your configured or platform default emulator. External sources cannot supply executables.',
+    cancel: 'Cancel',
+    back: 'Back',
+    inspectManifest: 'Inspect Manifest',
+    inspectCooldown: 'Inspect in 1.5s...',
+    fetching: 'Fetching...',
+    confirmProceed: 'Confirm & Proceed',
+    confirmInstall: 'Confirm & Install',
+    confirmCooldown: 'Confirming in 1.5s...',
+    installing: 'Installing...',
+    processing: 'Processing...',
+    noGamesError: 'Manifest contains no installable games.'
   }
 } as const;
 
@@ -1607,6 +1637,36 @@ export const ru: UiText = {
     authorCardBadge: (name: string) => `Конфиг подготовил: ${name}`,
     authorCardLink: 'Страница автора',
     previewCardTitle: 'Превью в лаунчере'
+  },
+  deepLinkModal: {
+    connectSourceTitle: 'Подключение внешнего репозитория',
+    inspectManifestTitle: 'Проверка манифеста игры',
+    confirmInstallTitle: 'Подтверждение установки игры',
+    stepIndicator: (step: number, total: number) => `Шаг ${step}/${total}`,
+    connectSourceDesc: 'Внешняя ссылка запросила добавление репозитория. Проверьте целевой хост перед продолжением.',
+    inspectManifestDesc: 'Внешняя ссылка запросила установку игры. Fusion Launcher проверит манифест до сохранения данных.',
+    confirmInstallDesc: 'Проверьте сведения об игре и источниках загрузки из удалённого манифеста.',
+    targetHost: 'Целевой хост',
+    fullResource: 'Полный HTTPS-ресурс',
+    selectGame: (count: number) => `Выберите игру (в манифесте доступно: ${count})`,
+    gameTitle: 'Название игры',
+    platform: 'Платформа',
+    downloadHosts: 'Источники загрузки / транспорт',
+    torrentMagnet: 'Торрент / Magnet',
+    noRemoteSource: 'Удалённые источники загрузки не указаны',
+    emulatorNotice: 'Эмулятор',
+    emulatorNoticeDesc: 'Используется настроенный или стандартный эмулятор платформы. Внешние источники не могут передавать исполняемые файлы.',
+    cancel: 'Отмена',
+    back: 'Назад',
+    inspectManifest: 'Проверить манифест',
+    inspectCooldown: 'Проверка через 1.5с...',
+    fetching: 'Загрузка...',
+    confirmProceed: 'Подтвердить и продолжить',
+    confirmInstall: 'Подтвердить и установить',
+    confirmCooldown: 'Подтверждение через 1.5с...',
+    installing: 'Установка...',
+    processing: 'Обработка...',
+    noGamesError: 'Манифест не содержит игр для установки.'
   }
 };
 
