@@ -75,6 +75,8 @@ struct TorrentEntry {
     generation: u64,
     /// In the middle of an asynchronous spawn operation.
     spawning: bool,
+    /// In the middle of an asynchronous deletion operation.
+    deleting: bool,
     /// Latest stats parsed from the sidecar's stdout.
     stats: EngineTorrentStats,
     /// Set when the manager paused/cancelled this torrent, so the process's
@@ -146,33 +148,75 @@ fn extract_btih(magnet: &str) -> Option<&str> {
     None
 }
 
-fn safe_to_delete(dir: &Path, library_root: &Path) -> Result<PathBuf, String> {
-    if !dir.exists() {
-        return Ok(dir.to_path_buf());
+#[derive(Debug, PartialEq, Eq)]
+pub enum SafeDeleteOutcome {
+    Safe(PathBuf),
+    SafeJunction(PathBuf),
+    Nonexistent,
+    PolicyRefused(String),
+}
+
+fn is_reparse_point_or_symlink(path: &Path) -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        if let Ok(meta) = std::fs::symlink_metadata(path) {
+            const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+            if meta.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+                return true;
+            }
+        }
     }
-    let dir = dir
-        .canonicalize()
-        .map_err(|e| format!("Failed to canonicalize delete path {}: {e}", dir.display()))?;
-    let root = library_root
-        .canonicalize()
-        .map_err(|e| format!("Failed to canonicalize library root {}: {e}", library_root.display()))?;
-    if dir == root || dir.parent() == Some(&root) || !dir.starts_with(&root) {
-        return Err(format!(
-            "Refusing to delete root, parent category, or external directory: {}",
-            dir.display()
-        ));
+    if let Ok(meta) = std::fs::symlink_metadata(path) {
+        if meta.file_type().is_symlink() {
+            return true;
+        }
     }
-    let rel = dir
-        .strip_prefix(&root)
-        .map_err(|_| format!("Path {} is outside library root {}", dir.display(), root.display()))?;
-    let components: Vec<_> = rel.iter().map(|c| c.to_string_lossy().to_string()).collect();
-    if components.len() < 2 {
-        return Err(format!(
-            "Delete path must be at least 2 levels deep inside library root (<category>/<game>): {}",
-            dir.display()
-        ));
+    false
+}
+
+fn check_ancestors_not_reparse(
+    dir: &Path,
+    library_root: &Path,
+    canonical_root: &Path,
+) -> Result<(), String> {
+    let mut cur = dir.parent();
+    while let Some(parent) = cur {
+        if is_reparse_point_or_symlink(parent) {
+            return Err(format!(
+                "Ancestor directory '{}' is a junction or symlink: refusing to delete inside aliased tree {}",
+                parent.display(),
+                dir.display()
+            ));
+        }
+        if parent == library_root || parent == canonical_root {
+            break;
+        }
+        if let Ok(canon_p) = parent.canonicalize() {
+            if canon_p == *canonical_root {
+                break;
+            }
+        }
+        cur = parent.parent();
     }
-    let top_category = components[0].to_ascii_lowercase();
+    Ok(())
+}
+
+pub fn safe_to_delete(dir: &Path, library_root: &Path) -> SafeDeleteOutcome {
+    if !dir.exists() && !is_reparse_point_or_symlink(dir) {
+        return SafeDeleteOutcome::Nonexistent;
+    }
+
+    let canonical_root = match library_root.canonicalize() {
+        Ok(c) => c,
+        Err(e) => {
+            return SafeDeleteOutcome::PolicyRefused(format!(
+                "Failed to canonicalize library root {}: {e}",
+                library_root.display()
+            ))
+        }
+    };
+
     const FORBIDDEN_TOP_CATEGORIES: &[&str] = &[
         "emulators",
         "system",
@@ -183,14 +227,116 @@ fn safe_to_delete(dir: &Path, library_root: &Path) -> Result<PathBuf, String> {
         "config",
         "profiles",
     ];
-    if FORBIDDEN_TOP_CATEGORIES.contains(&top_category.as_str()) {
-        return Err(format!(
-            "Refusing to delete inside reserved system/emulator category '{}': {}",
-            top_category,
-            dir.display()
+
+    // Inspect every component along the path from library_root to dir.
+    // If any parent component (e.g. library/snes) is a junction or symlink,
+    // refuse deletion with SafeDeleteOutcome::PolicyRefused.
+    if let Err(reason) = check_ancestors_not_reparse(dir, library_root, &canonical_root) {
+        return SafeDeleteOutcome::PolicyRefused(reason);
+    }
+
+    if is_reparse_point_or_symlink(dir) {
+        // A junction or symlink directory must NEVER be recursively wiped,
+        // because remove_dir_all would delete the contents of the target directory!
+        // Instead, the link itself should be removed via remove_dir.
+        // We still MUST verify that the junction itself resides inside library_root
+        // and is 2 levels deep (<category>/<game>) without being in a forbidden category.
+        let parent = match dir.parent() {
+            Some(p) => p,
+            None => {
+                return SafeDeleteOutcome::PolicyRefused(format!(
+                    "Reparse point has no parent directory: {}",
+                    dir.display()
+                ))
+            }
+        };
+        let canonical_parent = match parent.canonicalize() {
+            Ok(cp) => cp,
+            Err(e) => {
+                return SafeDeleteOutcome::PolicyRefused(format!(
+                    "Failed to canonicalize parent of reparse point {}: {e}",
+                    dir.display()
+                ))
+            }
+        };
+
+        if canonical_parent.parent() != Some(&canonical_root) {
+            return SafeDeleteOutcome::PolicyRefused(format!(
+                "Reparse point {} parent is not directly inside library root {}",
+                dir.display(),
+                canonical_root.display()
+            ));
+        }
+
+        let category = canonical_parent
+            .file_name()
+            .map(|s| s.to_string_lossy().to_ascii_lowercase())
+            .unwrap_or_default();
+
+        if FORBIDDEN_TOP_CATEGORIES.contains(&category.as_str()) {
+            return SafeDeleteOutcome::PolicyRefused(format!(
+                "Refusing to delete junction inside reserved category '{}': {}",
+                category,
+                dir.display()
+            ));
+        }
+
+        return SafeDeleteOutcome::SafeJunction(dir.to_path_buf());
+    }
+
+    let canonical_dir = match dir.canonicalize() {
+        Ok(c) => c,
+        Err(e) => {
+            return SafeDeleteOutcome::PolicyRefused(format!(
+                "Failed to canonicalize delete path {}: {e}",
+                dir.display()
+            ))
+        }
+    };
+
+    if canonical_dir == canonical_root
+        || canonical_dir.parent() == Some(&canonical_root)
+        || !canonical_dir.starts_with(&canonical_root)
+    {
+        return SafeDeleteOutcome::PolicyRefused(format!(
+            "Refusing to delete root, parent category, or external directory: {}",
+            canonical_dir.display()
         ));
     }
-    Ok(dir)
+
+    let rel = match canonical_dir.strip_prefix(&canonical_root) {
+        Ok(r) => r,
+        Err(_) => {
+            return SafeDeleteOutcome::PolicyRefused(format!(
+                "Path {} is outside library root {}",
+                canonical_dir.display(),
+                canonical_root.display()
+            ))
+        }
+    };
+
+    let components: Vec<_> = rel
+        .iter()
+        .map(|c| c.to_string_lossy().to_string())
+        .collect();
+    if components.len() != 2 {
+        return SafeDeleteOutcome::PolicyRefused(format!(
+            "Delete path must be exactly 2 levels deep inside library root (<category>/<game>), got {}: {}",
+            components.len(),
+            canonical_dir.display()
+        ));
+    }
+
+    let top_category = components[0].to_ascii_lowercase();
+    if FORBIDDEN_TOP_CATEGORIES.contains(&top_category.as_str()) {
+        return SafeDeleteOutcome::PolicyRefused(format!(
+            "Refusing to delete inside reserved system/emulator category '{}': {}",
+            top_category,
+            canonical_dir.display()
+        ));
+    }
+
+    SafeDeleteOutcome::Safe(canonical_dir)
 }
 
 pub struct LibtorrentEngine {
@@ -214,16 +360,12 @@ impl LibtorrentEngine {
             .map_err(|_| "Torrent engine state is poisoned.".to_string())
     }
 
-    /// Spawn the sidecar for `id` and stream its stdout into the shared map.
-    /// The entry for `id` must already exist so the reader can update it.
-    fn spawn_sidecar(
+    fn create_sidecar_process(
         &self,
-        id: usize,
-        generation: u64,
         magnet: &str,
         save_dir: &str,
-    ) -> Result<CommandChild, String> {
-        let (mut rx, child) = self
+    ) -> Result<(tauri::async_runtime::Receiver<CommandEvent>, CommandChild), String> {
+        let (rx, child) = self
             .app
             .shell()
             .sidecar(SIDECAR_NAME)
@@ -239,6 +381,15 @@ impl LibtorrentEngine {
             ));
         }
 
+        Ok((rx, child))
+    }
+
+    fn start_sidecar_event_loop(
+        &self,
+        id: usize,
+        generation: u64,
+        mut rx: tauri::async_runtime::Receiver<CommandEvent>,
+    ) {
         let torrents = Arc::clone(&self.torrents);
         tauri::async_runtime::spawn(async move {
             while let Some(event) = rx.recv().await {
@@ -297,7 +448,8 @@ impl LibtorrentEngine {
                                     entry.stats.download_speed_bytes_per_sec = 0;
                                     entry.stats.upload_speed_bytes_per_sec = 0;
                                 } else {
-                                    let completed = entry.stats.finished || entry.stats.progress >= 1.0;
+                                    let completed =
+                                        entry.stats.finished || entry.stats.progress >= 1.0;
                                     if completed {
                                         entry.stats.finished = true;
                                         entry.stats.download_speed_bytes_per_sec = 0;
@@ -323,8 +475,6 @@ impl LibtorrentEngine {
                 }
             }
         });
-
-        Ok(child)
     }
 }
 
@@ -343,6 +493,7 @@ impl TorrentEngine for LibtorrentEngine {
                     child: None,
                     generation: 1,
                     spawning: true,
+                    deleting: false,
                     stats: EngineTorrentStats::default(),
                     user_stopped: false,
                     recent_stderr: Vec::new(),
@@ -350,27 +501,32 @@ impl TorrentEngine for LibtorrentEngine {
             );
         }
 
-        let result = self.spawn_sidecar(id, 1, &magnet_uri, &save_dir);
+        let (rx, child) = match self.create_sidecar_process(&magnet_uri, &save_dir) {
+            Ok(pair) => pair,
+            Err(error) => {
+                let _ = self.lock().map(|mut m| m.remove(&id));
+                return Err(error);
+            }
+        };
+
         let mut map = self.lock()?;
-        match (map.get_mut(&id), result) {
-            (Some(entry), Ok(child)) => {
+        match map.get_mut(&id) {
+            Some(entry) => {
                 entry.spawning = false;
-                if entry.generation == 1 && !entry.user_stopped {
+                if entry.generation == 1 && !entry.user_stopped && !entry.deleting {
                     entry.child = Some(child);
+                    drop(map);
+                    self.start_sidecar_event_loop(id, 1, rx);
+                    Ok(id)
                 } else {
                     let _ = child.kill();
+                    Ok(id)
                 }
-                Ok(id)
             }
-            (Some(_), Err(error)) => {
-                map.remove(&id);
-                Err(error)
-            }
-            (None, Ok(child)) => {
+            None => {
                 let _ = child.kill();
                 Ok(id)
             }
-            (None, Err(error)) => Err(error),
         }
     }
 
@@ -393,19 +549,21 @@ impl TorrentEngine for LibtorrentEngine {
             }
         };
         if let Some(child) = child_to_kill {
-            child.kill().map_err(|e| format!("Failed to terminate torrent process on pause: {e}"))?;
+            child
+                .kill()
+                .map_err(|e| format!("Failed to terminate torrent process on pause: {e}"))?;
         }
         Ok(())
     }
 
     async fn resume(&self, id: usize) -> Result<(), String> {
-        // Fast early check: already running or already spawning?
+        // Fast early check: already running, already spawning, or currently being deleted?
         {
             let map = self.lock()?;
             let Some(entry) = map.get(&id) else {
                 return Ok(());
             };
-            if entry.spawning || (entry.child.is_some() && !entry.user_stopped) {
+            if entry.deleting || entry.spawning || (entry.child.is_some() && !entry.user_stopped) {
                 return Ok(());
             }
         }
@@ -414,7 +572,7 @@ impl TorrentEngine for LibtorrentEngine {
         for _ in 0..100 {
             let is_dead = {
                 let map = self.lock()?;
-                map.get(&id).map_or(true, |e| e.child.is_none())
+                map.get(&id).is_none_or(|e| e.child.is_none())
             };
             if is_dead {
                 break;
@@ -422,15 +580,23 @@ impl TorrentEngine for LibtorrentEngine {
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         }
 
-        // If the old child process did not terminate within timeout, force kill it
-        {
+        // If the old child process did not terminate within timeout, force kill it.
+        // If kill fails, return error immediately, and DO NOT spawn!
+        let child_to_kill = {
             let mut map = self.lock()?;
-            if let Some(entry) = map.get_mut(&id) {
-                if let Some(child) = entry.child.take() {
-                    child.kill().map_err(|e| {
-                        format!("Failed to terminate existing torrent process before resume: {e}")
-                    })?;
+            map.get_mut(&id).and_then(|e| e.child.take())
+        };
+        if let Some(child) = child_to_kill {
+            if let Err(e) = child.kill() {
+                if let Ok(mut map) = self.lock() {
+                    if let Some(entry) = map.get_mut(&id) {
+                        entry.stats.error =
+                            Some(format!("Failed to terminate existing sidecar: {e}"));
+                    }
                 }
+                return Err(format!(
+                    "Failed to terminate existing torrent process before resume: {e}"
+                ));
             }
         }
 
@@ -439,7 +605,7 @@ impl TorrentEngine for LibtorrentEngine {
             let Some(entry) = map.get_mut(&id) else {
                 return Ok(());
             };
-            if entry.spawning || (entry.child.is_some() && !entry.user_stopped) {
+            if entry.deleting || entry.spawning || (entry.child.is_some() && !entry.user_stopped) {
                 return Ok(());
             }
             entry.spawning = true;
@@ -447,53 +613,67 @@ impl TorrentEngine for LibtorrentEngine {
             entry.recent_stderr.clear();
             entry.stats.error = None;
             entry.generation += 1;
-            (entry.magnet.clone(), entry.save_dir.clone(), entry.generation)
+            (
+                entry.magnet.clone(),
+                entry.save_dir.clone(),
+                entry.generation,
+            )
         };
 
-        let spawn_result = self.spawn_sidecar(id, generation, &magnet, &save_dir);
+        let (rx, child) = match self.create_sidecar_process(&magnet, &save_dir) {
+            Ok(pair) => pair,
+            Err(err) => {
+                let mut map = self.lock()?;
+                if let Some(e) = map.get_mut(&id) {
+                    e.spawning = false;
+                    e.user_stopped = true;
+                    e.stats.error = Some(err.clone());
+                }
+                return Err(err);
+            }
+        };
+
         let mut map = self.lock()?;
-        match (map.get_mut(&id), spawn_result) {
-            (Some(e), Ok(child)) => {
+        match map.get_mut(&id) {
+            Some(e) => {
                 e.spawning = false;
-                if e.generation == generation && !e.user_stopped {
+                if e.generation == generation && !e.user_stopped && !e.deleting {
                     e.child = Some(child);
+                    drop(map);
+                    self.start_sidecar_event_loop(id, generation, rx);
+                    Ok(())
                 } else {
                     let _ = child.kill();
+                    Ok(())
                 }
-                Ok(())
             }
-            (Some(e), Err(err)) => {
-                e.spawning = false;
-                e.user_stopped = true;
-                e.stats.error = Some(err.clone());
-                Err(err)
-            }
-            (None, Ok(child)) => {
+            None => {
                 let _ = child.kill();
                 Ok(())
             }
-            (None, Err(err)) => Err(err),
         }
     }
 
     async fn delete(&self, id: usize, delete_files: bool) -> Result<(), String> {
-        // 1. Signal stop to child process
+        // 1. Signal stop to child process and mark deleting = true
         {
             let mut map = self.lock()?;
             let Some(entry) = map.get_mut(&id) else {
                 return Ok(());
             };
+            entry.deleting = true;
             entry.user_stopped = true;
             if let Some(child) = entry.child.as_mut() {
                 let _ = child.write(b"{\"action\":\"stop\"}\n");
             }
         }
 
-        // 2. Wait up to 5s (100 * 50ms) for child process to exit cleanly
+        // 2. Wait up to 5s (100 * 50ms) for spawning to finish and child process to exit cleanly
         for _ in 0..100 {
             let is_dead = {
                 let map = self.lock()?;
-                map.get(&id).map_or(true, |e| e.child.is_none())
+                map.get(&id)
+                    .is_none_or(|e| !e.spawning && e.child.is_none())
             };
             if is_dead {
                 break;
@@ -501,16 +681,21 @@ impl TorrentEngine for LibtorrentEngine {
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         }
 
-        // 3. If child is still present, kill it. If kill fails, return error immediately
-        // WITHOUT removing the record or deleting files!
-        {
+        // 3. If child is still present, kill it. If kill fails, reset deleting and return error
+        let child_to_kill = {
             let mut map = self.lock()?;
-            if let Some(entry) = map.get_mut(&id) {
-                if let Some(child) = entry.child.take() {
-                    child.kill().map_err(|e| {
-                        format!("Failed to kill torrent process during delete: {e}")
-                    })?;
+            map.get_mut(&id).and_then(|e| e.child.take())
+        };
+        if let Some(child) = child_to_kill {
+            if let Err(e) = child.kill() {
+                if let Ok(mut map) = self.lock() {
+                    if let Some(entry) = map.get_mut(&id) {
+                        entry.deleting = false;
+                        entry.stats.error =
+                            Some(format!("Failed to kill torrent process during delete: {e}"));
+                    }
                 }
+                return Err(format!("Failed to kill torrent process during delete: {e}"));
             }
         }
 
@@ -529,14 +714,55 @@ impl TorrentEngine for LibtorrentEngine {
         // 6. If delete_files, validate and delete files first
         if delete_files {
             let state = self.app.try_state::<crate::AppState>().ok_or_else(|| {
+                if let Ok(mut map) = self.lock() {
+                    if let Some(e) = map.get_mut(&id) {
+                        e.deleting = false;
+                    }
+                }
                 "Application state is not initialized for torrent file deletion.".to_string()
             })?;
             let library_root = crate::commands::library_root_for_app_state(&state);
-            let safe_dir = safe_to_delete(std::path::Path::new(&save_dir), &library_root)?;
-            if safe_dir.exists() {
-                std::fs::remove_dir_all(&safe_dir).map_err(|e| {
-                    format!("Failed to delete torrent directory {}: {e}", safe_dir.display())
-                })?;
+            match safe_to_delete(std::path::Path::new(&save_dir), &library_root) {
+                SafeDeleteOutcome::Safe(path) => {
+                    if path.exists() {
+                        if let Err(e) = std::fs::remove_dir_all(&path) {
+                            if let Ok(mut map) = self.lock() {
+                                if let Some(entry) = map.get_mut(&id) {
+                                    entry.deleting = false;
+                                    entry.stats.error =
+                                        Some(format!("Failed to delete files: {e}"));
+                                }
+                            }
+                            return Err(format!(
+                                "Failed to delete torrent directory {}: {e}",
+                                path.display()
+                            ));
+                        }
+                    }
+                }
+                SafeDeleteOutcome::SafeJunction(path) => {
+                    if path.exists() || is_reparse_point_or_symlink(&path) {
+                        if let Err(e) = std::fs::remove_dir(&path) {
+                            if let Ok(mut map) = self.lock() {
+                                if let Some(entry) = map.get_mut(&id) {
+                                    entry.deleting = false;
+                                    entry.stats.error =
+                                        Some(format!("Failed to unlink junction: {e}"));
+                                }
+                            }
+                            return Err(format!(
+                                "Failed to unlink junction {}: {e}",
+                                path.display()
+                            ));
+                        }
+                    }
+                }
+                SafeDeleteOutcome::Nonexistent => {}
+                SafeDeleteOutcome::PolicyRefused(reason) => {
+                    // Files outside library root or in forbidden directories are preserved.
+                    // DO NOT block removal of the launcher record so user is not stuck.
+                    eprintln!("Torrent delete files policy refusal (files preserved): {reason}");
+                }
             }
         }
 
@@ -663,12 +889,16 @@ mod tests {
         );
         // Cyrillic title before xt: must not panic and must extract valid hash
         assert_eq!(
-            extract_btih("magnet:?dn=Играть в игры&xt=urn:btih:0123456789abcdef0123456789abcdef01234567"),
+            extract_btih(
+                "magnet:?dn=Играть в игры&xt=urn:btih:0123456789abcdef0123456789abcdef01234567"
+            ),
             Some("0123456789abcdef0123456789abcdef01234567")
         );
         // Cyrillic title after xt
         assert_eq!(
-            extract_btih("magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&dn=Играть в игры"),
+            extract_btih(
+                "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&dn=Играть в игры"
+            ),
             Some("0123456789abcdef0123456789abcdef01234567")
         );
         // Cyrillic parameter name
@@ -697,7 +927,10 @@ mod tests {
             None
         );
         // Length invalid (too short)
-        assert_eq!(extract_btih("magnet:?xt=urn:btih:0123456789abcdef&dn=short"), None);
+        assert_eq!(
+            extract_btih("magnet:?xt=urn:btih:0123456789abcdef&dn=short"),
+            None
+        );
         // Length invalid (too long)
         assert_eq!(
             extract_btih("magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567890&dn=long"),
@@ -727,7 +960,10 @@ mod tests {
         std::fs::write(game2_dir.join("rom.nes"), b"game2").unwrap();
 
         // 1. Valid subdirectory inside library root is accepted
-        let canonical_game1 = safe_to_delete(&game1_dir, &lib_root).expect("game1 subfolder should be safe");
+        let canonical_game1 = match safe_to_delete(&game1_dir, &lib_root) {
+            SafeDeleteOutcome::Safe(path) => path,
+            other => panic!("Expected Safe outcome, got {:?}", other),
+        };
         assert!(canonical_game1.ends_with("game1"));
 
         // Simulate deleting game1
@@ -738,24 +974,113 @@ mod tests {
         assert_eq!(std::fs::read(game2_dir.join("rom.nes")).unwrap(), b"game2");
 
         // 2. Refuses to delete the entire library root itself
-        assert!(safe_to_delete(&lib_root, &lib_root).is_err());
+        assert!(matches!(
+            safe_to_delete(&lib_root, &lib_root),
+            SafeDeleteOutcome::PolicyRefused(_)
+        ));
 
         // 3. Refuses to delete top-level category (e.g. library/downloads) which would wipe all games
-        assert!(safe_to_delete(&downloads_category, &lib_root).is_err());
+        assert!(matches!(
+            safe_to_delete(&downloads_category, &lib_root),
+            SafeDeleteOutcome::PolicyRefused(_)
+        ));
 
         // 4. Refuses to delete path outside library root
-        assert!(safe_to_delete(&outside_dir, &lib_root).is_err());
+        assert!(matches!(
+            safe_to_delete(&outside_dir, &lib_root),
+            SafeDeleteOutcome::PolicyRefused(_)
+        ));
 
-        // 5. Nonexistent path is a safe no-op (nothing to delete)
-        assert!(safe_to_delete(&downloads_category.join("already_deleted"), &lib_root).is_ok());
+        // 5. Nonexistent path is Nonexistent outcome
+        assert_eq!(
+            safe_to_delete(&downloads_category.join("already_deleted"), &lib_root),
+            SafeDeleteOutcome::Nonexistent
+        );
 
         // 6. Refuses to delete paths in reserved directories (shared-cache, emulators, etc.)
         let shared_cache_dir = lib_root.join("shared-cache").join("temporary");
         std::fs::create_dir_all(&shared_cache_dir).unwrap();
-        assert!(safe_to_delete(&shared_cache_dir, &lib_root).is_err());
+        assert!(matches!(
+            safe_to_delete(&shared_cache_dir, &lib_root),
+            SafeDeleteOutcome::PolicyRefused(_)
+        ));
 
         let emulators_dir = lib_root.join("emulators").join("snes");
         std::fs::create_dir_all(&emulators_dir).unwrap();
-        assert!(safe_to_delete(&emulators_dir, &lib_root).is_err());
+        assert!(matches!(
+            safe_to_delete(&emulators_dir, &lib_root),
+            SafeDeleteOutcome::PolicyRefused(_)
+        ));
+
+        #[cfg(windows)]
+        {
+            let junction_link = downloads_category.join("game_link");
+            let cmd_output = std::process::Command::new("cmd")
+                .args([
+                    "/C",
+                    "mklink",
+                    "/J",
+                    &junction_link.to_string_lossy(),
+                    &game2_dir.to_string_lossy(),
+                ])
+                .output();
+            if let Ok(output) = cmd_output {
+                if output.status.success() {
+                    assert_eq!(
+                        safe_to_delete(&junction_link, &lib_root),
+                        SafeDeleteOutcome::SafeJunction(junction_link.clone())
+                    );
+                    std::fs::remove_dir(&junction_link).unwrap();
+                    assert!(!junction_link.exists());
+                    assert!(game2_dir.exists());
+                    assert_eq!(std::fs::read(game2_dir.join("rom.nes")).unwrap(), b"game2");
+                }
+            }
+        }
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn safe_to_delete_refuses_when_parent_category_is_junction_and_protects_target() {
+        let temp = tempfile::tempdir().unwrap();
+        let lib_root = temp.path().join("library");
+        let external_target = temp.path().join("external_games");
+        let game_in_target = external_target.join("my_game");
+        let secret_file = game_in_target.join("important_save.sav");
+
+        std::fs::create_dir_all(&lib_root).unwrap();
+        std::fs::create_dir_all(&game_in_target).unwrap();
+        std::fs::write(&secret_file, b"precious_save_data").unwrap();
+
+        // Create junction: lib_root/snes -> external_target
+        let junction_category = lib_root.join("snes");
+        let cmd_output = std::process::Command::new("cmd")
+            .args([
+                "/C",
+                "mklink",
+                "/J",
+                &junction_category.to_string_lossy(),
+                &external_target.to_string_lossy(),
+            ])
+            .output();
+
+        if let Ok(output) = cmd_output {
+            if output.status.success() {
+                let delete_attempt = junction_category.join("my_game");
+                let outcome = safe_to_delete(&delete_attempt, &lib_root);
+                assert!(
+                    matches!(outcome, SafeDeleteOutcome::PolicyRefused(_)),
+                    "Expected PolicyRefused when parent category is junction, got {:?}",
+                    outcome
+                );
+
+                // Verify the external target and secret file are completely untouched!
+                assert!(secret_file.exists());
+                assert_eq!(std::fs::read(&secret_file).unwrap(), b"precious_save_data");
+
+                // Clean up junction
+                let _ = std::fs::remove_dir(&junction_category);
+            }
+        }
     }
 }

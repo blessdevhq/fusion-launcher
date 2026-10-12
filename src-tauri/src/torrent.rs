@@ -385,22 +385,23 @@ impl TorrentManager {
         };
 
         let torrent_id = runtime_id.or_else(|| record.torrent_id.and_then(i64_to_usize));
-        let mut delete_error = None;
         if let Some(id) = torrent_id {
             if let Err(error) = self.engine.delete(id, true).await {
-                delete_error = Some(error);
+                let record =
+                    lock_store(&self.store)?.set_torrent_status(&game_id, "error", Some(&error))?;
+                set_runtime_error(&self.records, &game_id, error).await;
+                emit_download_record(&self.app, &record);
+                return Ok(record);
             }
-        }
-
-        if let Err(cleanup_error) = remove_save_dir_if_safe(&self.data_dir, &record.save_dir).await
+        } else if let Err(cleanup_error) =
+            remove_save_dir_if_safe(&self.data_dir, &record.save_dir).await
         {
-            let error = match delete_error {
-                Some(delete_error) => format!("{delete_error}; {cleanup_error}"),
-                None => cleanup_error,
-            };
-            let record =
-                lock_store(&self.store)?.set_torrent_status(&game_id, "error", Some(&error))?;
-            set_runtime_error(&self.records, &game_id, error).await;
+            let record = lock_store(&self.store)?.set_torrent_status(
+                &game_id,
+                "error",
+                Some(&cleanup_error),
+            )?;
+            set_runtime_error(&self.records, &game_id, cleanup_error).await;
             emit_download_record(&self.app, &record);
             return Ok(record);
         }
@@ -474,8 +475,9 @@ impl TorrentManager {
     ) -> Result<(), String> {
         if let Some(id) = record.torrent_id.and_then(i64_to_usize) {
             let _ = self.engine.delete(id, true).await;
+        } else {
+            let _ = remove_save_dir_if_safe(&self.data_dir, &record.save_dir).await;
         }
-        remove_save_dir_if_safe(&self.data_dir, &record.save_dir).await?;
         let cancelled =
             lock_store(&self.store)?.set_torrent_status(&record.game_id, "cancelled", None)?;
         emit_download_record(&self.app, &cancelled);

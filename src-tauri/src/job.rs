@@ -7,6 +7,7 @@
 //! all associated child processes when the launcher's Job Object handle is closed.
 
 #[cfg(windows)]
+#[allow(clippy::upper_case_acronyms)]
 mod imp {
     use std::ffi::c_void;
     use std::sync::Mutex;
@@ -104,7 +105,10 @@ mod imp {
 
             if res == FALSE {
                 CloseHandle(job);
-                return Err("Failed to configure JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE on Job Object".to_string());
+                return Err(
+                    "Failed to configure JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE on Job Object"
+                        .to_string(),
+                );
             }
 
             *guard = Some(JobHandle(job));
