@@ -1,126 +1,81 @@
-use base64::engine::general_purpose::{STANDARD, URL_SAFE, URL_SAFE_NO_PAD};
-use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use url::Url;
 
+const MAX_PARAM_LEN: usize = 2048;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "action", content = "params", rename_all = "camelCase")]
+#[serde(
+    tag = "action",
+    content = "params",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
 pub enum DeepLinkAction {
-    AddSource {
-        url: String,
-        name: Option<String>,
-    },
-    AddGame {
-        data: String,
-        title: Option<String>,
-    },
-    Install {
-        manifest: String,
-        title: Option<String>,
-    },
-    Play {
-        game_id: String,
-    },
-    Import {
-        path: String,
-    },
-    Unknown {
-        uri: String,
-    },
+    AddSource { url: String },
+    Install { manifest: String },
+    Play { game_id: String },
 }
 
-pub fn decode_base64_data_if_needed(input: &str) -> String {
-    let trimmed = input.trim();
-    if trimmed.starts_with('{')
-        || trimmed.starts_with('[')
-        || trimmed.starts_with("http://")
-        || trimmed.starts_with("https://")
+fn https_url(raw: &str) -> Result<String, String> {
+    if raw.len() > MAX_PARAM_LEN {
+        return Err("deep_link_param_too_long".into());
+    }
+    let url = Url::parse(raw.trim()).map_err(|_| "deep_link_bad_url".to_string())?;
+    if url.scheme() != "https"
+        || url.host_str().is_none()
+        || !url.username().is_empty()
+        || url.password().is_some()
     {
-        return trimmed.to_string();
+        return Err("deep_link_https_required".into());
     }
-
-    for engine in [&URL_SAFE_NO_PAD, &URL_SAFE, &STANDARD] {
-        if let Ok(bytes) = engine.decode(trimmed) {
-            if let Ok(utf8) = String::from_utf8(bytes) {
-                if utf8.trim_start().starts_with('{') || utf8.trim_start().starts_with('[') {
-                    return utf8;
-                }
-            }
-        }
-    }
-
-    trimmed.to_string()
+    Ok(url.to_string())
 }
 
-pub fn parse_deep_link(raw_uri: &str) -> Result<DeepLinkAction, String> {
-    let trimmed = raw_uri.trim();
+fn safe_id(raw: &str) -> Result<String, String> {
+    let ok = !raw.is_empty()
+        && raw.len() <= 128
+        && raw != "."
+        && raw != ".."
+        && raw
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'));
+    if ok {
+        Ok(raw.to_string())
+    } else {
+        Err("deep_link_bad_id".into())
+    }
+}
+
+fn param<'a>(q: &'a HashMap<String, String>, keys: &[&str]) -> Result<&'a str, String> {
+    keys.iter()
+        .find_map(|k| q.get(*k))
+        .map(String::as_str)
+        .ok_or_else(|| "deep_link_missing_param".to_string())
+}
+
+pub fn parse_deep_link(raw: &str) -> Result<DeepLinkAction, String> {
+    let trimmed = raw.trim();
     if !trimmed.starts_with("fusion://") && !trimmed.starts_with("fusion:") {
-        return Err("URI must start with fusion://".to_string());
+        return Err("deep_link_scheme".into());
     }
-
-    let url = Url::parse(trimmed).map_err(|e| format!("Invalid URL: {e}"))?;
+    let url = Url::parse(trimmed).map_err(|_| "deep_link_invalid".to_string())?;
     if url.scheme() != "fusion" {
-        return Err("Scheme is not fusion".to_string());
+        return Err("deep_link_scheme".into());
     }
-
-    let host = url.host_str().unwrap_or_default().to_ascii_lowercase();
-    let path = url.path().trim_start_matches('/').to_ascii_lowercase();
-    let query_map: HashMap<String, String> = url.query_pairs().into_owned().collect();
-
-    if host == "game" || (host.is_empty() && path.starts_with("game")) {
-        if let Some(data) = query_map.get("data").or_else(|| query_map.get("config")) {
-            let decoded = decode_base64_data_if_needed(data);
-            return Ok(DeepLinkAction::AddGame {
-                data: decoded,
-                title: query_map.get("title").cloned(),
-            });
-        }
-    } else if host == "source" || (host.is_empty() && path.starts_with("source")) {
-        if let Some(data) = query_map.get("data") {
-            let decoded = decode_base64_data_if_needed(data);
-            return Ok(DeepLinkAction::AddSource {
-                url: decoded,
-                name: query_map.get("name").cloned(),
-            });
-        }
-        if let Some(source_url) = query_map.get("url") {
-            return Ok(DeepLinkAction::AddSource {
-                url: source_url.clone(),
-                name: query_map.get("name").cloned(),
-            });
-        }
-    } else if host == "install" || (host.is_empty() && path.starts_with("install")) {
-        if let Some(data) = query_map.get("data") {
-            let decoded = decode_base64_data_if_needed(data);
-            return Ok(DeepLinkAction::Install {
-                manifest: decoded,
-                title: query_map.get("title").cloned(),
-            });
-        }
-        if let Some(manifest) = query_map.get("manifest").or_else(|| query_map.get("url")) {
-            return Ok(DeepLinkAction::Install {
-                manifest: manifest.clone(),
-                title: query_map.get("title").cloned(),
-            });
-        }
-    } else if host == "play" || (host.is_empty() && path.starts_with("play")) {
-        if let Some(game_id) = query_map.get("game").or_else(|| query_map.get("id")) {
-            return Ok(DeepLinkAction::Play {
-                game_id: game_id.clone(),
-            });
-        }
-    } else if host == "import" || (host.is_empty() && path.starts_with("import")) {
-        if let Some(file_path) = query_map.get("path").or_else(|| query_map.get("file")) {
-            return Ok(DeepLinkAction::Import {
-                path: file_path.clone(),
-            });
-        }
+    let q: HashMap<String, String> = url.query_pairs().into_owned().collect();
+    match url.host_str().unwrap_or("").to_ascii_lowercase().as_str() {
+        "source" => Ok(DeepLinkAction::AddSource {
+            url: https_url(param(&q, &["url"])?)?,
+        }),
+        "install" => Ok(DeepLinkAction::Install {
+            manifest: https_url(param(&q, &["manifest", "url"])?)?,
+        }),
+        "play" => Ok(DeepLinkAction::Play {
+            game_id: safe_id(param(&q, &["game", "id"])?)?,
+        }),
+        _ => Err("deep_link_unsupported_action".into()),
     }
-
-    Ok(DeepLinkAction::Unknown {
-        uri: trimmed.to_string(),
-    })
 }
 
 #[cfg(windows)]
@@ -129,40 +84,46 @@ pub fn register_windows_protocol() -> Result<(), String> {
         .map_err(|e| format!("Failed to get current executable path: {e}"))?;
     let exe_path = current_exe.to_string_lossy().to_string();
 
-    let _ = std::process::Command::new("reg")
-        .args([
-            "add",
-            r"HKCU\Software\Classes\fusion",
-            "/ve",
-            "/d",
-            "URL:Fusion Protocol",
-            "/f",
-        ])
-        .output();
+    let run_reg = |args: &[&str]| -> Result<(), String> {
+        let output = std::process::Command::new("reg")
+            .args(args)
+            .output()
+            .map_err(|e| format!("Failed to execute reg: {e}"))?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(format!("Registry command failed for {:?}: {stderr}", args));
+        }
+        Ok(())
+    };
 
-    let _ = std::process::Command::new("reg")
-        .args([
-            "add",
-            r"HKCU\Software\Classes\fusion",
-            "/v",
-            "URL Protocol",
-            "/d",
-            "",
-            "/f",
-        ])
-        .output();
+    run_reg(&[
+        "add",
+        r"HKCU\Software\Classes\fusion",
+        "/ve",
+        "/d",
+        "URL:Fusion Protocol",
+        "/f",
+    ])?;
+
+    run_reg(&[
+        "add",
+        r"HKCU\Software\Classes\fusion",
+        "/v",
+        "URL Protocol",
+        "/d",
+        "",
+        "/f",
+    ])?;
 
     let command_value = format!("\"{}\" \"%1\"", exe_path);
-    let _ = std::process::Command::new("reg")
-        .args([
-            "add",
-            r"HKCU\Software\Classes\fusion\shell\open\command",
-            "/ve",
-            "/d",
-            &command_value,
-            "/f",
-        ])
-        .output();
+    run_reg(&[
+        "add",
+        r"HKCU\Software\Classes\fusion\shell\open\command",
+        "/ve",
+        "/d",
+        &command_value,
+        "/f",
+    ])?;
 
     Ok(())
 }
@@ -177,87 +138,43 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_add_source_deep_link() {
-        let uri = "fusion://source/add?url=https%3A%2F%2Fexample.com%2Frepo.json&name=My%20Repo";
-        let action = parse_deep_link(uri).unwrap();
-
-        assert_eq!(
-            action,
-            DeepLinkAction::AddSource {
-                url: "https://example.com/repo.json".to_string(),
-                name: Some("My Repo".to_string()),
-            }
-        );
+    fn rejects_dangerous_links() {
+        for bad in [
+            "fusion://import?path=%5C%5Cevil%5Cshare%5Ca.nsp",
+            "fusion://game/add?data=eyJ9",
+            "fusion://source/add",
+            "fusion://source/add?url=http%3A%2F%2Fexample.com%2Fr.json",
+            "fusion://source/add?url=file%3A%2F%2F%2FC%3A%2Fx.json",
+            "fusion://source/add?url=https%3A%2F%2Fu%3Ap%40example.com%2Fr.json",
+            "fusion://install?manifest=javascript%3Aalert(1)",
+            "fusion://play?game=..%5C..%5Cx",
+            "fusion://play?game=",
+            "fusion://play?game=.",
+            "fusion://play?game=..",
+        ] {
+            assert!(parse_deep_link(bad).is_err(), "Should reject: {bad}");
+        }
     }
 
     #[test]
-    fn parses_install_manifest_deep_link() {
-        let uri = "fusion://install?manifest=https%3A%2F%2Fexample.com%2Fzelda.json&title=Zelda";
-        let action = parse_deep_link(uri).unwrap();
-
+    fn accepts_the_three_supported_actions() {
         assert_eq!(
-            action,
-            DeepLinkAction::Install {
-                manifest: "https://example.com/zelda.json".to_string(),
-                title: Some("Zelda".to_string()),
-            }
-        );
-    }
-
-    #[test]
-    fn parses_play_game_deep_link() {
-        let uri = "fusion://play?game=0100F2C0115B6000";
-        let action = parse_deep_link(uri).unwrap();
-
-        assert_eq!(
-            action,
+            parse_deep_link("fusion://play?game=abc-1").unwrap(),
             DeepLinkAction::Play {
-                game_id: "0100F2C0115B6000".to_string(),
+                game_id: "abc-1".into()
             }
         );
-    }
-
-    #[test]
-    fn parses_import_deep_link() {
-        let uri = "fusion://import?path=C%3A%5CGames%5CZelda.nsp";
-        let action = parse_deep_link(uri).unwrap();
-
         assert_eq!(
-            action,
-            DeepLinkAction::Import {
-                path: "C:\\Games\\Zelda.nsp".to_string(),
-            }
-        );
-    }
-
-    #[test]
-    fn parses_add_game_base64_deep_link() {
-        let json = r#"{"title":"Chrono Trigger","platform":"snes"}"#;
-        let encoded = URL_SAFE_NO_PAD.encode(json);
-        let uri = format!("fusion://game/add?data={encoded}&title=Chrono");
-        let action = parse_deep_link(&uri).unwrap();
-
-        assert_eq!(
-            action,
-            DeepLinkAction::AddGame {
-                data: json.to_string(),
-                title: Some("Chrono".to_string()),
-            }
-        );
-    }
-
-    #[test]
-    fn parses_add_source_base64_deep_link() {
-        let json = r#"{"name":"Community Tap","catalog":[]}"#;
-        let encoded = URL_SAFE_NO_PAD.encode(json);
-        let uri = format!("fusion://source/add?data={encoded}&name=Tap");
-        let action = parse_deep_link(&uri).unwrap();
-
-        assert_eq!(
-            action,
+            parse_deep_link("fusion://source/add?url=https%3A%2F%2Fexample.com%2Fr.json").unwrap(),
             DeepLinkAction::AddSource {
-                url: json.to_string(),
-                name: Some("Tap".to_string()),
+                url: "https://example.com/r.json".into()
+            }
+        );
+        assert_eq!(
+            parse_deep_link("fusion://install?manifest=https%3A%2F%2Fexample.com%2Fg.json")
+                .unwrap(),
+            DeepLinkAction::Install {
+                manifest: "https://example.com/g.json".into()
             }
         );
     }
@@ -266,5 +183,17 @@ mod tests {
     fn rejects_invalid_schemes() {
         assert!(parse_deep_link("https://example.com").is_err());
         assert!(parse_deep_link("steam://run/1234").is_err());
+    }
+
+    #[test]
+    fn play_params_use_camel_case() {
+        let action = DeepLinkAction::Play {
+            game_id: "smw-1".into(),
+        };
+        let serialized = serde_json::to_string(&action).unwrap();
+        assert_eq!(
+            serialized,
+            r#"{"action":"play","params":{"gameId":"smw-1"}}"#
+        );
     }
 }

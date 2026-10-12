@@ -139,7 +139,7 @@ describe('preview one-click setup support', () => {
     const sourceAction = await previewApi.parseDeepLink('fusion://source/add?url=https%3A%2F%2Fexample.com%2Frepo.json&name=CoolRepo');
     assert.deepEqual(sourceAction, {
       action: 'addSource',
-      params: { url: 'https://example.com/repo.json', name: 'CoolRepo' }
+      params: { url: 'https://example.com/repo.json' }
     });
 
     const playAction = await previewApi.parseDeepLink('fusion://play?game=zelda-totk');
@@ -151,7 +151,7 @@ describe('preview one-click setup support', () => {
     const installAction = await previewApi.parseDeepLink('fusion://install?manifest=https%3A%2F%2Fexample.com%2Fgame.json');
     assert.deepEqual(installAction, {
       action: 'install',
-      params: { manifest: 'https://example.com/game.json', title: undefined }
+      params: { manifest: 'https://example.com/game.json' }
     });
   });
 });

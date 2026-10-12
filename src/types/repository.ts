@@ -309,12 +309,9 @@ export interface SmartImportReport {
 }
 
 export type DeepLinkAction =
-  | { action: 'addSource'; params: { url: string; name?: string } }
-  | { action: 'addGame'; params: { data: string; title?: string } }
-  | { action: 'install'; params: { manifest: string; title?: string } }
-  | { action: 'play'; params: { gameId: string } }
-  | { action: 'import'; params: { path: string } }
-  | { action: 'unknown'; params: { uri: string } };
+  | { action: 'addSource'; params: { url: string } }
+  | { action: 'install'; params: { manifest: string } }
+  | { action: 'play'; params: { gameId: string } };
 
 export interface GameFileInspection {
   path: string;

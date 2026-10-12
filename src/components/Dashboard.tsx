@@ -1,9 +1,10 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { listen } from '@tauri-apps/api/event';
-import { open } from '@tauri-apps/plugin-dialog';
+import { open, confirm } from '@tauri-apps/plugin-dialog';
 import { I18nProvider } from '@/components/I18nProvider';
+import { DeepLinkConfirmModal, type PendingDeepLinkRequest } from '@/components/DeepLinkConfirmModal';
 import { GameDetailsModal } from '@/components/GameDetailsModal';
 import { GamePortingStudioModal } from '@/components/GamePortingStudioModal';
 import { GlobalDropZone } from '@/components/GlobalDropZone';
@@ -97,6 +98,9 @@ export function Dashboard({
     report: null,
     error: null
   });
+  const [pendingDeepLink, setPendingDeepLink] = useState<PendingDeepLinkRequest | null>(null);
+  const pendingDeepLinkRef = useRef<PendingDeepLinkRequest | null>(null);
+  pendingDeepLinkRef.current = pendingDeepLink;
   const locale = settings.language;
   const t = getUiText(locale);
 
@@ -177,78 +181,79 @@ export function Dashboard({
       if (!active) return;
       const payload = event.payload;
 
+      // Rate limit / single-modal queue: ignore new links if a confirmation modal is already active
+      if (pendingDeepLinkRef.current) return;
+
       if (payload.action === 'addSource') {
-        const { url, name } = payload.params;
+        const { url } = payload.params;
+        let host = 'Unknown';
         try {
-          setSourceUrl(url);
-          const preview = await api.previewRepository(url);
-          setSourcePreview(preview);
-          setSettingsOpen(true);
-          addActivityEvent({
-            title: t.dashboard.messages.sourceChecked,
-            detail: name ?? preview.name,
-            tone: 'info'
-          });
-        } catch (error) {
-          setLauncherMessage(error instanceof Error ? error.message : String(error));
+          host = new URL(url).host;
+        } catch {
+          return;
         }
-      } else if (payload.action === 'play') {
-        setSelectedGameId(payload.params.gameId);
-      } else if (payload.action === 'install') {
-        try {
-          const manifestData = await api.fetchManifest(payload.params.manifest);
-          const targetGame = manifestData.games[0];
-          if (targetGame) {
-            const outcome = await api.installGameFromManifest(payload.params.manifest, targetGame.title_id);
-            if (outcome) {
-              await refreshLauncherData();
+
+        const requestId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `dl-${Date.now()}-${Math.random()}`;
+
+        setPendingDeepLink({
+          id: requestId,
+          type: 'addSource',
+          url,
+          host,
+          onConfirmSource: async () => {
+            try {
+              setSourceUrl(url);
+              const preview = await api.previewRepository(url);
+              setSourcePreview(preview);
+              setSettingsOpen(true);
               addActivityEvent({
-                title: payload.params.title ?? targetGame.title,
-                detail: payload.params.manifest,
-                tone: 'success'
+                title: t.dashboard.messages.sourceChecked,
+                detail: preview.name,
+                tone: 'info'
               });
+            } catch (error) {
+              setLauncherMessage(error instanceof Error ? error.message : String(error));
             }
           }
-        } catch (error) {
-          setLauncherMessage(error instanceof Error ? error.message : String(error));
-        }
-      } else if (payload.action === 'import') {
+        });
+      } else if (payload.action === 'install') {
+        const { manifest } = payload.params;
+        let host = 'Unknown';
         try {
-          const report = await api.autoImportSystemFile(payload.params.path);
-          if (report.success) {
-            await refreshLauncherData();
-            addActivityEvent({
-              title: report.label,
-              detail: report.status,
-              tone: 'success'
-            });
-          }
-        } catch (error) {
-          setLauncherMessage(error instanceof Error ? error.message : String(error));
+          host = new URL(manifest).host;
+        } catch {
+          return;
         }
-      } else if (payload.action === 'addGame') {
-        const { data, title } = payload.params;
-        try {
-          let jsonStr = data;
-          try {
-            const clean = data.replace(/-/g, '+').replace(/_/g, '/');
-            const decoded = atob(clean);
-            if (decoded.trim().startsWith('{')) {
-              jsonStr = decoded;
+
+        const requestId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `dl-${Date.now()}-${Math.random()}`;
+
+        setPendingDeepLink({
+          id: requestId,
+          type: 'install',
+          url: manifest,
+          host,
+          onConfirmInstall: async (titleId: string) => {
+            try {
+              const outcome = await api.installGameFromManifest(manifest, titleId);
+              if (outcome) {
+                await refreshLauncherData();
+                addActivityEvent({
+                  title: outcome.gameId || titleId,
+                  detail: manifest,
+                  tone: 'success'
+                });
+              }
+            } catch (error) {
+              setLauncherMessage(error instanceof Error ? error.message : String(error));
             }
-          } catch {
-            // Already plain JSON string
           }
-          const parsed = JSON.parse(jsonStr);
-          await api.addCustomGame(parsed);
-          await refreshLauncherData();
-          addActivityEvent({
-            title: title ?? parsed.title ?? 'Custom Game Added',
-            detail: parsed.platform ?? 'user-library',
-            tone: 'success'
-          });
-        } catch (error) {
-          setLauncherMessage(error instanceof Error ? error.message : String(error));
+        });
+      } else if (payload.action === 'play') {
+        const gameId = payload.params.gameId;
+        const exists = storeCatalog.some((g) => g.id === gameId);
+        if (exists) {
+          setActiveView('library');
+          setSelectedGameId(gameId);
         }
       }
     });
@@ -849,6 +854,13 @@ export function Dashboard({
             onOpenLogs={openLogs}
             onCheckAppUpdate={checkAppUpdate}
             onInstallAppUpdate={installAppUpdate}
+          />
+        )}
+
+        {pendingDeepLink && (
+          <DeepLinkConfirmModal
+            request={pendingDeepLink}
+            onClose={() => setPendingDeepLink(null)}
           />
         )}
 

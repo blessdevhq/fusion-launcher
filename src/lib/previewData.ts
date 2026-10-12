@@ -868,36 +868,27 @@ export const previewApi = {
     return undefined;
   },
   async parseDeepLink(uri: string): Promise<DeepLinkAction> {
-    try {
-      const url = new URL(uri);
-      const host = url.host.toLowerCase();
-      const path = url.pathname.replace(/^\//, '').toLowerCase();
-      const params = Object.fromEntries(url.searchParams.entries());
+    const url = new URL(uri);
+    const host = url.host.toLowerCase();
+    const path = url.pathname.replace(/^\//, '').toLowerCase();
+    const params = Object.fromEntries(url.searchParams.entries());
 
-      if (host === 'source' || path.startsWith('source')) {
-        if (params.url) {
-          return { action: 'addSource', params: { url: params.url, name: params.name } };
-        }
-      } else if (host === 'install' || path.startsWith('install')) {
-        const manifest = params.manifest || params.url;
-        if (manifest) {
-          return { action: 'install', params: { manifest, title: params.title } };
-        }
-      } else if (host === 'play' || path.startsWith('play')) {
-        const gameId = params.game || params.id;
-        if (gameId) {
-          return { action: 'play', params: { gameId } };
-        }
-      } else if (host === 'import' || path.startsWith('import')) {
-        const filePath = params.path || params.file;
-        if (filePath) {
-          return { action: 'import', params: { path: filePath } };
-        }
+    if (host === 'source' || path.startsWith('source')) {
+      if (params.url && params.url.startsWith('https://')) {
+        return { action: 'addSource', params: { url: params.url } };
       }
-    } catch {
-      // ignore
+    } else if (host === 'install' || path.startsWith('install')) {
+      const manifest = params.manifest || params.url;
+      if (manifest && manifest.startsWith('https://')) {
+        return { action: 'install', params: { manifest } };
+      }
+    } else if (host === 'play' || path.startsWith('play')) {
+      const gameId = params.game || params.id;
+      if (gameId) {
+        return { action: 'play', params: { gameId } };
+      }
     }
-    return { action: 'unknown', params: { uri } };
+    throw new Error('deep_link_invalid');
   },
   async registerDeepLinkProtocol(): Promise<void> {
     return undefined;
