@@ -36,6 +36,21 @@ fn write_zip(path: &Path, entries: &[(&str, &[u8])]) {
     writer.finish().unwrap();
 }
 
+#[test]
+fn recorded_directory_cleanup_preserves_unowned_sentinel_and_forged_marker() {
+    let temp = tempdir().unwrap();
+    let selected = temp.path().join("selected-games");
+    fs::create_dir(&selected).unwrap();
+    fs::write(selected.join("personal-save.txt"), b"keep").unwrap();
+    fs::write(selected.join(".fusion-owned"), b"untrusted archive marker").unwrap();
+
+    assert!(remove_recorded_download_path(&selected).is_err());
+    assert_eq!(
+        fs::read(selected.join("personal-save.txt")).unwrap(),
+        b"keep"
+    );
+}
+
 fn manifest_emulator_asset_view() -> AssetView {
     AssetView {
         id: "manifest-demo::0100-emulator-bundle".to_string(),
@@ -52,6 +67,30 @@ fn manifest_emulator_asset_view() -> AssetView {
         install_hint: None,
         executable: false,
     }
+}
+
+#[tokio::test]
+async fn guarded_bundle_extraction_verifies_locked_archive_and_deletes_exact_source() {
+    let temp = tempdir().unwrap();
+    let archive = temp.path().join("emulator.zip");
+    write_zip(&archive, &[("emulator.exe", b"verified executable")]);
+    let hash = hash_file(&archive).unwrap();
+    let registry = crate::download_operations::OperationCoordinator::new();
+    let lease = registry.start("bundle").unwrap();
+    let result = post_process_manifest_emulator_bundle_archive(
+        &manifest_emulator_asset_view(),
+        &archive,
+        &hash,
+        lease,
+    )
+    .await
+    .unwrap();
+    assert_eq!(result, temp.path());
+    assert_eq!(
+        fs::read(temp.path().join("emulator.exe")).unwrap(),
+        b"verified executable"
+    );
+    assert!(!archive.exists());
 }
 
 #[test]

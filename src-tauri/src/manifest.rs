@@ -155,23 +155,16 @@ pub(crate) async fn fetch_manifest_inner(url: &str) -> Result<Manifest, AppError
     // Enforce the project's HTTPS-only policy before touching the network.
     let endpoint = validate_repository_url(url, false).map_err(AppError::InvalidUrl)?;
 
-    let mut client_builder = reqwest::Client::builder()
-        .timeout(MANIFEST_TIMEOUT)
-        .user_agent(crate::net::HTTP_USER_AGENT);
-    client_builder = crate::net::resolve_and_pin_host(client_builder, &endpoint)
-        .await
-        .map_err(AppError::InvalidUrl)?;
-    let client = client_builder.build()?;
-
-    let response = client
-        .get(endpoint)
-        .send()
-        .await? // connection / timeout -> AppError::Network
-        .error_for_status()
-        .map_err(|error| AppError::Network(crate::net::format_reqwest_error("manifest", &error)))?;
-
-    // Invalid JSON or missing required fields -> AppError::Parse.
-    let manifest = response.json::<Manifest>().await?;
+    let bytes = crate::net::fetch_external_bytes(
+        &endpoint,
+        false,
+        MANIFEST_TIMEOUT,
+        crate::net::JSON_BODY_LIMIT,
+    )
+    .await
+    .map_err(AppError::Network)?;
+    let manifest = serde_json::from_slice::<Manifest>(&bytes)
+        .map_err(|error| AppError::Parse(format!("Manifest JSON is invalid: {error}")))?;
     validate_manifest(&manifest).map_err(AppError::Parse)?;
 
     Ok(manifest)

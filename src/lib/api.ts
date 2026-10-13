@@ -31,6 +31,7 @@ import type {
   ProfileEmulatorConfig,
   ProfileEmulatorRemovalReport,
   RepairLibraryReport,
+  RemovalReport,
   RepositoryPreview,
   RepositorySummary,
   RequirementsReport,
@@ -390,10 +391,10 @@ export const api = {
     return call<string>('set_library_root', { path });
   },
   removeGame(gameId: string, deleteFiles: boolean) {
-    return call<boolean>('remove_game', { gameId, deleteFiles });
+    return call<RemovalReport>('remove_game', { gameId, deleteFiles });
   },
   removeDownload(downloadId: string, deleteFiles: boolean) {
-    return call<boolean>('remove_download', { downloadId, deleteFiles });
+    return call<RemovalReport>('remove_download', { downloadId, deleteFiles });
   },
   redownloadAsset(assetId: string, targetDir?: string) {
     return call<DownloadRecord>('redownload_asset', { assetId, targetDir });

@@ -32,6 +32,7 @@ import { useInstallGame } from '@/lib/orchestratorApi';
 import { defaultSaveDirForGame } from '@/lib/paths';
 import { getEmulatorConfig, getEmulatorPath, type AppSettings } from '@/lib/settings';
 import { isTauriRuntime } from '@/lib/runtime';
+import { useLauncherStore } from '@/stores/launcherStore';
 import type {
   CatalogGame,
   GameSetupState,
@@ -216,6 +217,20 @@ export function GameDetailsModal({
     } finally {
       setBusy(null);
     }
+  };
+
+  const handleRemoveGame = async () => {
+    const store = useLauncherStore.getState();
+    const attemptId = store.downloads.find((item) => item.gameId === game.id)?.attemptId;
+    await runDownloadAction('remove', async () => {
+      const report = await api.removeGame(game.id, true);
+      store.removeDownload({ gameId: game.id, attemptId });
+      if (report.preservedPaths.length > 0) {
+        const detail = t.common.filesPreserved(report.preservedPaths);
+        setMessage(detail);
+        store.addActivityEvent({ title: displayProductText(game.title), detail, gameId: game.id, tone: 'warning' });
+      }
+    });
   };
 
   const chooseTargetDirectory = async (title: string) => {
@@ -769,7 +784,7 @@ export function GameDetailsModal({
             )}
 
             {statusMessage && (
-              <div className="mb-4 rounded-md border border-amber-300/24 bg-amber-300/10 px-3 py-2 select-text text-sm text-amber-100">
+              <div className="mb-4 break-words rounded-md border border-amber-300/24 bg-amber-300/10 px-3 py-2 select-text text-sm text-amber-100">
                 {statusMessage}
               </div>
             )}
@@ -922,7 +937,7 @@ export function GameDetailsModal({
                   <button
                     onClick={() => {
                       if (window.confirm(t.gameDetails.messages.removeConfirm(displayProductText(game.title)))) {
-                        void runDownloadAction('remove', () => api.removeGame(game.id, true));
+                        void handleRemoveGame();
                       }
                     }}
                     disabled={busy !== null}

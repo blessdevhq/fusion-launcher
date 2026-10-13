@@ -53,7 +53,8 @@ export const en = {
     updated: 'Updated',
     published: 'Published',
     peers: 'peers',
-    share: 'Share'
+    share: 'Share',
+    filesPreserved: (paths: string[]) => `Some files were preserved because safe deletion could not be confirmed: ${paths.join('; ')}`
   },
   brand: {
     tagline: 'Retro game libraries. One Windows launcher.',
@@ -887,7 +888,8 @@ export const ru: UiText = {
     updated: 'Обновлено',
     published: 'Опубликовано',
     peers: 'peers',
-    share: 'Поделиться'
+    share: 'Поделиться',
+    filesPreserved: (paths: string[]) => `Часть файлов сохранена: безопасность удаления не подтверждена. ${paths.join('; ')}`
   },
   brand: {
     tagline: 'Ретро-библиотеки игр. Один Windows-лаунчер.',

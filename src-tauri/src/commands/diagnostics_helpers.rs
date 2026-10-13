@@ -196,7 +196,9 @@ pub(super) fn build_health_report(state: &AppState) -> Result<HealthReport, Stri
         active_downloads,
         &torrent_downloads,
         state.torrents.is_some(),
-        download_root_for_app_state(state)?.to_string_lossy().to_string(),
+        download_root_for_app_state(state)?
+            .to_string_lossy()
+            .to_string(),
     );
 
     Ok(HealthReport {
@@ -307,9 +309,27 @@ pub(super) fn remove_path_if_allowed(
     })
 }
 
+#[cfg(test)]
 pub(super) fn remove_recorded_download_path(candidate: &Path) -> Result<(), String> {
     if !candidate.exists() {
         return Ok(());
+    }
+    for component in candidate.ancestors() {
+        if let Ok(metadata) = fs::symlink_metadata(component) {
+            #[cfg(windows)]
+            let reparse = {
+                use std::os::windows::fs::MetadataExt;
+                metadata.file_attributes() & 0x400 != 0
+            };
+            #[cfg(not(windows))]
+            let reparse = false;
+            if metadata.file_type().is_symlink() || reparse {
+                return Err(format!(
+                    "Files preserved: linked path {}",
+                    candidate.display()
+                ));
+            }
+        }
     }
     let canonical_candidate = fs::canonicalize(candidate)
         .map_err(|error| format!("Failed to inspect {}: {error}", candidate.display()))?;
@@ -320,7 +340,10 @@ pub(super) fn remove_recorded_download_path(candidate: &Path) -> Result<(), Stri
         ));
     }
     if canonical_candidate.is_dir() {
-        fs::remove_dir_all(&canonical_candidate)
+        return Err(format!(
+            "Files preserved: installation ownership is unknown for {}",
+            canonical_candidate.display()
+        ));
     } else {
         fs::remove_file(&canonical_candidate)
     }

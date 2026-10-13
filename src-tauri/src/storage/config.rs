@@ -1,6 +1,26 @@
 use super::*;
 
 impl RepositoryStore {
+    pub(crate) fn list_config_prefix(&self, prefix: &str) -> Result<Vec<(String, String)>, String> {
+        let mut statement = self
+            .conn
+            .prepare("SELECT key, value FROM app_config WHERE substr(key, 1, length(?1)) = ?1")
+            .map_err(|e| e.to_string())?;
+        let records = statement
+            .query_map(params![prefix], |row| Ok((row.get(0)?, row.get(1)?)))
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string());
+        records
+    }
+
+    pub(crate) fn remove_config(&self, key: &str) -> Result<(), String> {
+        self.conn
+            .execute("DELETE FROM app_config WHERE key = ?1", params![key])
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
     pub fn get_config(&self, key: &str) -> Result<Option<String>, String> {
         self.conn
             .query_row(

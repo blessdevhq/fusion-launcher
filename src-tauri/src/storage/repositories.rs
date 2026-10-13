@@ -15,21 +15,8 @@ impl RepositoryStore {
             .content_hash
             .clone()
             .unwrap_or_else(|| hex::encode(Sha256::digest(raw_json.as_bytes())));
-        let trust_level = if crate::builtin_demo::is_builtin_repository_url(url) {
-            "official"
-        } else {
-            let declared = repo
-                .metadata
-                .trust_level
-                .as_deref()
-                .filter(|value| !value.trim().is_empty())
-                .unwrap_or("unknown");
-            if declared == "official" {
-                "community"
-            } else {
-                declared
-            }
-        };
+        let trust_level =
+            crate::security::effective_repository_trust(url, repo.metadata.trust_level.as_deref());
 
         tx.execute(
             "DELETE FROM repository_assets WHERE repository_id = ?1",

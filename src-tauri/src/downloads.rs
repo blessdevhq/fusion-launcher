@@ -1,14 +1,10 @@
-use std::collections::HashMap;
-use std::io::{ErrorKind, Read};
+use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use reqwest::header::RANGE;
 use reqwest::StatusCode;
 use sha2::{Digest, Sha256};
-use tokio::io::AsyncWriteExt;
 use url::Url;
 
 use crate::builtin_demo;
@@ -17,10 +13,6 @@ use crate::schema::SourceUri;
 /// Connection timeout for HTTP downloads. Intentionally no overall request
 /// timeout: large game/emulator archives can legitimately take a long time.
 const DOWNLOAD_CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
-
-/// Some hosts (notably the GitHub API/redirect chain) reject requests without a
-/// User-Agent, so every download identifies itself.
-const DOWNLOAD_USER_AGENT: &str = concat!("FusionLauncher/", env!("CARGO_PKG_VERSION"));
 
 /// Minimum gap between streaming progress callbacks, to avoid flooding the IPC
 /// channel and SQLite on fast connections.
@@ -33,95 +25,7 @@ pub struct DownloadedFile {
     pub sha256: String,
 }
 
-#[derive(Clone, Default)]
-pub struct DirectDownloadRegistry {
-    tokens: Arc<Mutex<HashMap<String, Arc<AtomicBool>>>>,
-}
-
-#[derive(Clone)]
-pub struct DirectDownloadCancelToken {
-    token: Arc<AtomicBool>,
-}
-
-pub struct DirectDownloadGuard {
-    id: String,
-    token: Arc<AtomicBool>,
-    registry: DirectDownloadRegistry,
-}
-
-impl DirectDownloadRegistry {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn start(&self, id: &str) -> Result<DirectDownloadGuard, String> {
-        let id = id.trim();
-        if id.is_empty() {
-            return Err("Download id cannot be empty.".to_string());
-        }
-
-        let token = Arc::new(AtomicBool::new(false));
-        let mut tokens = self.lock_tokens()?;
-        if tokens.contains_key(id) {
-            return Err(format!("Download is already active: {id}"));
-        }
-        tokens.insert(id.to_string(), Arc::clone(&token));
-
-        Ok(DirectDownloadGuard {
-            id: id.to_string(),
-            token,
-            registry: self.clone(),
-        })
-    }
-
-    pub fn cancel(&self, id: &str) -> Result<bool, String> {
-        let Some(token) = self.lock_tokens()?.get(id).cloned() else {
-            return Ok(false);
-        };
-        token.store(true, Ordering::SeqCst);
-        Ok(true)
-    }
-
-    fn finish(&self, id: &str, token: &Arc<AtomicBool>) {
-        let Ok(mut tokens) = self.tokens.lock() else {
-            return;
-        };
-        if tokens
-            .get(id)
-            .is_some_and(|current| Arc::ptr_eq(current, token))
-        {
-            tokens.remove(id);
-        }
-    }
-
-    fn lock_tokens(
-        &self,
-    ) -> Result<std::sync::MutexGuard<'_, HashMap<String, Arc<AtomicBool>>>, String> {
-        self.tokens
-            .lock()
-            .map_err(|_| "Direct download registry lock is poisoned.".to_string())
-    }
-}
-
-impl DirectDownloadGuard {
-    pub fn token(&self) -> DirectDownloadCancelToken {
-        DirectDownloadCancelToken {
-            token: Arc::clone(&self.token),
-        }
-    }
-}
-
-impl Drop for DirectDownloadGuard {
-    fn drop(&mut self) {
-        self.registry.finish(&self.id, &self.token);
-    }
-}
-
-impl DirectDownloadCancelToken {
-    pub fn is_cancelled(&self) -> bool {
-        self.token.load(Ordering::SeqCst)
-    }
-}
+pub use crate::download_operations::OperationCoordinator as DirectDownloadRegistry;
 
 pub fn is_download_cancelled_error(error: &str) -> bool {
     error == DOWNLOAD_CANCELLED_MESSAGE
@@ -176,6 +80,7 @@ pub struct StreamOptions<'a> {
     pub resume: bool,
 }
 
+#[cfg(test)]
 pub async fn download_source_to_file(
     source: &SourceUri,
     destination: &Path,
@@ -186,6 +91,7 @@ pub async fn download_source_to_file(
 /// Like [`download_source_to_file`], but reports streaming progress
 /// (`downloaded_bytes`, `total_bytes`) for HTTP sources. Bundled/magnet/
 /// user-provided sources do not stream and never invoke `on_progress`.
+#[cfg(test)]
 pub async fn download_source_to_file_with_progress(
     source: &SourceUri,
     destination: &Path,
@@ -197,6 +103,7 @@ pub async fn download_source_to_file_with_progress(
 
 /// Like [`download_source_to_file_with_progress`], but lets callers abort a
 /// streaming direct download without waiting for the process to exit.
+#[cfg(test)]
 pub async fn download_source_to_file_with_progress_and_cancel(
     source: &SourceUri,
     destination: &Path,
@@ -295,218 +202,10 @@ pub fn hash_file(path: &Path) -> Result<String, String> {
     Ok(hex::encode(hasher.finalize()))
 }
 
-/// Streams an HTTP body to `destination` without buffering the whole file in
-/// memory. Writes to a sibling `<name>.part` file and atomically renames it
-/// into place only after size/hash verification succeeds, so a crash never
-/// leaves a partial file that looks complete.
-pub async fn download_http_streaming(
-    url: &str,
-    destination: &Path,
-    options: StreamOptions<'_>,
-    mut on_progress: impl FnMut(u64, Option<u64>),
-    mut is_cancelled: impl FnMut() -> bool,
-) -> Result<DownloadedFile, String> {
-    let parsed_url = Url::parse(url).map_err(|error| format!("Invalid URL: {error}"))?;
-    if parsed_url.scheme() != "https" {
-        return Err("Insecure URL scheme: only HTTPS is permitted.".to_string());
-    }
-    if let Some(host) = parsed_url.host_str() {
-        if crate::net::is_forbidden_target_host(host) {
-            return Err(format!("Download target host is forbidden: {host}"));
-        }
-    }
-
-    if let Some(parent) = destination.parent() {
-        tokio::fs::create_dir_all(parent)
-            .await
-            .map_err(|error| format!("Failed to create download folder: {error}"))?;
-    }
-    let part_path = part_path_for(destination);
-    if is_cancelled() {
-        let _ = tokio::fs::remove_file(&part_path).await;
-        return Err(DOWNLOAD_CANCELLED_MESSAGE.to_string());
-    }
-
-    // Decide whether we can resume an existing partial file. If anything looks
-    // off we fall back to a clean download instead of risking a corrupt resume.
-    let mut hasher = Sha256::new();
-    let mut downloaded: u64 = 0;
-    let mut resume_offset: u64 = 0;
-    if options.resume {
-        if let Ok(metadata) = tokio::fs::metadata(&part_path).await {
-            if metadata.is_file() && metadata.len() > 0 {
-                match hash_existing_part(&part_path, hasher).await {
-                    Ok((existing_hasher, existing_len)) => {
-                        hasher = existing_hasher;
-                        downloaded = existing_len;
-                        resume_offset = existing_len;
-                    }
-                    Err(_) => {
-                        let _ = tokio::fs::remove_file(&part_path).await;
-                        hasher = Sha256::new();
-                    }
-                }
-            }
-        }
-    } else {
-        let _ = tokio::fs::remove_file(&part_path).await;
-    }
-
-    let redirect_policy = match Url::parse(url)
-        .ok()
-        .and_then(|u| u.host_str().map(str::to_string))
-    {
-        Some(host)
-            if host == "github.com"
-                || host.ends_with(".github.com")
-                || host == "githubusercontent.com"
-                || host.ends_with(".githubusercontent.com") =>
-        {
-            crate::net::github_redirect_policy()
-        }
-        _ => crate::net::https_only_redirect_policy(),
-    };
-
-    let mut builder = reqwest::Client::builder()
-        .connect_timeout(DOWNLOAD_CONNECT_TIMEOUT)
-        .user_agent(DOWNLOAD_USER_AGENT)
-        .redirect(redirect_policy);
-    builder = crate::net::resolve_and_pin_host(builder, &parsed_url)
-        .await
-        .map_err(|error| format!("SSRF protection rejected download target: {error}"))?;
-    let client = builder
-        .build()
-        .map_err(|error| format!("Failed to initialize downloader: {error}"))?;
-    let mut request = client.get(url);
-    if resume_offset > 0 {
-        request = request.header(RANGE, format!("bytes={resume_offset}-"));
-    }
-    let response = request
-        .send()
-        .await
-        .map_err(|error| format!("Failed to fetch source: {error}"))?;
-
-    // If we asked for a range but the server replied 200 OK, it ignored the
-    // Range header and is sending the whole file again: restart from scratch.
-    let mut append = false;
-    if resume_offset > 0 {
-        if response.status() == StatusCode::PARTIAL_CONTENT {
-            append = true;
-        } else if response.status().is_success() {
-            hasher = Sha256::new();
-            downloaded = 0;
-            let _ = tokio::fs::remove_file(&part_path).await;
-        }
-    }
-    let mut response = response
-        .error_for_status()
-        .map_err(|error| format!("Source returned an error: {error}"))?;
-
-    // For a 206 resume the body is only the remaining bytes, so add what we
-    // already have on disk to report a meaningful total.
-    let total_bytes = response
-        .content_length()
-        .map(|len| len + resume_offset)
-        .or(options.expected_size_bytes);
-
-    let mut file = tokio::fs::OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(!append)
-        .append(append)
-        .open(&part_path)
-        .await
-        .map_err(|error| format!("Failed to open download file: {error}"))?;
-
-    on_progress(downloaded, total_bytes);
-    let mut last_report = Instant::now();
-
-    loop {
-        if is_cancelled() {
-            drop(file);
-            let _ = tokio::fs::remove_file(&part_path).await;
-            return Err(DOWNLOAD_CANCELLED_MESSAGE.to_string());
-        }
-        let chunk = match response.chunk().await {
-            Ok(Some(chunk)) => chunk,
-            Ok(None) => break,
-            Err(error) => return Err(format!("Failed to read source body: {error}")),
-        };
-        if is_cancelled() {
-            drop(file);
-            let _ = tokio::fs::remove_file(&part_path).await;
-            return Err(DOWNLOAD_CANCELLED_MESSAGE.to_string());
-        }
-        downloaded += chunk.len() as u64;
-        if let Some(max_bytes) = options.max_bytes {
-            if downloaded > max_bytes {
-                drop(file);
-                let _ = tokio::fs::remove_file(&part_path).await;
-                return Err(format!(
-                    "Download exceeded the size limit of {max_bytes} bytes."
-                ));
-            }
-        }
-        hasher.update(&chunk);
-        file.write_all(&chunk)
-            .await
-            .map_err(|error| format!("Failed to write download: {error}"))?;
-
-        if last_report.elapsed() >= PROGRESS_REPORT_INTERVAL {
-            on_progress(downloaded, total_bytes);
-            last_report = Instant::now();
-        }
-    }
-
-    on_progress(downloaded, total_bytes);
-
-    file.flush()
-        .await
-        .map_err(|error| format!("Failed to flush download: {error}"))?;
-    file.sync_all()
-        .await
-        .map_err(|error| format!("Failed to persist download: {error}"))?;
-    drop(file);
-
-    if let Err(error) = validate_size(downloaded, options.expected_size_bytes) {
-        let _ = tokio::fs::remove_file(&part_path).await;
-        return Err(error);
-    }
-
-    let actual_sha256 = hex::encode(hasher.finalize());
-    if let Some(expected_sha256) = options.expected_sha256 {
-        if !actual_sha256.eq_ignore_ascii_case(expected_sha256) {
-            let _ = tokio::fs::remove_file(&part_path).await;
-            return Err(format!(
-                "SHA256 mismatch: expected {expected_sha256}, got {actual_sha256}"
-            ));
-        }
-    }
-
-    if tokio::fs::metadata(destination).await.is_ok() {
-        let _ = tokio::fs::remove_file(destination).await;
-    }
-    tokio::fs::rename(&part_path, destination)
-        .await
-        .map_err(|error| format!("Failed to finalize download: {error}"))?;
-
-    Ok(DownloadedFile {
-        path: destination.to_path_buf(),
-        sha256: actual_sha256,
-    })
-}
-
-pub async fn remove_partial_download(destination: &Path) -> Result<(), String> {
-    let part_path = part_path_for(destination);
-    match tokio::fs::remove_file(&part_path).await {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(format!(
-            "Failed to remove partial download {}: {error}",
-            part_path.display()
-        )),
-    }
-}
+include!("download_http.rs");
+#[cfg(test)]
+#[path = "download_http_tests.rs"]
+mod http_tests;
 
 fn part_path_for(destination: &Path) -> PathBuf {
     let mut file_name = destination
@@ -519,6 +218,7 @@ fn part_path_for(destination: &Path) -> PathBuf {
 
 /// Re-hashes an existing `.part` file off the async runtime so a resumed
 /// download continues the SHA-256 from exactly where it left off.
+#[cfg(test)]
 async fn hash_existing_part(path: &Path, hasher: Sha256) -> Result<(Sha256, u64), String> {
     let path = path.to_path_buf();
     tokio::task::spawn_blocking(move || {
@@ -543,6 +243,7 @@ async fn hash_existing_part(path: &Path, hasher: Sha256) -> Result<(Sha256, u64)
     .map_err(|error| format!("Failed to inspect partial download: {error}"))?
 }
 
+#[cfg(test)]
 async fn copy_bundled_to_file(
     path: &str,
     expected_sha256: &str,
@@ -586,6 +287,7 @@ fn validate_size(actual_size_bytes: u64, expected_size_bytes: Option<u64>) -> Re
     Ok(())
 }
 
+#[cfg(test)]
 async fn handle_torrent(_magnet: &str) -> Result<DownloadedFile, String> {
     Err("Torrent handler is not implemented in v1.".to_string())
 }
@@ -654,6 +356,11 @@ mod tests {
         assert!(token.is_cancelled());
 
         drop(guard);
+        assert!(
+            registry.cancel("repo::game").unwrap(),
+            "a cloned lease still owns resources"
+        );
+        drop(token);
         assert!(!registry.cancel("repo::game").unwrap());
     }
 
@@ -681,7 +388,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn cancelled_http_download_removes_partial_file_before_request() {
+    async fn cancelled_http_download_preserves_partial_file_before_request() {
         let temp = tempfile::tempdir().unwrap();
         let destination = temp.path().join("game.bin");
         let part = part_path_for(&destination);
@@ -703,7 +410,7 @@ mod tests {
         .unwrap_err();
 
         assert_eq!(error, DOWNLOAD_CANCELLED_MESSAGE);
-        assert!(!part.exists());
+        assert_eq!(std::fs::read(&part).unwrap(), b"partial");
     }
 
     #[tokio::test]

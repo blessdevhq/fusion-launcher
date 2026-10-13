@@ -20,6 +20,7 @@ import type {
   ProfileEmulatorConfig,
   ProfileEmulatorRemovalReport,
   RepairLibraryReport,
+  RemovalReport,
   RepositoryPreview,
   RepositorySummary,
   RequirementsReport,
@@ -128,6 +129,7 @@ const catalog: CatalogGame[] = [
 
 let downloadRoot = PREVIEW_GAMES_ROOT;
 let libraryRoot = 'C:\\Users\\preview\\AppData\\Local\\Fusion Launcher';
+let previewAttemptSequence = 0;
 let downloads: TorrentDownloadRecord[] = [
   torrent('crystal-caverns', 'completed', 100, 46_000_000, 46_000_000, 0, 0, null),
   torrent('neon-rally', 'downloading', 68, 2_400_000_000, 3_500_000_000, 12_000_000, 7, null),
@@ -746,12 +748,12 @@ export const previewApi = {
     libraryRoot = path || libraryRoot;
     return libraryRoot;
   },
-  async removeGame(gameId: string, _deleteFiles: boolean): Promise<boolean> {
+  async removeGame(gameId: string, _deleteFiles: boolean): Promise<RemovalReport> {
     const before = downloads.length;
     downloads = downloads.filter((item) => item.gameId !== gameId);
-    return downloads.length !== before;
+    return { changed: downloads.length !== before, preservedPaths: [] };
   },
-  async removeDownload(downloadId: string, deleteFiles: boolean): Promise<boolean> {
+  async removeDownload(downloadId: string, deleteFiles: boolean): Promise<RemovalReport> {
     return previewApi.removeGame(downloadId, deleteFiles);
   },
   async redownloadAsset(assetId: string, targetDir?: string): Promise<DownloadRecord> {
@@ -786,6 +788,8 @@ export const previewApi = {
     downloads = [
       {
         gameId,
+        attemptId: `preview-attempt-${++previewAttemptSequence}`,
+        runId: 1,
         magnetUri,
         saveDir,
         status: 'downloading',
@@ -1031,6 +1035,8 @@ function torrent(
 ): TorrentDownloadRecord {
   return {
     gameId,
+    attemptId: `preview-attempt-${++previewAttemptSequence}`,
+    runId: 1,
     magnetUri: `magnet:?xt=urn:btih:${gameId.replaceAll('-', '')}`,
     saveDir: previewGameTorrentDir(gameId),
     status,
@@ -1059,6 +1065,8 @@ function directDownloadRecord(
   const timestamp = new Date().toISOString();
   return {
     gameId,
+    attemptId: `preview-attempt-${++previewAttemptSequence}`,
+    runId: 1,
     subjectType,
     displayName: displayName ?? gameId,
     magnetUri: `direct:${sourceKind}`,
@@ -1215,6 +1223,7 @@ function updateTorrentStatus(
   if (!record) throw new Error(`Unknown preview torrent: ${gameId}`);
   const updated = {
     ...record,
+    runId: status === 'downloading' ? (record.runId ?? 0) + 1 : record.runId,
     status,
     errorMessage,
     downloadSpeedBytesPerSec,

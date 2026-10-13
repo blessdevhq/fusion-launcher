@@ -8,19 +8,21 @@
 //! onto the multi-torrent [`TorrentEngine`] contract:
 //!
 //! * `add_magnet` spawns a sidecar process and assigns it an id.
-//! * `pause` kills the process but keeps the entry; `resume` respawns it, which
+//! * `pause` stops the process but keeps the entry; `resume` respawns it, which
 //!   re-checks the partial files already on disk and continues.
 //! * `delete` removes the entry and kills the process; the manager deletes files.
 //! * `stats` returns the latest parsed status line.
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+#[cfg(test)]
+use std::path::Path;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use async_trait::async_trait;
 use serde::Deserialize;
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
 
@@ -69,14 +71,15 @@ fn parse_progress_line(line: &str) -> Option<EngineTorrentStats> {
 struct TorrentEntry {
     magnet: String,
     save_dir: String,
+    save_identity: String,
     /// The running sidecar process, or `None` when paused/terminated.
     child: Option<CommandChild>,
     /// Generation counter incremented on each process spawn.
     generation: u64,
-    /// In the middle of an asynchronous spawn operation.
-    spawning: bool,
-    /// In the middle of an asynchronous deletion operation.
-    deleting: bool,
+    /// Serializes lifecycle operations without holding a std mutex across await.
+    operation: Arc<tokio::sync::Mutex<()>>,
+    /// Exit proof survives taking/dropping the process handle.
+    completion: Option<ProcessCompletion>,
     /// Latest stats parsed from the sidecar's stdout.
     stats: EngineTorrentStats,
     /// Set when the manager paused/cancelled this torrent, so the process's
@@ -90,6 +93,80 @@ struct TorrentEntry {
 
 /// Keep only the last few stderr lines so a crash report stays readable.
 const MAX_STDERR_LINES: usize = 8;
+
+const GRACEFUL_STOP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+const KILLED_STOP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ProcessExit {
+    Pending,
+    Terminated,
+    Unconfirmed,
+}
+
+/// A private signal for one concrete process, never shared with its successor.
+#[derive(Clone)]
+struct ProcessCompletion {
+    engine_id: usize,
+    generation: u64,
+    exit: tokio::sync::watch::Sender<ProcessExit>,
+}
+
+impl ProcessCompletion {
+    fn new(engine_id: usize, generation: u64) -> Self {
+        let (exit, _) = tokio::sync::watch::channel(ProcessExit::Pending);
+        Self {
+            engine_id,
+            generation,
+            exit,
+        }
+    }
+
+    fn terminated(&self, engine_id: usize, generation: u64) {
+        if self.engine_id == engine_id && self.generation == generation {
+            self.exit.send_replace(ProcessExit::Terminated);
+        }
+    }
+
+    fn stream_closed(&self) {
+        self.exit.send_if_modified(|exit| {
+            if *exit == ProcessExit::Pending {
+                *exit = ProcessExit::Unconfirmed;
+                true
+            } else {
+                false
+            }
+        });
+    }
+
+    async fn wait(&self, timeout: std::time::Duration) -> Result<(), String> {
+        let mut receiver = self.exit.subscribe();
+        tokio::time::timeout(timeout, async {
+            loop {
+                let state = *receiver.borrow_and_update();
+                match state {
+                    ProcessExit::Terminated => return Ok(()),
+                    ProcessExit::Unconfirmed => {
+                        return Err("Sidecar event stream closed without confirmed termination."
+                            .to_string())
+                    }
+                    ProcessExit::Pending => {}
+                }
+                receiver
+                    .changed()
+                    .await
+                    .map_err(|_| "Sidecar termination observer disappeared.".to_string())?;
+            }
+        })
+        .await
+        .map_err(|_| {
+            format!(
+                "Timed out awaiting sidecar {} generation {} termination.",
+                self.engine_id, self.generation
+            )
+        })?
+    }
+}
 
 const SIDECAR_DEPENDENCY_HINT: &str = "Torrent sidecar could not load libtorrent. Install or repair the Microsoft Visual C++ 2015-2022 x64 Redistributable, then reinstall Fusion Launcher from the bundled Windows installer.";
 
@@ -114,6 +191,7 @@ fn decorate_sidecar_error(error: &str) -> String {
     }
 }
 
+#[cfg(test)]
 fn is_valid_btih_hash(hash: &str) -> bool {
     let len = hash.len();
     if len == 40 {
@@ -126,6 +204,7 @@ fn is_valid_btih_hash(hash: &str) -> bool {
     }
 }
 
+#[cfg(test)]
 fn extract_btih(magnet: &str) -> Option<&str> {
     let prefix = "xt=urn:btih:";
     for part in magnet.split('&') {
@@ -148,6 +227,7 @@ fn extract_btih(magnet: &str) -> Option<&str> {
     None
 }
 
+#[cfg(test)]
 #[derive(Debug, PartialEq, Eq)]
 pub enum SafeDeleteOutcome {
     Safe(PathBuf),
@@ -156,6 +236,7 @@ pub enum SafeDeleteOutcome {
     PolicyRefused(String),
 }
 
+#[cfg(test)]
 fn is_reparse_point_or_symlink(path: &Path) -> bool {
     #[cfg(windows)]
     {
@@ -175,6 +256,7 @@ fn is_reparse_point_or_symlink(path: &Path) -> bool {
     false
 }
 
+#[cfg(test)]
 fn check_ancestors_not_reparse(
     dir: &Path,
     library_root: &Path,
@@ -202,6 +284,7 @@ fn check_ancestors_not_reparse(
     Ok(())
 }
 
+#[cfg(test)]
 pub fn safe_to_delete(dir: &Path, library_root: &Path) -> SafeDeleteOutcome {
     if !dir.exists() && !is_reparse_point_or_symlink(dir) {
         return SafeDeleteOutcome::Nonexistent;
@@ -343,14 +426,68 @@ pub struct LibtorrentEngine {
     app: AppHandle,
     next_id: AtomicUsize,
     torrents: Arc<Mutex<HashMap<usize, TorrentEntry>>>,
+    path_operations: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
 }
 
 impl LibtorrentEngine {
+    fn save_identity(save_dir: &str) -> String {
+        // Canonicalize the nearest existing ancestor so the key stays stable
+        // when the sidecar creates a destination that did not exist at add.
+        let input = PathBuf::from(save_dir);
+        let absolute = if input.is_absolute() {
+            input
+        } else {
+            std::env::current_dir().unwrap_or_default().join(input)
+        };
+        let mut path = PathBuf::new();
+        for component in absolute.components() {
+            match component {
+                std::path::Component::CurDir => {}
+                std::path::Component::ParentDir => {
+                    path.pop();
+                }
+                component => path.push(component.as_os_str()),
+            }
+        }
+        let mut ancestor = path.as_path();
+        let mut suffix = Vec::new();
+        while ancestor.canonicalize().is_err() {
+            let (Some(name), Some(parent)) = (ancestor.file_name(), ancestor.parent()) else {
+                break;
+            };
+            suffix.push(name.to_owned());
+            ancestor = parent;
+        }
+        if let Ok(canonical) = ancestor.canonicalize() {
+            path = canonical;
+            for component in suffix.into_iter().rev() {
+                path.push(component);
+            }
+        }
+        let identity = path.to_string_lossy().into_owned();
+        #[cfg(windows)]
+        let identity = identity.to_lowercase();
+        identity
+    }
+
+    fn path_operation(&self, identity: &str) -> Result<Arc<tokio::sync::Mutex<()>>, String> {
+        let mut operations = self
+            .path_operations
+            .lock()
+            .map_err(|_| "Torrent path operation registry is poisoned.".to_string())?;
+        Ok(Arc::clone(
+            operations
+                .entry(identity.to_string())
+                .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(()))),
+        ))
+    }
+
     pub fn new(app: AppHandle) -> Self {
         Self {
             app,
             next_id: AtomicUsize::new(1),
             torrents: Arc::new(Mutex::new(HashMap::new())),
+            path_operations: Mutex::new(HashMap::new()),
         }
     }
 
@@ -374,13 +511,6 @@ impl LibtorrentEngine {
             .spawn()
             .map_err(|error| format!("Failed to start torrent sidecar: {error}"))?;
 
-        if let Err(error) = crate::job::bind_to_launcher_lifetime(child.pid()) {
-            let _ = child.kill();
-            return Err(format!(
-                "Failed to bind torrent sidecar to Windows Job Object (fail-closed): {error}"
-            ));
-        }
-
         Ok((rx, child))
     }
 
@@ -388,6 +518,7 @@ impl LibtorrentEngine {
         &self,
         id: usize,
         generation: u64,
+        completion: ProcessCompletion,
         mut rx: tauri::async_runtime::Receiver<CommandEvent>,
     ) {
         let torrents = Arc::clone(&self.torrents);
@@ -399,7 +530,7 @@ impl LibtorrentEngine {
                         if let Some(stats) = parse_progress_line(&line) {
                             if let Ok(mut map) = torrents.lock() {
                                 if let Some(entry) = map.get_mut(&id) {
-                                    if entry.generation == generation {
+                                    if entry.generation == generation && !entry.user_stopped {
                                         entry.stats = stats;
                                     }
                                 }
@@ -437,6 +568,9 @@ impl LibtorrentEngine {
                         }
                     }
                     CommandEvent::Terminated(payload) => {
+                        // Publish exit independently of entry/handle lifetime,
+                        // including rejected spawns and obsolete generations.
+                        completion.terminated(id, generation);
                         if let Ok(mut map) = torrents.lock() {
                             if let Some(entry) = map.get_mut(&id) {
                                 // If this termination belongs to an older process run, ignore it.
@@ -474,7 +608,143 @@ impl LibtorrentEngine {
                     _ => {}
                 }
             }
+            completion.stream_closed();
+            if *completion.exit.borrow() == ProcessExit::Unconfirmed {
+                if let Ok(mut map) = torrents.lock() {
+                    if let Some(entry) = map.get_mut(&id) {
+                        if entry.generation == generation {
+                            entry.stats.error = Some("Sidecar event stream closed without confirmed termination; files preserved.".to_string());
+                        }
+                    }
+                }
+            }
         });
+    }
+}
+
+impl LibtorrentEngine {
+    fn operation(&self, id: usize) -> Result<Option<Arc<tokio::sync::Mutex<()>>>, String> {
+        Ok(self
+            .lock()?
+            .get(&id)
+            .map(|entry| Arc::clone(&entry.operation)))
+    }
+
+    // Caller holds this entry's async operation lock. No std mutex spans await.
+    async fn stop_locked(&self, id: usize, action: &str) -> Result<(), String> {
+        let (completion, signaled) = {
+            let mut map = self.lock()?;
+            let Some(entry) = map.get_mut(&id) else {
+                return Ok(());
+            };
+            entry.user_stopped = true;
+            let command = format!("{{\"action\":\"{action}\"}}\n");
+            let signaled = entry
+                .child
+                .as_mut()
+                .is_some_and(|child| child.write(command.as_bytes()).is_ok());
+            (entry.completion.clone(), signaled)
+        };
+        let Some(completion) = completion else {
+            return Ok(());
+        };
+        if signaled && completion.wait(GRACEFUL_STOP_TIMEOUT).await.is_ok() {
+            return Ok(());
+        }
+        // Taking or killing the handle is never evidence that writers stopped.
+        let child = {
+            let mut map = self.lock()?;
+            map.get_mut(&id).and_then(|entry| entry.child.take())
+        };
+        let kill_error = child.and_then(|child| child.kill().err());
+        let result = completion.wait(KILLED_STOP_TIMEOUT).await;
+        if let Err(error) = &result {
+            let error = format!("{error} Kill error: {kill_error:?}; files must be preserved.");
+            if let Some(entry) = self.lock()?.get_mut(&id) {
+                entry.stats.error = Some(error.clone());
+            }
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    // Observer installation precedes every fallible post-spawn operation.
+    async fn spawn_locked(&self, id: usize) -> Result<(), String> {
+        let (magnet, save_dir, generation) = {
+            let mut map = self.lock()?;
+            let Some(identity) = map.get(&id).map(|entry| entry.save_identity.clone()) else {
+                return Ok(());
+            };
+            if map.iter().any(|(other_id, entry)| {
+                *other_id != id
+                    && entry.save_identity == identity
+                    && entry
+                        .completion
+                        .as_ref()
+                        .map_or(!entry.user_stopped, |completion| {
+                            *completion.exit.borrow() != ProcessExit::Terminated
+                        })
+            }) {
+                return Err("Another torrent process may still write this destination.".to_string());
+            }
+            let Some(entry) = map.get_mut(&id) else {
+                return Ok(());
+            };
+            entry.generation += 1;
+            entry.user_stopped = false;
+            entry.recent_stderr.clear();
+            entry.stats.error = None;
+            (
+                entry.magnet.clone(),
+                entry.save_dir.clone(),
+                entry.generation,
+            )
+        };
+        let (rx, child) = match self.create_sidecar_process(&magnet, &save_dir) {
+            Ok(pair) => pair,
+            Err(error) => {
+                if let Some(entry) = self.lock()?.get_mut(&id) {
+                    entry.user_stopped = true;
+                    entry.stats.error = Some(error.clone());
+                }
+                return Err(error);
+            }
+        };
+        let pid = child.pid();
+        let completion = ProcessCompletion::new(id, generation);
+        self.start_sidecar_event_loop(id, generation, completion.clone(), rx);
+        // Publish even a rejected process, so its exit can be awaited and retry
+        // cannot evade an unresolved previous writer.
+        let mut unpublished_child = Some(child);
+        let publish_error = {
+            match self.lock() {
+                Ok(mut map) => {
+                    if let Some(entry) = map.get_mut(&id) {
+                        entry.completion = Some(completion.clone());
+                        entry.child = unpublished_child.take();
+                        None
+                    } else {
+                        Some("Torrent entry disappeared while spawning sidecar.".to_string())
+                    }
+                }
+                Err(error) => Some(error),
+            }
+        };
+        if let Some(error) = publish_error {
+            // Even a poisoned map or rejected spawn keeps its event observer.
+            if let Some(child) = unpublished_child {
+                let _ = child.kill();
+            }
+            completion.wait(KILLED_STOP_TIMEOUT).await?;
+            return Err(error);
+        }
+        if let Err(error) = crate::job::bind_to_launcher_lifetime(pid) {
+            self.stop_locked(id, "stop").await?;
+            return Err(format!(
+                "Failed to bind torrent sidecar to Windows Job Object (fail-closed): {error}"
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -482,300 +752,123 @@ impl LibtorrentEngine {
 impl TorrentEngine for LibtorrentEngine {
     async fn add_magnet(&self, magnet_uri: String, save_dir: String) -> Result<usize, String> {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-
+        let save_identity = Self::save_identity(&save_dir);
+        let operation = self.path_operation(&save_identity)?;
+        let _operation = operation.lock().await;
         {
             let mut map = self.lock()?;
+            if map.values().any(|entry| {
+                entry.save_identity == save_identity
+                    && entry
+                        .completion
+                        .as_ref()
+                        .map_or(!entry.user_stopped, |completion| {
+                            *completion.exit.borrow() != ProcessExit::Terminated
+                        })
+            }) {
+                return Err(
+                "Another torrent process may still write this destination; stop is unconfirmed."
+                    .to_string(),
+            );
+            }
             map.insert(
                 id,
                 TorrentEntry {
-                    magnet: magnet_uri.clone(),
-                    save_dir: save_dir.clone(),
+                    magnet: magnet_uri,
+                    save_dir,
+                    save_identity,
                     child: None,
-                    generation: 1,
-                    spawning: true,
-                    deleting: false,
+                    generation: 0,
+                    operation: Arc::clone(&operation),
+                    completion: None,
                     stats: EngineTorrentStats::default(),
                     user_stopped: false,
                     recent_stderr: Vec::new(),
                 },
             );
         }
-
-        let (rx, child) = match self.create_sidecar_process(&magnet_uri, &save_dir) {
-            Ok(pair) => pair,
-            Err(error) => {
-                let _ = self.lock().map(|mut m| m.remove(&id));
-                return Err(error);
+        if let Err(error) = self.spawn_locked(id).await {
+            // Retain unresolved generations. Losing their observer/entry would
+            // allow a subsequent caller to mistake them for stopped writers.
+            let removable = self.lock()?.get(&id).is_some_and(|entry| {
+                entry
+                    .completion
+                    .as_ref()
+                    .is_none_or(|completion| *completion.exit.borrow() == ProcessExit::Terminated)
+            });
+            if removable {
+                self.lock()?.remove(&id);
             }
-        };
-
-        let mut map = self.lock()?;
-        match map.get_mut(&id) {
-            Some(entry) => {
-                entry.spawning = false;
-                if entry.generation == 1 && !entry.user_stopped && !entry.deleting {
-                    entry.child = Some(child);
-                    drop(map);
-                    self.start_sidecar_event_loop(id, 1, rx);
-                    Ok(id)
-                } else {
-                    let _ = child.kill();
-                    Ok(id)
-                }
-            }
-            None => {
-                let _ = child.kill();
-                Ok(id)
-            }
+            return Err(error);
         }
+        Ok(id)
     }
 
     async fn pause(&self, id: usize) -> Result<(), String> {
-        let child_to_kill = {
-            let mut map = self.lock()?;
-            let Some(entry) = map.get_mut(&id) else {
-                return Ok(());
-            };
-            entry.user_stopped = true;
-            if let Some(child) = entry.child.as_mut() {
-                if child.write(b"{\"action\":\"pause\"}\n").is_ok() {
-                    entry.stats.download_speed_bytes_per_sec = 0;
-                    None
-                } else {
-                    entry.child.take()
-                }
-            } else {
-                None
-            }
+        let Some(operation) = self.operation(id)? else {
+            return Ok(());
         };
-        if let Some(child) = child_to_kill {
-            child
-                .kill()
-                .map_err(|e| format!("Failed to terminate torrent process on pause: {e}"))?;
+        let _operation = operation.lock().await;
+        self.stop_locked(id, "pause").await
+    }
+
+    async fn stop(&self, id: usize) -> Result<(), String> {
+        let Some(operation) = self.operation(id)? else {
+            return Ok(());
+        };
+        let _operation = operation.lock().await;
+        self.stop_locked(id, "stop").await
+    }
+
+    async fn stop_for_path(&self, save_dir: &str) -> Result<(), String> {
+        let identity = Self::save_identity(save_dir);
+        let operation = self.path_operation(&identity)?;
+        let _operation = operation.lock().await;
+        let ids: Vec<_> = self
+            .lock()?
+            .iter()
+            .filter(|(_, entry)| entry.save_identity == identity)
+            .map(|(id, _)| *id)
+            .collect();
+        for id in ids {
+            self.stop_locked(id, "stop").await?;
         }
         Ok(())
     }
 
     async fn resume(&self, id: usize) -> Result<(), String> {
-        // Fast early check: already running, already spawning, or currently being deleted?
+        let Some(operation) = self.operation(id)? else {
+            return Ok(());
+        };
+        let _operation = operation.lock().await;
         {
             let map = self.lock()?;
             let Some(entry) = map.get(&id) else {
                 return Ok(());
             };
-            if entry.deleting || entry.spawning || (entry.child.is_some() && !entry.user_stopped) {
+            if !entry.user_stopped
+                && entry
+                    .completion
+                    .as_ref()
+                    .is_some_and(|completion| *completion.exit.borrow() == ProcessExit::Pending)
+            {
                 return Ok(());
             }
         }
-
-        // Wait up to 5s (100 * 50ms) for previous child process to terminate cleanly
-        for _ in 0..100 {
-            let is_dead = {
-                let map = self.lock()?;
-                map.get(&id).is_none_or(|e| e.child.is_none())
-            };
-            if is_dead {
-                break;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-        }
-
-        // If the old child process did not terminate within timeout, force kill it.
-        // If kill fails, return error immediately, and DO NOT spawn!
-        let child_to_kill = {
-            let mut map = self.lock()?;
-            map.get_mut(&id).and_then(|e| e.child.take())
-        };
-        if let Some(child) = child_to_kill {
-            if let Err(e) = child.kill() {
-                if let Ok(mut map) = self.lock() {
-                    if let Some(entry) = map.get_mut(&id) {
-                        entry.stats.error =
-                            Some(format!("Failed to terminate existing sidecar: {e}"));
-                    }
-                }
-                return Err(format!(
-                    "Failed to terminate existing torrent process before resume: {e}"
-                ));
-            }
-        }
-
-        let (magnet, save_dir, generation) = {
-            let mut map = self.lock()?;
-            let Some(entry) = map.get_mut(&id) else {
-                return Ok(());
-            };
-            if entry.deleting || entry.spawning || (entry.child.is_some() && !entry.user_stopped) {
-                return Ok(());
-            }
-            entry.spawning = true;
-            entry.user_stopped = false;
-            entry.recent_stderr.clear();
-            entry.stats.error = None;
-            entry.generation += 1;
-            (
-                entry.magnet.clone(),
-                entry.save_dir.clone(),
-                entry.generation,
-            )
-        };
-
-        let (rx, child) = match self.create_sidecar_process(&magnet, &save_dir) {
-            Ok(pair) => pair,
-            Err(err) => {
-                let mut map = self.lock()?;
-                if let Some(e) = map.get_mut(&id) {
-                    e.spawning = false;
-                    e.user_stopped = true;
-                    e.stats.error = Some(err.clone());
-                }
-                return Err(err);
-            }
-        };
-
-        let mut map = self.lock()?;
-        match map.get_mut(&id) {
-            Some(e) => {
-                e.spawning = false;
-                if e.generation == generation && !e.user_stopped && !e.deleting {
-                    e.child = Some(child);
-                    drop(map);
-                    self.start_sidecar_event_loop(id, generation, rx);
-                    Ok(())
-                } else {
-                    let _ = child.kill();
-                    Ok(())
-                }
-            }
-            None => {
-                let _ = child.kill();
-                Ok(())
-            }
-        }
+        self.stop_locked(id, "stop").await?;
+        self.spawn_locked(id).await
     }
 
-    async fn delete(&self, id: usize, delete_files: bool) -> Result<(), String> {
-        // 1. Signal stop to child process and mark deleting = true
-        {
-            let mut map = self.lock()?;
-            let Some(entry) = map.get_mut(&id) else {
-                return Ok(());
-            };
-            entry.deleting = true;
-            entry.user_stopped = true;
-            if let Some(child) = entry.child.as_mut() {
-                let _ = child.write(b"{\"action\":\"stop\"}\n");
-            }
-        }
-
-        // 2. Wait up to 5s (100 * 50ms) for spawning to finish and child process to exit cleanly
-        for _ in 0..100 {
-            let is_dead = {
-                let map = self.lock()?;
-                map.get(&id)
-                    .is_none_or(|e| !e.spawning && e.child.is_none())
-            };
-            if is_dead {
-                break;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-        }
-
-        // 3. If child is still present, kill it. If kill fails, reset deleting and return error
-        let child_to_kill = {
-            let mut map = self.lock()?;
-            map.get_mut(&id).and_then(|e| e.child.take())
+    async fn delete(&self, id: usize, _delete_files: bool) -> Result<(), String> {
+        let Some(operation) = self.operation(id)? else {
+            return Ok(());
         };
-        if let Some(child) = child_to_kill {
-            if let Err(e) = child.kill() {
-                if let Ok(mut map) = self.lock() {
-                    if let Some(entry) = map.get_mut(&id) {
-                        entry.deleting = false;
-                        entry.stats.error =
-                            Some(format!("Failed to kill torrent process during delete: {e}"));
-                    }
-                }
-                return Err(format!("Failed to kill torrent process during delete: {e}"));
-            }
-        }
-
-        // 4. Brief delay to allow Windows file locks to be fully released
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-
-        // 5. Get entry info WITHOUT removing from map yet!
-        let (magnet, save_dir) = {
-            let map = self.lock()?;
-            let Some(entry) = map.get(&id) else {
-                return Ok(());
-            };
-            (entry.magnet.clone(), entry.save_dir.clone())
-        };
-
-        // 6. If delete_files, validate and delete files first
-        if delete_files {
-            let state = self.app.try_state::<crate::AppState>().ok_or_else(|| {
-                if let Ok(mut map) = self.lock() {
-                    if let Some(e) = map.get_mut(&id) {
-                        e.deleting = false;
-                    }
-                }
-                "Application state is not initialized for torrent file deletion.".to_string()
-            })?;
-            let library_root = crate::commands::library_root_for_app_state(&state);
-            match safe_to_delete(std::path::Path::new(&save_dir), &library_root) {
-                SafeDeleteOutcome::Safe(path) => {
-                    if path.exists() {
-                        if let Err(e) = std::fs::remove_dir_all(&path) {
-                            if let Ok(mut map) = self.lock() {
-                                if let Some(entry) = map.get_mut(&id) {
-                                    entry.deleting = false;
-                                    entry.stats.error =
-                                        Some(format!("Failed to delete files: {e}"));
-                                }
-                            }
-                            return Err(format!(
-                                "Failed to delete torrent directory {}: {e}",
-                                path.display()
-                            ));
-                        }
-                    }
-                }
-                SafeDeleteOutcome::SafeJunction(path) => {
-                    if path.exists() || is_reparse_point_or_symlink(&path) {
-                        if let Err(e) = std::fs::remove_dir(&path) {
-                            if let Ok(mut map) = self.lock() {
-                                if let Some(entry) = map.get_mut(&id) {
-                                    entry.deleting = false;
-                                    entry.stats.error =
-                                        Some(format!("Failed to unlink junction: {e}"));
-                                }
-                            }
-                            return Err(format!(
-                                "Failed to unlink junction {}: {e}",
-                                path.display()
-                            ));
-                        }
-                    }
-                }
-                SafeDeleteOutcome::Nonexistent => {}
-                SafeDeleteOutcome::PolicyRefused(reason) => {
-                    // Files outside library root or in forbidden directories are preserved.
-                    // DO NOT block removal of the launcher record so user is not stuck.
-                    eprintln!("Torrent delete files policy refusal (files preserved): {reason}");
-                }
-            }
-        }
-
-        // 7. Delete fastresume files
-        if let Some(btih) = extract_btih(&magnet) {
-            let save_path = std::path::Path::new(&save_dir);
-            let _ = std::fs::remove_file(save_path.join(format!(".{btih}.fastresume")));
-            let _ = std::fs::remove_file(save_path.join(format!(".{btih}.fastresume.tmp")));
-        }
-
-        // 8. ONLY remove entry after all deletion operations succeeded!
+        let _operation = operation.lock().await;
+        self.stop_locked(id, "stop").await?;
+        // Engine paths and archive-provided markers cannot establish ownership.
+        // The manager reports preserved files or performs its proven cleanup.
+        // In particular, false preserves existing payload AND fastresume data.
         self.lock()?.remove(&id);
-
         Ok(())
     }
 
@@ -789,10 +882,73 @@ impl TorrentEngine for LibtorrentEngine {
         self.lock().ok()?.get(&id).map(|entry| entry.stats.clone())
     }
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn destination_identity_survives_directory_creation() {
+        let temp = tempfile::tempdir().unwrap();
+        let destination = temp.path().join("new").join("game");
+        let before = LibtorrentEngine::save_identity(destination.to_str().unwrap());
+        std::fs::create_dir_all(&destination).unwrap();
+        assert_eq!(
+            before,
+            LibtorrentEngine::save_identity(destination.to_str().unwrap())
+        );
+    }
+
+    #[tokio::test]
+    async fn completion_requires_termination_for_the_same_process() {
+        let completion = ProcessCompletion::new(7, 3);
+        completion.terminated(7, 2);
+        completion.terminated(8, 3);
+        assert!(completion
+            .wait(std::time::Duration::from_millis(1))
+            .await
+            .is_err());
+        completion.terminated(7, 3);
+        assert!(completion
+            .wait(std::time::Duration::from_millis(1))
+            .await
+            .is_ok());
+    }
+
+    #[tokio::test]
+    async fn closed_stream_without_termination_never_proves_exit() {
+        let completion = ProcessCompletion::new(7, 3);
+        completion.stream_closed();
+        let error = completion
+            .wait(std::time::Duration::from_millis(1))
+            .await
+            .unwrap_err();
+        assert!(error.contains("without confirmed termination"));
+    }
+
+    #[tokio::test]
+    async fn delayed_termination_releases_waiter_and_survives_stream_close() {
+        let completion = ProcessCompletion::new(7, 3);
+        let observer = completion.clone();
+        let waiter =
+            tokio::spawn(async move { completion.wait(std::time::Duration::from_secs(1)).await });
+        tokio::task::yield_now().await;
+        assert!(!waiter.is_finished());
+        observer.terminated(7, 3);
+        observer.stream_closed();
+        assert!(waiter.await.unwrap().is_ok());
+        assert!(observer
+            .wait(std::time::Duration::from_millis(1))
+            .await
+            .is_ok());
+    }
+
+    #[tokio::test]
+    async fn old_generation_cannot_release_new_generation_waiter() {
+        let old = ProcessCompletion::new(7, 3);
+        let new = ProcessCompletion::new(7, 4);
+        old.terminated(7, 3);
+        assert!(new.wait(std::time::Duration::from_millis(1)).await.is_err());
+    }
 
     #[test]
     fn parses_downloading_line() {

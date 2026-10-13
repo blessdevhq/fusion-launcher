@@ -1165,9 +1165,13 @@ pub async fn ensure_artwork_cached(base_dir: &Path, url: &str) -> Result<String,
     if trimmed.is_empty() || trimmed.contains("...") {
         return Err("Invalid artwork URL".to_string());
     }
-    if !trimmed.starts_with("http://") && !trimmed.starts_with("https://") {
+    if !url::Url::parse(trimmed)
+        .ok()
+        .is_some_and(|url| matches!(url.scheme(), "http" | "https"))
+    {
         return Ok(trimmed.to_string());
     }
+    let endpoint = crate::security::validate_repository_url(trimmed, false)?;
 
     use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
@@ -1191,29 +1195,13 @@ pub async fn ensure_artwork_cached(base_dir: &Path, url: &str) -> Result<String,
         return Ok(target.to_string_lossy().to_string());
     }
 
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(10))
-        .build()
-        .map_err(|e| e.to_string())?;
-
-    let response = client
-        .get(trimmed)
-        .header("User-Agent", "Fusion Launcher Artwork Cache/0.4")
-        .send()
-        .await
-        .map_err(|e| format!("Failed to fetch artwork from {trimmed}: {e}"))?;
-
-    if !response.status().is_success() {
-        return Err(format!(
-            "Artwork request returned HTTP {}",
-            response.status()
-        ));
-    }
-
-    let bytes = response
-        .bytes()
-        .await
-        .map_err(|e| format!("Failed to read artwork response: {e}"))?;
+    let bytes = crate::net::fetch_external_bytes(
+        &endpoint,
+        false,
+        std::time::Duration::from_secs(10),
+        crate::net::ARTWORK_BODY_LIMIT,
+    )
+    .await?;
 
     let tmp_file = covers_dir.join(format!("{hash}.tmp"));
     std::fs::write(&tmp_file, &bytes)
@@ -1237,6 +1225,14 @@ mod tests {
                 .await
                 .is_err()
         );
+        for unsafe_url in [
+            "https://127.0.0.1/art.png",
+            "HTTP://localhost/art.png",
+            "HTTPS://[::ffff:127.0.0.1]/art.png",
+            "https://user:secret@example.com/art.png",
+        ] {
+            assert!(ensure_artwork_cached(dir.path(), unsafe_url).await.is_err());
+        }
     }
 
     #[tokio::test]

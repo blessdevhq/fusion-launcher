@@ -9,12 +9,15 @@ mod archive;
 mod builtin_demo;
 mod commands;
 pub mod deep_link;
+mod download_installation;
+mod download_operations;
 mod downloads;
 mod emulator_profiles;
 pub(crate) mod exe_integrity;
 pub mod execution;
 mod game_files;
 mod github_resolver;
+mod install_ownership;
 pub(crate) mod job;
 mod launcher;
 mod libtorrent_engine;
@@ -123,10 +126,12 @@ pub fn run() {
             // launcher from opening. The libtorrent sidecar is spawned lazily per
             // download, so this rarely fails; direct HTTP downloads and the rest
             // of the app work regardless.
+            let operations = downloads::DirectDownloadRegistry::new();
             let torrents = match tauri::async_runtime::block_on(TorrentManager::new(
                 library_root.clone(),
                 Arc::clone(&store),
                 app.handle().clone(),
+                operations.clone(),
             )) {
                 Ok(manager) => Some(manager),
                 Err(message) => {
@@ -144,7 +149,7 @@ pub fn run() {
                 data_dir,
                 local_data_dir,
                 torrents,
-                direct_downloads: downloads::DirectDownloadRegistry::new(),
+                direct_downloads: operations,
                 running_games: Arc::new(Mutex::new(HashMap::new())),
                 library_scrape: scraper::LibraryScrapeRuntime::new(),
             };

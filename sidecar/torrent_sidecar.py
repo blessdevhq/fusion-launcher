@@ -237,29 +237,33 @@ def emit(payload):
 
 
 def listen_stdin(handle, is_paused_flag, stop_event):
-    for line in sys.stdin:
-        text = line.strip()
-        if not text:
-            continue
-        try:
-            command = json.loads(text)
-            action = command.get("action")
-            if action == "pause":
-                handle.pause()
-                is_paused_flag[0] = True
-                log("info: torrent pause requested via stdin")
-                stop_event.set()
-                break
-            elif action == "resume":
-                handle.resume()
-                is_paused_flag[0] = False
-                log("info: torrent resumed via stdin")
-            elif action == "stop":
-                log("info: torrent stop requested via stdin")
-                stop_event.set()
-                break
-        except Exception as error:
-            log(f"warning: stdin command error: {error}")
+    try:
+        for line in sys.stdin:
+            text = line.strip()
+            if not text:
+                continue
+            try:
+                command = json.loads(text)
+                action = command.get("action")
+                if action == "pause":
+                    handle.pause()
+                    is_paused_flag[0] = True
+                    log("info: torrent pause requested via stdin")
+                    stop_event.set()
+                    break
+                elif action == "resume":
+                    handle.resume()
+                    is_paused_flag[0] = False
+                    log("info: torrent resumed via stdin")
+                elif action == "stop":
+                    log("info: torrent stop requested via stdin")
+                    stop_event.set()
+                    break
+            except Exception as error:
+                log(f"warning: stdin command error: {error}")
+    finally:
+        # Parent EOF is also a stop request: reach the normal fastresume path.
+        stop_event.set()
 
 
 def main():

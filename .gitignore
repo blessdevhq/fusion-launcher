@@ -12,6 +12,8 @@ src-tauri/target/
 *.db-shm
 *.db-wal
 coverage/
+__pycache__/
+*.pyc
 .env
 .DS_Store
 outputs/

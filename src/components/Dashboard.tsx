@@ -34,6 +34,7 @@ import type {
   CatalogGame,
   DeepLinkAction,
   DownloadProgressEvent,
+  DownloadRemovedEvent,
   HealthReport,
   LaunchFailure,
   RepositoryPreview,
@@ -75,6 +76,7 @@ export function Dashboard({
   const setFocusedItemId = useLauncherStore((state) => state.setFocusedItemId);
   const setSelectedGameId = useLauncherStore((state) => state.setSelectedGameId);
   const mergeDownloadEvent = useLauncherStore((state) => state.mergeDownloadEvent);
+  const removeDownload = useLauncherStore((state) => state.removeDownload);
   const addActivityEvent = useLauncherStore((state) => state.addActivityEvent);
 
   const [libraryFilter, setLibraryFilter] = useState<LibraryFilter>('all');
@@ -166,12 +168,16 @@ export function Dashboard({
     const unlistenPromise = listen<DownloadProgressEvent>('download:progress', (event) => {
       if (active) mergeDownloadEvent(event.payload);
     });
+    const removedUnlistenPromise = listen<DownloadRemovedEvent>('download:removed', (event) => {
+      if (active) removeDownload(event.payload);
+    });
 
     return () => {
       active = false;
       void unlistenPromise.then((unlisten) => unlisten());
+      void removedUnlistenPromise.then((unlisten) => unlisten());
     };
-  }, [mergeDownloadEvent]);
+  }, [mergeDownloadEvent, removeDownload]);
 
   useEffect(() => {
     if (!isTauriRuntime()) return;
@@ -534,7 +540,17 @@ export function Dashboard({
     const item = itemsByGameId.get(downloadId);
     const title = item?.game.title ?? record?.displayName ?? downloadId;
     if (!window.confirm(t.dashboard.downloads.deleteConfirm(displayProductText(title)))) return;
-    await runAction(`delete:${downloadId}`, () => api.removeDownload(downloadId, true));
+    let preservedPaths: string[] = [];
+    await runAction(`delete:${downloadId}`, async () => {
+      const report = await api.removeDownload(downloadId, true);
+      removeDownload({ gameId: downloadId, attemptId: record?.attemptId });
+      preservedPaths = report.preservedPaths;
+    });
+    if (preservedPaths.length > 0) {
+      const detail = t.common.filesPreserved(preservedPaths);
+      setLauncherMessage(detail);
+      addActivityEvent({ title: displayProductText(title), detail, gameId: downloadId, tone: 'warning' });
+    }
   };
 
   const chooseDownloadTargetDir = async (downloadId: string) => {
@@ -729,7 +745,7 @@ export function Dashboard({
             setActiveView('library');
           }}
         />
-        {bannerMessage && <div className="rh-banner">{bannerMessage}</div>}
+        {bannerMessage && <div className="rh-banner break-words">{bannerMessage}</div>}
 
         {activeView === 'home' && (
           <HomeScreen

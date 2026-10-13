@@ -257,6 +257,21 @@ impl RepositoryStore {
         if user_version < 2 {
             self.migrate_v1_to_v2_inner()?;
         }
+        if user_version < 3 {
+            self.conn.execute_batch("BEGIN IMMEDIATE")?;
+            let result = (|| -> rusqlite::Result<()> {
+                self.ensure_column("torrent_downloads", "attempt_id", "TEXT")?;
+                self.ensure_column("torrent_downloads", "run_id", "INTEGER NOT NULL DEFAULT 0")?;
+                self.conn.execute_batch("PRAGMA user_version = 3;")
+            })();
+            match result {
+                Ok(()) => self.conn.execute_batch("COMMIT")?,
+                Err(error) => {
+                    let _ = self.conn.execute_batch("ROLLBACK");
+                    return Err(error);
+                }
+            }
+        }
 
         Ok(())
     }

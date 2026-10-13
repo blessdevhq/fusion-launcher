@@ -1,9 +1,8 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { listen } from '@tauri-apps/api/event';
 import { api } from '@/lib/api';
-import { isTauriRuntime } from '@/lib/runtime';
+import { useLauncherStore } from '@/stores/launcherStore';
 import type {
   DownloadProgressEvent,
   TorrentDownloadRecord,
@@ -38,15 +37,13 @@ export interface DownloadState {
 }
 
 export function useDownloadState(gameId: string): DownloadState {
-  const [record, setRecord] = useState<TorrentDownloadRecord | null>(null);
-  const [liveEvent, setLiveEvent] = useState<DownloadProgressEvent | null>(null);
+  const record = useLauncherStore((state) => state.downloads.find((item) => item.gameId === gameId) ?? null);
   const [isLoading, setIsLoading] = useState(true);
 
   const refresh = useCallback(async () => {
     setIsLoading(true);
     try {
-      setRecord(await api.getGameDownload(gameId));
-      setLiveEvent(null);
+      applySnapshot(await api.getGameDownload(gameId));
     } finally {
       setIsLoading(false);
     }
@@ -56,34 +53,14 @@ export function useDownloadState(gameId: string): DownloadState {
     void refresh();
   }, [refresh]);
 
-  useEffect(() => {
-    if (!isTauriRuntime()) return;
-
-    let active = true;
-    const unlistenPromise = listen<DownloadProgressEvent>('download:progress', (event) => {
-      if (!active || event.payload.gameId !== gameId) {
-        return;
-      }
-
-      const payload = event.payload;
-      setLiveEvent(payload);
-      setRecord((previous) => previous ? mergeRecordWithEvent(previous, payload) : previous);
-    });
-
-    return () => {
-      active = false;
-      void unlistenPromise.then((unlisten) => unlisten());
-    };
-  }, [gameId]);
-
-  const status = liveEvent?.status ?? record?.status ?? null;
+  const status = record?.status ?? null;
   const progressPercent = clampPercent(
-    liveEvent?.progressPercent ?? record?.progressPercent ?? (status === 'completed' ? 100 : 0)
+    record?.progressPercent ?? (status === 'completed' ? 100 : 0)
   );
 
   return useMemo(() => ({
     record,
-    liveEvent,
+    liveEvent: null,
     status,
     isLoading,
     isActive: status !== null && ACTIVE_STATUSES.includes(status),
@@ -91,50 +68,31 @@ export function useDownloadState(gameId: string): DownloadState {
     isCancelling: status === 'cancelling',
     canPlay: status === 'completed',
     hasError: status === 'error',
-    saveDir: liveEvent?.saveDir ?? record?.saveDir ?? null,
+    saveDir: record?.saveDir ?? null,
     progressPercent,
-    downloadedBytes: liveEvent?.downloadedBytes ?? record?.downloadedBytes ?? 0,
-    totalBytes: liveEvent?.totalBytes ?? record?.totalBytes ?? 0,
-    downloadSpeedBytesPerSec: liveEvent?.downloadSpeedBytesPerSec ?? record?.downloadSpeedBytesPerSec ?? 0,
-    uploadSpeedBytesPerSec: liveEvent?.uploadSpeedBytesPerSec ?? record?.uploadSpeedBytesPerSec ?? 0,
-    peersCount: liveEvent?.peersCount ?? record?.peersCount ?? 0,
-    errorMessage: liveEvent?.error ?? record?.errorMessage ?? null,
+    downloadedBytes: record?.downloadedBytes ?? 0,
+    totalBytes: record?.totalBytes ?? 0,
+    downloadSpeedBytesPerSec: record?.downloadSpeedBytesPerSec ?? 0,
+    uploadSpeedBytesPerSec: record?.uploadSpeedBytesPerSec ?? 0,
+    peersCount: record?.peersCount ?? 0,
+    errorMessage: record?.errorMessage ?? null,
     refresh,
     pause: async () => {
-      setRecord(await api.pauseDownload(gameId));
-      setLiveEvent(null);
+      applySnapshot(await api.pauseDownload(gameId));
     },
     resume: async () => {
-      setRecord(await api.resumeDownload(gameId));
-      setLiveEvent(null);
+      applySnapshot(await api.resumeDownload(gameId));
     },
     cancel: async () => {
-      setRecord(await api.cancelDownload(gameId));
-      setLiveEvent(null);
+      applySnapshot(await api.cancelDownload(gameId));
     }
-  }), [gameId, isLoading, liveEvent, progressPercent, record, refresh, status]);
+  }), [gameId, isLoading, progressPercent, record, refresh, status]);
 }
 
-function mergeRecordWithEvent(
-  record: TorrentDownloadRecord,
-  event: DownloadProgressEvent
-): TorrentDownloadRecord {
-  return {
-    ...record,
-    subjectType: event.subjectType ?? record.subjectType,
-    displayName: event.displayName ?? record.displayName,
-    parentGameId: event.parentGameId ?? record.parentGameId,
-    status: event.status,
-    saveDir: event.saveDir || record.saveDir,
-    progressPercent: event.progressPercent,
-    downloadedBytes: event.downloadedBytes,
-    totalBytes: event.totalBytes,
-    downloadSpeedBytesPerSec: event.downloadSpeedBytesPerSec,
-    uploadSpeedBytesPerSec: event.uploadSpeedBytesPerSec,
-    peersCount: event.peersCount,
-    errorMessage: event.error ?? null,
-    completedAt: event.finished ? new Date().toISOString() : record.completedAt
-  };
+function applySnapshot(record: TorrentDownloadRecord | null) {
+  if (!record) return;
+  const state = useLauncherStore.getState();
+  state.setDownloads([...state.downloads.filter((item) => item.gameId !== record.gameId), record]);
 }
 
 function clampPercent(value: number) {

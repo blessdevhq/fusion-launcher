@@ -390,6 +390,8 @@ pub struct GameDownloadStartReport {
 #[serde(rename_all = "camelCase")]
 pub struct TorrentDownloadRecord {
     pub game_id: String,
+    pub attempt_id: Option<String>,
+    pub run_id: Option<u64>,
     pub subject_type: Option<String>,
     pub display_name: Option<String>,
     /// When set, this download is a child of the given game install (e.g. an

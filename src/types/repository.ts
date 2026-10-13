@@ -259,6 +259,8 @@ export interface LibraryGameStatus {
 }
 
 export interface DownloadRecord {
+  attemptId?: string | null;
+  runId?: number | null;
   subjectId: string;
   subjectType: 'asset' | 'game';
   status: 'ready' | 'completed' | 'error';
@@ -390,6 +392,8 @@ export type TorrentDownloadStatus =
   | 'error';
 
 export interface TorrentDownloadRecord {
+  attemptId?: string | null;
+  runId?: number | null;
   gameId: string;
   subjectType?: 'asset' | 'game' | null;
   displayName?: string | null;
@@ -449,6 +453,8 @@ export interface TorrentStatus {
 }
 
 export interface DownloadProgressEvent {
+  attemptId?: string | null;
+  runId?: number | null;
   gameId: string;
   subjectType?: 'asset' | 'game' | null;
   displayName?: string | null;
@@ -464,6 +470,16 @@ export interface DownloadProgressEvent {
   finished: boolean;
   saveDir: string;
   error?: string | null;
+}
+
+export interface DownloadRemovedEvent {
+  gameId: string;
+  attemptId?: string | null;
+}
+
+export interface RemovalReport {
+  changed: boolean;
+  preservedPaths: string[];
 }
 
 export interface OptimizationReport {

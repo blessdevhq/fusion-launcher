@@ -2,6 +2,7 @@ use std::collections::HashSet;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
+use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::Utc;
@@ -11,9 +12,7 @@ use tauri::{AppHandle, Emitter, State};
 use url::Url;
 
 use crate::builtin_demo;
-use crate::downloads::{
-    destination_for_source, download_source_to_file, file_name_for_source, hash_file,
-};
+use crate::downloads::{destination_for_source, file_name_for_source, hash_file};
 use crate::game_files;
 use crate::logging;
 use crate::schema::{

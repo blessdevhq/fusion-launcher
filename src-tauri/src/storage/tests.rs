@@ -855,12 +855,12 @@ fn migration_from_v0_legacy_database_with_mixed_records() {
     {
         let store = RepositoryStore::open(&db_path).unwrap();
 
-        // Verify user_version was bumped to 2
+        // Verify all migrations, including operation identity, were applied.
         let v: i32 = store
             .conn
             .query_row("PRAGMA user_version;", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(v, 2, "user_version must be bumped to 2 after migration");
+        assert_eq!(v, 3, "user_version must be bumped to 3 after migration");
 
         // Verify attacker repo was demoted, but builtin was kept official
         let attacker = store

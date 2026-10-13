@@ -30,6 +30,9 @@ pub struct EngineTorrentStats {
 /// opaque numeric id the engine assigns on [`add_magnet`](TorrentEngine::add_magnet)
 /// and the manager persists in `torrent_downloads.torrent_id`.
 #[async_trait]
+// Raw engine hooks include pause/resume for consumers that keep an engine id;
+// the manager deliberately creates a new runtime generation on resume.
+#[allow(dead_code)]
 pub trait TorrentEngine: Send + Sync {
     /// Add a magnet and begin downloading into `save_dir`, returning the engine's
     /// id for the new torrent.
@@ -38,7 +41,14 @@ pub trait TorrentEngine: Send + Sync {
     async fn pause(&self, id: usize) -> Result<(), String>;
     /// Resume a paused torrent. A no-op if the engine no longer tracks `id`.
     async fn resume(&self, id: usize) -> Result<(), String>;
-    /// Remove the torrent; when `delete_files` is set, also delete partial data.
+    /// Stop writers and await confirmed process exit, preserving all files.
+    /// An error means quiescence is unconfirmed and cleanup must not proceed.
+    async fn stop(&self, id: usize) -> Result<(), String>;
+    /// Stop destination writers, including a failed add with no returned id.
+    /// An error forbids cleanup and reuse of the destination.
+    async fn stop_for_path(&self, save_dir: &str) -> Result<(), String>;
+    /// Stop and remove engine bookkeeping. Payload cleanup belongs to the
+    /// manager, which must separately prove ownership of any deleted files.
     async fn delete(&self, id: usize, delete_files: bool) -> Result<(), String>;
     /// Whether the engine still tracks a torrent with this id.
     fn exists(&self, id: usize) -> bool;

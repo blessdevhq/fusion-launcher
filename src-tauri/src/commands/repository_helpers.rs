@@ -33,37 +33,14 @@ pub(super) async fn fetch_repository_schema(
     allow_dev_http: bool,
 ) -> Result<RepositorySchema, String> {
     let parsed = validate_repository_url(url, allow_dev_http)?;
-    let mut builder = reqwest::Client::builder()
-        .timeout(Duration::from_secs(12))
-        .user_agent(crate::net::HTTP_USER_AGENT);
-    if !allow_dev_http {
-        builder = crate::net::resolve_and_pin_host(builder, &parsed)
-            .await
-            .map_err(|error| format!("SSRF protection rejected repository host: {error}"))?;
-    }
-    let client = builder
-        .build()
-        .map_err(|error| format!("Failed to initialize repository client: {error}"))?;
-    let response = client
-        .get(parsed)
-        .send()
-        .await
-        .map_err(|error| {
-            format!(
-                "Failed to fetch repository: {}",
-                crate::net::format_reqwest_error("source library", &error)
-            )
-        })?
-        .error_for_status()
-        .map_err(|error| {
-            format!(
-                "Repository returned an error: {}",
-                crate::net::format_reqwest_error("source library", &error)
-            )
-        })?;
-    let repo = response
-        .json::<RepositorySchema>()
-        .await
+    let bytes = crate::net::fetch_external_bytes(
+        &parsed,
+        allow_dev_http,
+        Duration::from_secs(12),
+        crate::net::JSON_BODY_LIMIT,
+    )
+    .await?;
+    let repo = serde_json::from_slice::<RepositorySchema>(&bytes)
         .map_err(|error| format!("Repository JSON is invalid: {error}"))?;
     validate_repository_schema(&repo, allow_dev_http)?;
     Ok(repo)
@@ -233,14 +210,46 @@ pub(super) fn build_repository_preview(url: &str, repo: &RepositorySchema) -> Re
         maintainer: repo.metadata.maintainer.clone(),
         homepage_url: repo.metadata.homepage_url.clone(),
         license: repo.metadata.license.clone(),
-        trust_level: repo
-            .metadata
-            .trust_level
-            .clone()
-            .unwrap_or_else(|| "unknown".to_string()),
+        trust_level: crate::security::effective_repository_trust(
+            url,
+            repo.metadata.trust_level.as_deref(),
+        )
+        .to_string(),
         catalog_count: repo.catalog.len(),
         system_file_count: repo.system_files.len(),
         has_executable_assets: repo.system_files.iter().any(|asset| asset.executable),
         content_hash,
+    }
+}
+
+#[cfg(test)]
+mod repository_network_trust_tests {
+    use super::*;
+
+    #[test]
+    fn repository_preview_and_storage_use_same_effective_trust() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut store = RepositoryStore::open(&directory.path().join("trust.db")).unwrap();
+        let mut repository = builtin_demo::repository_schema().unwrap();
+        for source_url in [
+            "https://example.com/repository.json",
+            "file:///external/repository.json",
+            builtin_demo::BUILTIN_DEMO_REPOSITORY_URL,
+        ] {
+            for declared in [None, Some("official"), Some("community"), Some("unknown")] {
+                repository.metadata.trust_level = declared.map(str::to_string);
+                let preview = build_repository_preview(source_url, &repository);
+                let stored = store.store_repository(source_url, &repository).unwrap();
+                assert_eq!(preview.trust_level, stored.trust_level);
+                let expected = if builtin_demo::is_builtin_repository_url(source_url) {
+                    "official"
+                } else if matches!(declared, Some("official" | "community")) {
+                    "community"
+                } else {
+                    "unknown"
+                };
+                assert_eq!(preview.trust_level, expected);
+            }
+        }
     }
 }

@@ -65,6 +65,17 @@ describe('preview one-click setup support', () => {
     assert.equal(setup.launch.status, 'ready');
   });
 
+  it('returns a removal report and uses a fresh attempt when reinstalling', async () => {
+    const before = await previewApi.startGameDownload('fusion_launcher_nes_smoke');
+    const report = await previewApi.removeDownload('fusion_launcher_nes_smoke', false);
+    assert.deepEqual(report, { changed: true, preservedPaths: [] });
+    assert.deepEqual(await previewApi.removeGame('fusion_launcher_nes_smoke', true), { changed: false, preservedPaths: [] });
+    const after = await previewApi.startGameDownload('fusion_launcher_nes_smoke');
+    assert.ok(before.torrent?.attemptId);
+    assert.ok(after.torrent?.attemptId);
+    assert.notEqual(before.torrent?.attemptId, after.torrent?.attemptId);
+  });
+
   it('keeps Switch emulator selection manual', async () => {
     await previewApi.deleteEmulatorConfig('switch');
 

@@ -59,6 +59,8 @@ mod downloads;
 mod emulators;
 mod metadata;
 mod migrations;
+mod operations;
+pub(crate) use operations::{DownloadAttempt, WorkerProgress};
 mod repositories;
 mod rows;
 

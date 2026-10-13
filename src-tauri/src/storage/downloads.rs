@@ -284,6 +284,10 @@ impl RepositoryStore {
         &self,
         record: &mut TorrentDownloadRecord,
     ) -> Result<(), String> {
+        if let Some(identity) = self.download_attempt(&record.game_id)? {
+            record.attempt_id = Some(identity.attempt);
+            record.run_id = Some(identity.run);
+        }
         if let Some(game) = self.get_game(&record.game_id)? {
             record.subject_type = Some("game".to_string());
             record.display_name = Some(game.title);
@@ -515,7 +519,10 @@ impl RepositoryStore {
     /// Runs `body` inside a single SQLite transaction so multi-statement writes
     /// either fully apply or fully roll back, preventing partial/ghost records
     /// if the process dies mid-write.
-    fn in_transaction<T>(&self, body: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
+    pub(super) fn in_transaction<T>(
+        &self,
+        body: impl FnOnce() -> Result<T, String>,
+    ) -> Result<T, String> {
         self.conn
             .execute_batch("BEGIN IMMEDIATE")
             .map_err(|error| error.to_string())?;

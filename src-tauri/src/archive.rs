@@ -8,16 +8,103 @@ pub(crate) fn extract_archive_safely(
     archive_path: &Path,
     install_dir: &Path,
 ) -> Result<(), String> {
+    extract_archive_with_cancel(archive_path, install_dir, &|| false)
+}
+
+pub(crate) fn extract_archive_safely_guarded(
+    archive_path: &Path,
+    install_dir: &Path,
+    lease: crate::download_operations::OperationLease,
+) -> Result<(), String> {
+    let _ownership_guard = lease.protect_writes()?;
+    extract_archive_with_cancel(archive_path, install_dir, &|| lease.is_cancelled())
+}
+
+fn check_extract_cancelled(is_cancelled: &impl Fn() -> bool) -> Result<(), String> {
+    if is_cancelled() {
+        Err(crate::downloads::DOWNLOAD_CANCELLED_MESSAGE.to_string())
+    } else {
+        Ok(())
+    }
+}
+
+fn copy_extract_with_cancel(
+    reader: &mut (impl io::Read + ?Sized),
+    writer: &mut impl io::Write,
+    is_cancelled: &impl Fn() -> bool,
+) -> io::Result<()> {
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        if is_cancelled() {
+            return Err(io::Error::new(
+                io::ErrorKind::Interrupted,
+                crate::downloads::DOWNLOAD_CANCELLED_MESSAGE,
+            ));
+        }
+        let read = reader.read(&mut buffer)?;
+        if read == 0 {
+            return Ok(());
+        }
+        if is_cancelled() {
+            return Err(io::Error::new(
+                io::ErrorKind::Interrupted,
+                crate::downloads::DOWNLOAD_CANCELLED_MESSAGE,
+            ));
+        }
+        writer.write_all(&buffer[..read])?;
+    }
+}
+
+fn extract_archive_with_cancel(
+    archive_path: &Path,
+    install_dir: &Path,
+    is_cancelled: &impl Fn() -> bool,
+) -> Result<(), String> {
+    check_extract_cancelled(is_cancelled)?;
+    let _root_guard = ensure_plain_archive_directory(install_dir)?;
     let extension = archive_path
         .extension()
         .and_then(|extension| extension.to_str())
         .unwrap_or_default()
         .to_ascii_lowercase();
     match extension.as_str() {
-        "zip" => extract_zip_safely(archive_path, install_dir),
-        "7z" => extract_7z_safely(archive_path, install_dir),
+        "zip" => extract_zip_safely(archive_path, install_dir, is_cancelled),
+        "7z" => extract_7z_safely(archive_path, install_dir, is_cancelled),
         _ => Err(format!("unsupported_emulator_archive:{extension}")),
     }
+}
+
+fn ensure_plain_archive_directory(
+    path: &Path,
+) -> Result<crate::install_ownership::DirectoryProtection, String> {
+    let absolute = std::path::absolute(path).map_err(|error| error.to_string())?;
+    let mut existing = absolute.as_path();
+    let mut missing = Vec::new();
+    loop {
+        match fs::symlink_metadata(existing) {
+            Ok(_) => break,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                missing.push(existing.to_path_buf());
+                existing = existing
+                    .parent()
+                    .ok_or("Archive output has no existing parent.")?;
+            }
+            Err(error) => return Err(error.to_string()),
+        }
+    }
+    // Retain each verified ancestor while creating and locking its child.
+    // A junction cannot be swapped between validation and the output open.
+    let mut guard = crate::install_ownership::lock_plain_directory(existing)?;
+    for directory in missing.into_iter().rev() {
+        match fs::create_dir(&directory) {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(error.to_string()),
+        }
+        let child = crate::install_ownership::lock_plain_directory(&directory)?;
+        guard = child;
+    }
+    Ok(guard)
 }
 
 pub(crate) fn resolve_executable(
@@ -69,53 +156,72 @@ pub(crate) fn replace_directory(
         .map_err(|error| format!("Failed to finalize emulator install: {error}"))
 }
 
-fn extract_7z_safely(archive_path: &Path, install_dir: &Path) -> Result<(), String> {
+fn extract_7z_safely(
+    archive_path: &Path,
+    install_dir: &Path,
+    is_cancelled: &impl Fn() -> bool,
+) -> Result<(), String> {
     let install_dir = install_dir.to_path_buf();
     let callback_install_dir = install_dir.clone();
     sevenz_rust::decompress_file_with_extract_fn(
         archive_path,
         &install_dir,
         move |entry, reader, _| {
+            check_extract_cancelled(is_cancelled).map_err(sevenz_rust::Error::other)?;
             let relative = safe_relative_path(entry.name()).map_err(sevenz_rust::Error::other)?;
             let output_path = callback_install_dir.join(relative);
             if entry.is_directory() {
-                fs::create_dir_all(&output_path).map_err(sevenz_rust::Error::io)?;
+                ensure_plain_archive_directory(&output_path).map_err(sevenz_rust::Error::other)?;
                 return Ok(true);
             }
-            if let Some(parent) = output_path.parent() {
-                fs::create_dir_all(parent).map_err(sevenz_rust::Error::io)?;
-            }
-            let mut output = File::create(&output_path).map_err(sevenz_rust::Error::io)?;
-            io::copy(reader, &mut output).map_err(sevenz_rust::Error::io)?;
+            let _parent_guard = output_path
+                .parent()
+                .map(ensure_plain_archive_directory)
+                .transpose()
+                .map_err(sevenz_rust::Error::other)?;
+            let mut output = File::options()
+                .write(true)
+                .create_new(true)
+                .open(&output_path)
+                .map_err(sevenz_rust::Error::io)?;
+            copy_extract_with_cancel(reader, &mut output, is_cancelled)
+                .map_err(sevenz_rust::Error::io)?;
             Ok(true)
         },
     )
     .map_err(|error| format!("Failed to extract 7z emulator archive: {error}"))
 }
 
-fn extract_zip_safely(archive_path: &Path, install_dir: &Path) -> Result<(), String> {
+fn extract_zip_safely(
+    archive_path: &Path,
+    install_dir: &Path,
+    is_cancelled: &impl Fn() -> bool,
+) -> Result<(), String> {
     let file = File::open(archive_path)
         .map_err(|error| format!("Failed to open emulator zip archive: {error}"))?;
     let mut archive = ZipArchive::new(file)
         .map_err(|error| format!("Failed to read emulator zip archive: {error}"))?;
     for index in 0..archive.len() {
+        check_extract_cancelled(is_cancelled)?;
         let mut entry = archive
             .by_index(index)
             .map_err(|error| format!("Failed to read zip entry: {error}"))?;
         let relative = safe_relative_path(entry.name())?;
         let output_path = install_dir.join(relative);
         if entry.is_dir() {
-            fs::create_dir_all(&output_path)
-                .map_err(|error| format!("Failed to create emulator folder: {error}"))?;
+            ensure_plain_archive_directory(&output_path)?;
             continue;
         }
-        if let Some(parent) = output_path.parent() {
-            fs::create_dir_all(parent)
-                .map_err(|error| format!("Failed to create emulator folder: {error}"))?;
-        }
-        let mut output = File::create(&output_path)
+        let _parent_guard = output_path
+            .parent()
+            .map(ensure_plain_archive_directory)
+            .transpose()?;
+        let mut output = File::options()
+            .write(true)
+            .create_new(true)
+            .open(&output_path)
             .map_err(|error| format!("Failed to create emulator file: {error}"))?;
-        io::copy(&mut entry, &mut output)
+        copy_extract_with_cancel(&mut entry, &mut output, is_cancelled)
             .map_err(|error| format!("Failed to extract emulator file: {error}"))?;
     }
     Ok(())
@@ -207,9 +313,96 @@ mod tests {
         writer.write_all(b"bad").unwrap();
         writer.finish().unwrap();
 
-        let error = extract_zip_safely(&archive_path, temp.path()).unwrap_err();
+        let error = extract_archive_safely(&archive_path, temp.path()).unwrap_err();
 
         assert!(error.contains("path traversal"));
+    }
+
+    #[test]
+    fn zip_extraction_preserves_preexisting_output() {
+        let temp = tempdir().unwrap();
+        let archive_path = temp.path().join("input.zip");
+        let target = temp.path().join("system.bin");
+        fs::write(&target, b"user sentinel").unwrap();
+        let mut writer = ZipWriter::new(File::create(&archive_path).unwrap());
+        writer
+            .start_file("system.bin", SimpleFileOptions::default())
+            .unwrap();
+        writer.write_all(b"archive replacement").unwrap();
+        writer.finish().unwrap();
+        assert!(extract_archive_safely(&archive_path, temp.path()).is_err());
+        assert_eq!(fs::read(&target).unwrap(), b"user sentinel");
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn zip_extraction_refuses_junction_ancestor_and_preserves_target() {
+        let temp = tempdir().unwrap();
+        let output = temp.path().join("output");
+        let external = temp.path().join("external");
+        fs::create_dir(&output).unwrap();
+        fs::create_dir(&external).unwrap();
+        fs::write(external.join("system.bin"), b"user sentinel").unwrap();
+        let junction = output.join("linked");
+        let command = std::process::Command::new("cmd")
+            .args([
+                "/C",
+                "mklink",
+                "/J",
+                &junction.to_string_lossy(),
+                &external.to_string_lossy(),
+            ])
+            .output()
+            .unwrap();
+        assert!(command.status.success(), "junction creation failed");
+        let archive_path = temp.path().join("input.zip");
+        let mut writer = ZipWriter::new(File::create(&archive_path).unwrap());
+        writer
+            .start_file("linked/system.bin", SimpleFileOptions::default())
+            .unwrap();
+        writer.write_all(b"archive replacement").unwrap();
+        writer.finish().unwrap();
+        let result = extract_archive_safely(&archive_path, &output);
+        fs::remove_dir(&junction).unwrap();
+        assert!(result.unwrap_err().contains("reparse"));
+        assert_eq!(
+            fs::read(external.join("system.bin")).unwrap(),
+            b"user sentinel"
+        );
+    }
+
+    #[test]
+    fn archive_copy_observes_cancel_between_read_and_write() {
+        use std::cell::Cell;
+        struct CancelOnRead<'a>(&'a Cell<bool>);
+        impl io::Read for CancelOnRead<'_> {
+            fn read(&mut self, output: &mut [u8]) -> io::Result<usize> {
+                output[0] = 1;
+                self.0.set(true);
+                Ok(1)
+            }
+        }
+        let cancelled = Cell::new(false);
+        let mut output = Vec::new();
+        let error = copy_extract_with_cancel(&mut CancelOnRead(&cancelled), &mut output, &|| {
+            cancelled.get()
+        })
+        .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::Interrupted);
+        assert!(output.is_empty());
+    }
+
+    #[test]
+    fn cancelled_archive_extraction_does_not_create_payload() {
+        let temp = tempdir().unwrap();
+        let registry = crate::download_operations::OperationCoordinator::new();
+        let lease = registry.start("asset").unwrap();
+        registry.cancel("asset").unwrap();
+        let error =
+            extract_archive_safely_guarded(&temp.path().join("not-opened.zip"), temp.path(), lease)
+                .unwrap_err();
+        assert_eq!(error, crate::downloads::DOWNLOAD_CANCELLED_MESSAGE);
+        assert_eq!(fs::read_dir(temp.path()).unwrap().count(), 0);
     }
 
     #[test]
