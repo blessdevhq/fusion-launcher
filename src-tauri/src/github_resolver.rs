@@ -31,7 +31,9 @@ pub async fn resolve_github_latest(
     let mut builder = reqwest::Client::builder().redirect(crate::net::github_redirect_policy());
     builder = crate::net::resolve_and_pin_host(builder, &parsed_url)
         .await
-        .map_err(|error| format!("SSRF protection rejected GitHub API target: {error}"))?;
+        .map_err(|error| {
+            format!("Cannot reach GitHub safely. Check DNS and system proxy settings: {error}")
+        })?;
     let client = builder
         .build()
         .map_err(|error| format!("Failed to create GitHub client: {error}"))?;
@@ -40,7 +42,12 @@ pub async fn resolve_github_latest(
         .header("User-Agent", "Fusion Launcher/0.1")
         .send()
         .await
-        .map_err(|error| format!("GitHub API error: {error}"))?
+        .map_err(|error| {
+            format!(
+                "Cannot reach GitHub. Check DNS and system proxy settings: {}",
+                crate::net::format_reqwest_error("GitHub release metadata", &error)
+            )
+        })?
         .error_for_status()
         .map_err(|error| format!("GitHub API returned an error: {error}"))?
         .json::<GithubRelease>()

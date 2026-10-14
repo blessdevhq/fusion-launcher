@@ -26,7 +26,12 @@ impl reqwest::dns::Resolve for TargetResolver {
         let host = name.as_str().to_string();
         let validate = host.eq_ignore_ascii_case(&self.target) && !self.allow_dev_loopback;
         Box::pin(async move {
-            let addresses: Vec<_> = tokio::net::lookup_host((host.as_str(), 0)).await?.collect();
+            let addresses: Vec<_> = tokio::net::lookup_host((host.as_str(), 0))
+                .await
+                .map_err(|error| std::io::Error::other(format!(
+                    "DNS lookup for '{host}' failed. Check your DNS resolver and system proxy settings: {error}"
+                )))?
+                .collect();
             if validate {
                 validate_resolved_addresses(&host, &addresses)?;
             } else if addresses.is_empty() {
@@ -47,7 +52,7 @@ fn validate_resolved_addresses(
             .any(|address| is_forbidden_ip(address.ip()))
     {
         return Err(std::io::Error::other(format!(
-            "Host '{host}' has no addresses or resolved to a forbidden IP (SSRF blocked)"
+            "DNS for '{host}' returned no usable public addresses, or included a private/loopback address. Check your DNS resolver and system proxy settings; Fusion cannot safely connect to this destination."
         )));
     }
     Ok(())
@@ -405,7 +410,7 @@ pub(crate) async fn resolve_and_pin_host(
         let ip = socket_addr.ip();
         if is_forbidden_ip(ip) {
             return Err(format!(
-                "Host '{host}' resolved to forbidden private or loopback IP address {ip} (SSRF blocked)"
+                "DNS for '{host}' returned a private or loopback address ({ip}). Check your DNS resolver and system proxy settings; Fusion cannot safely connect to this destination."
             ));
         }
     }
