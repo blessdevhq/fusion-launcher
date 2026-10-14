@@ -23,7 +23,7 @@ path = "src/main.rs"
 
 [[bin]]
 name = "fusion-torrent"
-path = "src/bin/fusion_torrent.rs"
+path = "src/sidecar_fallback.rs"
 required-features = ["rqbit-fallback"]
 
 [build-dependencies]

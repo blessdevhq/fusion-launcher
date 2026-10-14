@@ -1,3 +1,5 @@
+// Kept outside src/bin: Tauri versions that scan that directory can otherwise
+// bundle a stale fallback executable despite this target's required-features.
 use std::env;
 use std::io::{self, BufRead, Write};
 use std::path::PathBuf;
