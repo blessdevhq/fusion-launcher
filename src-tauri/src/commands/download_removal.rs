@@ -83,7 +83,12 @@ async fn remove_download_internal(
                 .any(|owned| candidate.starts_with(owned.root()))
                 && fs::symlink_metadata(candidate).is_ok()
             {
-                preserved.push(candidate.to_string_lossy().into());
+                let reason = if ownership.is_empty() {
+                    "Legacy or imported installation has no trusted file inventory. Files were preserved because a matching folder name cannot prove ownership. Remove recognized files manually; new downloads into dedicated Fusion installations have a trusted inventory."
+                } else {
+                    "This file is outside the installation's trusted inventory (for example a required system asset). It was preserved; remove it manually only if you recognize it."
+                };
+                preserved.push(format!("{}: {reason}", candidate.display()));
             }
         }
     }

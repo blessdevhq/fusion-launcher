@@ -2,7 +2,8 @@
 //!
 //! Unlike librqbit, libtorrent forces MSE/PE handshake obfuscation, so it slips
 //! past DPI that resets plaintext BitTorrent handshakes. The sidecar is a
-//! one-process-per-download executable: it takes `<magnet> <save_path>` and
+//! one-invocation-per-download executable (PyInstaller onefile also starts a
+//! Python child): it takes `<magnet> <save_path>` and
 //! streams one JSON status line per second on stdout
 //! (`{"progress","speed_bytes","peers","state"}`). This engine adapts that model
 //! onto the multi-torrent [`TorrentEngine`] contract:
@@ -17,13 +18,17 @@ use std::collections::HashMap;
 #[cfg(test)]
 use std::path::Path;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
+#[cfg(windows)]
+use crate::windows_sidecar::WindowsChild as CommandChild;
 use async_trait::async_trait;
 use serde::Deserialize;
 use tauri::AppHandle;
-use tauri_plugin_shell::process::{CommandChild, CommandEvent};
+#[cfg(not(windows))]
+use tauri_plugin_shell::process::CommandChild;
+use tauri_plugin_shell::process::CommandEvent;
 use tauri_plugin_shell::ShellExt;
 
 use crate::torrent_engine::{EngineTorrentStats, TorrentEngine};
@@ -48,6 +53,8 @@ struct SidecarProgress {
     downloaded_bytes: u64,
     #[serde(default)]
     total_bytes: u64,
+    #[serde(default)]
+    inventory: Option<Vec<String>>,
 }
 
 /// Parse a single JSON status line into engine stats, or `None` if the line is
@@ -65,6 +72,7 @@ fn parse_progress_line(line: &str) -> Option<EngineTorrentStats> {
         peers_count: parsed.peers,
         finished,
         error: None,
+        inventory: parsed.inventory,
     })
 }
 
@@ -110,6 +118,9 @@ struct ProcessCompletion {
     engine_id: usize,
     generation: u64,
     exit: tokio::sync::watch::Sender<ProcessExit>,
+    root_exited: Arc<AtomicBool>,
+    #[cfg(windows)]
+    tree: Option<Arc<crate::windows_sidecar::WindowsJob>>,
 }
 
 impl ProcessCompletion {
@@ -119,16 +130,52 @@ impl ProcessCompletion {
             engine_id,
             generation,
             exit,
+            root_exited: Arc::new(AtomicBool::new(false)),
+            #[cfg(windows)]
+            tree: None,
         }
+    }
+
+    fn for_child(engine_id: usize, generation: u64, _child: &CommandChild) -> Self {
+        let completion = Self::new(engine_id, generation);
+        #[cfg(windows)]
+        let completion = Self {
+            tree: Some(_child.job()),
+            ..completion
+        };
+        completion
+    }
+
+    fn tree_empty(&self) -> Result<bool, String> {
+        #[cfg(windows)]
+        if let Some(tree) = &self.tree {
+            return tree.is_empty();
+        }
+        Ok(true)
+    }
+
+    fn confirmed(&self) -> bool {
+        let confirmed =
+            self.root_exited.load(Ordering::Acquire) && self.tree_empty().unwrap_or(false);
+        if confirmed {
+            self.exit.send_replace(ProcessExit::Terminated);
+        }
+        confirmed
     }
 
     fn terminated(&self, engine_id: usize, generation: u64) {
         if self.engine_id == engine_id && self.generation == generation {
-            self.exit.send_replace(ProcessExit::Terminated);
+            self.root_exited.store(true, Ordering::Release);
+            self.confirmed();
         }
     }
 
     fn stream_closed(&self) {
+        // The bootloader can exit before its Python descendant. Keep the tree
+        // pending until the OS reports zero active processes for this job.
+        if self.root_exited.load(Ordering::Acquire) {
+            return;
+        }
         self.exit.send_if_modified(|exit| {
             if *exit == ProcessExit::Pending {
                 *exit = ProcessExit::Unconfirmed;
@@ -143,6 +190,10 @@ impl ProcessCompletion {
         let mut receiver = self.exit.subscribe();
         tokio::time::timeout(timeout, async {
             loop {
+                if self.root_exited.load(Ordering::Acquire) && self.tree_empty()? {
+                    self.exit.send_replace(ProcessExit::Terminated);
+                    return Ok(());
+                }
                 let state = *receiver.borrow_and_update();
                 match state {
                     ProcessExit::Terminated => return Ok(()),
@@ -152,10 +203,10 @@ impl ProcessCompletion {
                     }
                     ProcessExit::Pending => {}
                 }
-                receiver
-                    .changed()
-                    .await
-                    .map_err(|_| "Sidecar termination observer disappeared.".to_string())?;
+                tokio::select! {
+                    changed = receiver.changed() => changed.map_err(|_| "Sidecar termination observer disappeared.".to_string())?,
+                    _ = tokio::time::sleep(std::time::Duration::from_millis(25)) => {},
+                }
             }
         })
         .await
@@ -422,8 +473,14 @@ pub fn safe_to_delete(dir: &Path, library_root: &Path) -> SafeDeleteOutcome {
     SafeDeleteOutcome::Safe(canonical_dir)
 }
 
+enum SidecarLauncher {
+    App(AppHandle),
+    #[cfg(all(test, windows))]
+    Executable(PathBuf),
+}
+
 pub struct LibtorrentEngine {
-    app: AppHandle,
+    launcher: SidecarLauncher,
     next_id: AtomicUsize,
     torrents: Arc<Mutex<HashMap<usize, TorrentEntry>>>,
     path_operations: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
@@ -484,11 +541,30 @@ impl LibtorrentEngine {
 
     pub fn new(app: AppHandle) -> Self {
         Self {
-            app,
+            launcher: SidecarLauncher::App(app),
             next_id: AtomicUsize::new(1),
             torrents: Arc::new(Mutex::new(HashMap::new())),
             path_operations: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// Native acceptance uses the production process/job path without a GUI.
+    #[cfg(all(test, windows))]
+    pub(crate) fn with_test_executable(executable: PathBuf) -> Self {
+        Self {
+            launcher: SidecarLauncher::Executable(executable),
+            next_id: AtomicUsize::new(1),
+            torrents: Arc::new(Mutex::new(HashMap::new())),
+            path_operations: Mutex::new(HashMap::new()),
+        }
+    }
+
+    #[cfg(all(test, windows))]
+    pub(crate) fn test_stderr(&self, id: usize) -> Vec<String> {
+        self.lock()
+            .ok()
+            .and_then(|entries| entries.get(&id).map(|entry| entry.recent_stderr.clone()))
+            .unwrap_or_default()
     }
 
     fn lock(&self) -> Result<MutexGuard<'_, HashMap<usize, TorrentEntry>>, String> {
@@ -502,12 +578,31 @@ impl LibtorrentEngine {
         magnet: &str,
         save_dir: &str,
     ) -> Result<(tauri::async_runtime::Receiver<CommandEvent>, CommandChild), String> {
-        let (rx, child) = self
-            .app
+        #[cfg(all(test, windows))]
+        if let SidecarLauncher::Executable(executable) = &self.launcher {
+            let mut command = std::process::Command::new(executable);
+            command.args([magnet, save_dir]);
+            return crate::windows_sidecar::spawn(command);
+        }
+        #[cfg(not(all(test, windows)))]
+        let SidecarLauncher::App(app) = &self.launcher;
+        #[cfg(all(test, windows))]
+        let app = match &self.launcher {
+            SidecarLauncher::App(app) => app,
+            #[cfg(all(test, windows))]
+            SidecarLauncher::Executable(_) => {
+                unreachable!("native executable launcher handled above")
+            }
+        };
+        let command = app
             .shell()
             .sidecar(SIDECAR_NAME)
             .map_err(|error| format!("Failed to locate torrent sidecar: {error}"))?
-            .args([magnet, save_dir])
+            .args([magnet, save_dir]);
+        #[cfg(windows)]
+        let (rx, child) = crate::windows_sidecar::spawn(command.into())?;
+        #[cfg(not(windows))]
+        let (rx, child) = command
             .spawn()
             .map_err(|error| format!("Failed to start torrent sidecar: {error}"))?;
 
@@ -656,7 +751,20 @@ impl LibtorrentEngine {
             let mut map = self.lock()?;
             map.get_mut(&id).and_then(|entry| entry.child.take())
         };
-        let kill_error = child.and_then(|child| child.kill().err());
+        #[cfg(windows)]
+        let kill_error = if let Some(tree) = &completion.tree {
+            // The bootloader handle may already be gone while Python is alive.
+            // Kill the retained private job, never look up a recycled PID.
+            let error = tree.terminate().err();
+            drop(child);
+            error
+        } else {
+            child.and_then(|child| child.kill().err())
+        };
+        #[cfg(not(windows))]
+        let kill_error = child
+            .and_then(|child| child.kill().err())
+            .map(|error| error.to_string());
         let result = completion.wait(KILLED_STOP_TIMEOUT).await;
         if let Err(error) = &result {
             let error = format!("{error} Kill error: {kill_error:?}; files must be preserved.");
@@ -681,9 +789,7 @@ impl LibtorrentEngine {
                     && entry
                         .completion
                         .as_ref()
-                        .map_or(!entry.user_stopped, |completion| {
-                            *completion.exit.borrow() != ProcessExit::Terminated
-                        })
+                        .map_or(!entry.user_stopped, |completion| !completion.confirmed())
             }) {
                 return Err("Another torrent process may still write this destination.".to_string());
             }
@@ -710,8 +816,7 @@ impl LibtorrentEngine {
                 return Err(error);
             }
         };
-        let pid = child.pid();
-        let completion = ProcessCompletion::new(id, generation);
+        let completion = ProcessCompletion::for_child(id, generation, &child);
         self.start_sidecar_event_loop(id, generation, completion.clone(), rx);
         // Publish even a rejected process, so its exit can be awaited and retry
         // cannot evade an unresolved previous writer.
@@ -738,12 +843,6 @@ impl LibtorrentEngine {
             completion.wait(KILLED_STOP_TIMEOUT).await?;
             return Err(error);
         }
-        if let Err(error) = crate::job::bind_to_launcher_lifetime(pid) {
-            self.stop_locked(id, "stop").await?;
-            return Err(format!(
-                "Failed to bind torrent sidecar to Windows Job Object (fail-closed): {error}"
-            ));
-        }
         Ok(())
     }
 }
@@ -762,9 +861,7 @@ impl TorrentEngine for LibtorrentEngine {
                     && entry
                         .completion
                         .as_ref()
-                        .map_or(!entry.user_stopped, |completion| {
-                            *completion.exit.borrow() != ProcessExit::Terminated
-                        })
+                        .map_or(!entry.user_stopped, |completion| !completion.confirmed())
             }) {
                 return Err(
                 "Another torrent process may still write this destination; stop is unconfirmed."
@@ -794,7 +891,7 @@ impl TorrentEngine for LibtorrentEngine {
                 entry
                     .completion
                     .as_ref()
-                    .is_none_or(|completion| *completion.exit.borrow() == ProcessExit::Terminated)
+                    .is_none_or(|completion| completion.confirmed())
             });
             if removable {
                 self.lock()?.remove(&id);
@@ -878,6 +975,22 @@ impl TorrentEngine for LibtorrentEngine {
             .unwrap_or(false)
     }
 
+    async fn approve_inventory(&self, id: usize) -> Result<(), String> {
+        let operation = self.operation(id)?.ok_or("Torrent runtime missing.")?;
+        let _operation = operation.lock().await;
+        let mut entries = self.lock()?;
+        let entry = entries.get_mut(&id).ok_or("Torrent runtime missing.")?;
+        if entry.user_stopped || entry.stats.inventory.is_none() {
+            return Err("Torrent inventory is not available for this runtime.".into());
+        }
+        entry
+            .child
+            .as_mut()
+            .ok_or("Torrent process is no longer running.")?
+            .write(b"{\"action\":\"inventory_approved\"}\n")
+            .map_err(|error| format!("Could not approve torrent inventory: {error}"))
+    }
+
     fn stats(&self, id: usize) -> Option<EngineTorrentStats> {
         self.lock().ok()?.get(&id).map(|entry| entry.stats.clone())
     }
@@ -885,6 +998,23 @@ impl TorrentEngine for LibtorrentEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn metadata_inventory_is_preserved_by_status_parser() {
+        let stats = parse_progress_line(
+            r#"{"progress":0,"state":"checking","inventory":["game/payload.bin",".hash.fastresume"]}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            stats.inventory.unwrap(),
+            vec!["game/payload.bin", ".hash.fastresume"]
+        );
+        assert!(!stats.finished);
+        assert!(parse_progress_line(r#"{"progress":0}"#)
+            .unwrap()
+            .inventory
+            .is_none());
+    }
 
     #[test]
     fn destination_identity_survives_directory_creation() {

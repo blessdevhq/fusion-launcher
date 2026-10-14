@@ -24,6 +24,8 @@ pub struct EngineTorrentStats {
     pub peers_count: usize,
     pub finished: bool,
     pub error: Option<String>,
+    /// Metadata-declared relative files, published before payload writes begin.
+    pub inventory: Option<Vec<String>>,
 }
 
 /// Raw torrent operations the manager drives. Torrents are addressed by an
@@ -37,6 +39,8 @@ pub trait TorrentEngine: Send + Sync {
     /// Add a magnet and begin downloading into `save_dir`, returning the engine's
     /// id for the new torrent.
     async fn add_magnet(&self, magnet_uri: String, save_dir: String) -> Result<usize, String>;
+    /// Permit payload writes only after the manager has reserved these exact files.
+    async fn approve_inventory(&self, id: usize) -> Result<(), String>;
     /// Pause the torrent. A no-op if the engine no longer tracks `id`.
     async fn pause(&self, id: usize) -> Result<(), String>;
     /// Resume a paused torrent. A no-op if the engine no longer tracks `id`.

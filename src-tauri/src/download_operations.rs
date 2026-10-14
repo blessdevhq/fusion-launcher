@@ -177,6 +177,17 @@ impl OperationLease {
     pub fn attempt(&self) -> &str {
         &self.0.attempt
     }
+    pub(crate) fn protect_torrent_writes(
+        &self,
+    ) -> Result<crate::install_ownership::WriteProtection, String> {
+        let installation = self
+            .0
+            .installation
+            .lock()
+            .map_err(|_| "Installation lease poisoned.")?;
+        let record = installation.as_ref().ok_or("Torrent ownership missing.")?;
+        crate::install_ownership::protect_torrent_writes(record)
+    }
     pub fn token(&self) -> Self {
         self.clone()
     }

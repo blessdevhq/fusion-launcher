@@ -83,6 +83,28 @@ pub(crate) fn lock_plain_directory(path: &Path) -> Result<DirectoryProtection, S
     }
 }
 
+fn create_owned_directory(path: &Path) -> std::io::Result<(FileIdentity, DirectoryProtection)> {
+    #[cfg(windows)]
+    {
+        let file = windows_identity::create_directory(path)?;
+        let identity = windows_identity::handle_identity(&file).map_err(std::io::Error::other)?;
+        Ok((
+            identity,
+            DirectoryProtection {
+                _guards: vec![file],
+            },
+        ))
+    }
+    #[cfg(not(windows))]
+    {
+        fs::create_dir(path)?;
+        Ok((
+            identity(path).map_err(std::io::Error::other)?,
+            DirectoryProtection {},
+        ))
+    }
+}
+
 /// Opens the exact publication source and keeps it immutable until publication.
 /// Callers that reopen a previously verified file must verify its bytes again
 /// through this descriptor before publishing it.
@@ -143,6 +165,23 @@ pub(crate) fn protect_writes(record: &InstallationOwnership) -> Result<WriteProt
         #[cfg(windows)]
         _guards: guards,
     })
+}
+
+pub(crate) fn protect_torrent_writes(
+    record: &InstallationOwnership,
+) -> Result<WriteProtection, String> {
+    let mut protection = protect_writes(record)?;
+    #[cfg(windows)]
+    {
+        let mut directories = record.directories.iter().collect::<Vec<_>>();
+        directories.sort_by_key(|entry| entry.relative.components().count());
+        for entry in directories.into_iter().chain(record.files.iter()) {
+            protection
+                ._guards
+                .push(windows_identity::lock_entry(record, entry)?);
+        }
+    }
+    Ok(protection)
 }
 
 impl WriteProtection {
@@ -209,6 +248,7 @@ pub(crate) fn allocate_directory(
     if !parent.is_dir() {
         return Err("Installation parent must be an existing directory.".into());
     }
+    let _parent_guard = lock_plain_directory(parent)?;
     let parent = parent.canonicalize().map_err(|error| error.to_string())?;
     let mut hash = DefaultHasher::new();
     (subject, attempt).hash(&mut hash);
@@ -217,14 +257,14 @@ pub(crate) fn allocate_directory(
         .duration_since(UNIX_EPOCH)
         .map_err(|error| error.to_string())?
         .as_nanos();
-    let root = loop {
+    let (root, root_identity, _root_guard) = loop {
         let sequence = NEXT_DIRECTORY.fetch_add(1, Ordering::Relaxed);
         let candidate = parent.join(format!(
             "fusion-install-{:016x}-{stamp:x}-{sequence:x}",
             hash.finish()
         ));
-        match fs::create_dir(&candidate) {
-            Ok(()) => break candidate,
+        match create_owned_directory(&candidate) {
+            Ok((identity, guard)) => break (candidate, identity, guard),
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
             Err(error) => {
                 return Err(format!(
@@ -238,7 +278,7 @@ pub(crate) fn allocate_directory(
     Ok(InstallationOwnership {
         subject: subject.into(),
         attempt: attempt.into(),
-        root_identity: identity(&root)?,
+        root_identity,
         root,
         files: Vec::new(),
         directories: Vec::new(),
@@ -343,6 +383,111 @@ fn verify_single_link(file: &fs::File) -> Result<(), String> {
             Ok(())
         }
     }
+}
+
+/// Reserves producer-declared paths before allowing the producer to write.
+/// Existing unknown entries are never adopted. Partial progress stays in the
+/// manifest so the caller can persist cleanup authority even on an error.
+pub(crate) fn reserve_producer_files(
+    record: &mut InstallationOwnership,
+    paths: &[String],
+) -> Result<(), String> {
+    let _root_guard = protect_writes(record)?;
+    record.snapshot_taken = true;
+    if paths.len() > 100_000 {
+        return Err("Torrent inventory exceeds 100000 files.".into());
+    }
+    for raw in paths {
+        let relative = PathBuf::from(raw);
+        validate_relative(&relative)?;
+        for component in relative.components() {
+            let Component::Normal(name) = component else {
+                return Err("Unsafe torrent path.".into());
+            };
+            let name = name.to_string_lossy();
+            let base = name.split('.').next().unwrap_or("").to_ascii_uppercase();
+            if name.contains(':')
+                || name.ends_with(['.', ' '])
+                || name.chars().any(|c| c.is_control())
+                || matches!(base.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+                || (base.len() == 4
+                    && (base.starts_with("COM") || base.starts_with("LPT"))
+                    && base.as_bytes()[3].is_ascii_digit())
+            {
+                return Err("Torrent inventory contains an unsafe Windows filename.".into());
+            }
+        }
+        let mut parent = record.root.clone();
+        let mut guards = Vec::new();
+        if let Some(relative_parent) = relative.parent() {
+            for component in relative_parent.components() {
+                parent.push(component);
+                let dir_relative = parent
+                    .strip_prefix(&record.root)
+                    .map_err(|e| e.to_string())?
+                    .to_path_buf();
+                match create_owned_directory(&parent) {
+                    Ok((identity, guard)) => {
+                        let entry = OwnedEntry {
+                            relative: dir_relative.clone(),
+                            identity,
+                        };
+                        record
+                            .directories
+                            .retain(|old| old.relative != dir_relative);
+                        record.directories.push(entry);
+                        guards.push(guard);
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                        let expected=record.directories.iter().find(|old|old.relative==dir_relative).ok_or("Torrent output directory already exists without ownership; files preserved.")?;
+                        if identity(&parent)? != expected.identity {
+                            return Err(
+                                "Torrent output directory was replaced; files preserved.".into()
+                            );
+                        }
+                    }
+                    Err(error) => return Err(error.to_string()),
+                }
+                guards.push(lock_plain_directory(&parent)?);
+            }
+        }
+        let path = record.root.join(&relative);
+        let mut options = fs::OpenOptions::new();
+        options.read(true).write(true).create_new(true);
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::OpenOptionsExt;
+            options.share_mode(1).custom_flags(0x00200000);
+        }
+        match options.open(&path) {
+            Ok(file) => {
+                #[cfg(windows)]
+                let actual = windows_identity::handle_identity(&file)?;
+                #[cfg(not(windows))]
+                let actual = identity(&path)?;
+                record.files.retain(|old| old.relative != relative);
+                record.files.push(OwnedEntry {
+                    relative,
+                    identity: actual,
+                });
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                validate_plain_path(&path)?;
+                let expected=record.files.iter().find(|old|old.relative==relative).ok_or("Torrent output file already exists without ownership; existing file preserved.")?;
+                let file = fs::File::open(&path).map_err(|e| e.to_string())?;
+                #[cfg(windows)]
+                let actual = windows_identity::handle_identity(&file)?;
+                #[cfg(not(windows))]
+                let actual = identity(&path)?;
+                if actual != expected.identity {
+                    return Err("Torrent output file was replaced; existing file preserved.".into());
+                }
+                verify_single_link(&file)?;
+            }
+            Err(error) => return Err(error.to_string()),
+        }
+    }
+    Ok(())
 }
 
 /// Transfers a trusted installation record to a retry only after the caller has
@@ -511,6 +656,7 @@ fn remove_exact(
 #[cfg(windows)]
 mod windows_identity {
     use super::*;
+
     use std::os::windows::fs::OpenOptionsExt;
     use std::os::windows::io::AsRawHandle;
 
@@ -520,6 +666,101 @@ mod windows_identity {
     const FILE_READ_DATA_OR_LIST_DIRECTORY: u32 = 0x1;
     const DELETE: u32 = 0x10000;
     const SHARE_READ_WRITE: u32 = 0x1 | 0x2;
+
+    #[repr(C)]
+    struct UnicodeString {
+        length: u16,
+        maximum_length: u16,
+        buffer: *mut u16,
+    }
+    #[repr(C)]
+    struct ObjectAttributes {
+        length: u32,
+        root_directory: *mut std::ffi::c_void,
+        object_name: *mut UnicodeString,
+        attributes: u32,
+        security_descriptor: *mut std::ffi::c_void,
+        security_quality_of_service: *mut std::ffi::c_void,
+    }
+    #[repr(C)]
+    #[derive(Default)]
+    struct IoStatusBlock {
+        status_or_pointer: usize,
+        information: usize,
+    }
+    #[link(name = "ntdll")]
+    extern "system" {
+        fn NtCreateFile(
+            handle: *mut *mut std::ffi::c_void,
+            desired_access: u32,
+            attributes: *mut ObjectAttributes,
+            io_status: *mut IoStatusBlock,
+            allocation_size: *const i64,
+            file_attributes: u32,
+            share_access: u32,
+            create_disposition: u32,
+            create_options: u32,
+            ea_buffer: *const std::ffi::c_void,
+            ea_length: u32,
+        ) -> i32;
+        fn RtlNtStatusToDosError(status: i32) -> u32;
+    }
+
+    /// FILE_CREATE returns the newly created directory's handle atomically.
+    /// Denying DELETE sharing closes the create-directory / reopen identity race.
+    pub(super) fn create_directory(path: &Path) -> std::io::Result<fs::File> {
+        use std::os::windows::ffi::OsStrExt;
+        use std::os::windows::io::FromRawHandle;
+        let parent = path
+            .parent()
+            .ok_or_else(|| std::io::Error::other("Missing parent"))?;
+        let parent = open(parent, false).map_err(std::io::Error::other)?;
+        let mut name = path
+            .file_name()
+            .ok_or_else(|| std::io::Error::other("Missing name"))?
+            .encode_wide()
+            .collect::<Vec<_>>();
+        let length = u16::try_from(name.len() * 2).map_err(std::io::Error::other)?;
+        let mut unicode = UnicodeString {
+            length,
+            maximum_length: length,
+            buffer: name.as_mut_ptr(),
+        };
+        let mut attributes = ObjectAttributes {
+            length: std::mem::size_of::<ObjectAttributes>() as u32,
+            root_directory: parent.as_raw_handle(),
+            object_name: &mut unicode,
+            attributes: 0x40, // OBJ_CASE_INSENSITIVE; no handle inheritance.
+            security_descriptor: std::ptr::null_mut(),
+            security_quality_of_service: std::ptr::null_mut(),
+        };
+        let mut handle = std::ptr::null_mut();
+        let mut io_status = IoStatusBlock::default();
+        // SAFETY: all structures and UTF-16 name remain live for this synchronous
+        // call; RootDirectory is a validated directory with denied DELETE share.
+        let status = unsafe {
+            NtCreateFile(
+                &mut handle,
+                FILE_READ_ATTRIBUTES | FILE_READ_DATA_OR_LIST_DIRECTORY | 0x100000,
+                &mut attributes,
+                &mut io_status,
+                std::ptr::null(),
+                0x10,
+                SHARE_READ_WRITE,
+                2,                               // FILE_CREATE, never open/adopt an existing entry.
+                0x1 | 0x20 | OPEN_REPARSE_POINT, // DIRECTORY | SYNCHRONOUS_IO_NONALERT
+                std::ptr::null(),
+                0,
+            )
+        };
+        if status < 0 {
+            return Err(std::io::Error::from_raw_os_error(
+                unsafe { RtlNtStatusToDosError(status) } as i32,
+            ));
+        }
+        // SAFETY: successful NtCreateFile transferred a unique owned handle.
+        Ok(unsafe { fs::File::from_raw_handle(handle) })
+    }
 
     #[repr(C)]
     #[derive(Default)]
@@ -615,6 +856,22 @@ mod windows_identity {
             guards.push(handle);
         }
         Ok(guards)
+    }
+
+    pub(super) fn lock_entry(
+        record: &InstallationOwnership,
+        entry: &OwnedEntry,
+    ) -> Result<fs::File, String> {
+        validate_relative(&entry.relative)?;
+        let path = record.root.join(&entry.relative);
+        let file = open(&path, false)?;
+        if handle_identity(&file)? != entry.identity {
+            return Err("Torrent inventory entry was replaced; files preserved.".into());
+        }
+        if file.metadata().map_err(|e| e.to_string())?.is_file() {
+            verify_single_link(&file)?;
+        }
+        Ok(file)
     }
 
     pub(super) fn publish_rename_no_replace(
@@ -792,6 +1049,63 @@ fn identity(path: &Path) -> Result<FileIdentity, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn exclusive_directory_creation_returns_a_locked_identity_without_reopen() {
+        let parent = tempfile::tempdir_in(std::env::current_dir().unwrap()).unwrap();
+        let path = parent.path().join("exclusive");
+        let (created, guard) = create_owned_directory(&path).unwrap();
+        assert_eq!(created, identity(&path).unwrap());
+        assert!(fs::rename(&path, parent.path().join("substitute")).is_err());
+        assert_eq!(
+            create_owned_directory(&path).err().unwrap().kind(),
+            std::io::ErrorKind::AlreadyExists
+        );
+        drop(guard);
+        fs::rename(&path, parent.path().join("substitute")).unwrap();
+    }
+
+    #[test]
+    fn producer_inventory_can_extend_a_sealed_manifest_without_adopting_collisions() {
+        let parent = tempfile::tempdir_in(std::env::current_dir().unwrap()).unwrap();
+        let mut record = allocate_directory(parent.path(), "torrent", "attempt").unwrap();
+        snapshot_files(&mut record).unwrap();
+        reserve_producer_files(&mut record, &["payload/first.bin".into()]).unwrap();
+        fs::write(record.root().join("payload/first.bin"), b"partial").unwrap();
+        reserve_producer_files(&mut record, &["payload/second.bin".into()]).unwrap();
+        fs::write(record.root().join("sentinel"), b"foreign").unwrap();
+        assert!(reserve_producer_files(&mut record, &["sentinel".into()]).is_err());
+        assert!(reserve_producer_files(&mut record, &["../escape".into()]).is_err());
+        assert!(reserve_producer_files(&mut record, &["payload/NUL.bin".into()]).is_err());
+        assert!(cleanup_files(&record).has_preserved_files());
+        assert_eq!(
+            fs::read(record.root().join("sentinel")).unwrap(),
+            b"foreign"
+        );
+        assert!(!record.root().join("payload").exists());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn torrent_guards_lock_nested_names_allow_writes_and_release_all_ancestors() {
+        let parent = tempfile::tempdir_in(std::env::current_dir().unwrap()).unwrap();
+        let library = parent.path().join("library");
+        fs::create_dir(&library).unwrap();
+        let mut record = allocate_directory(&library, "torrent", "attempt").unwrap();
+        reserve_producer_files(&mut record, &["nested/game.bin".into()]).unwrap();
+        let guard = protect_torrent_writes(&record).unwrap();
+        let payload = record.root().join("nested/game.bin");
+        fs::write(&payload, b"downloaded").unwrap();
+        assert!(fs::rename(&payload, record.root().join("replacement.bin")).is_err());
+        assert!(fs::remove_file(&payload).is_err());
+        assert!(fs::rename(record.root().join("nested"), record.root().join("moved")).is_err());
+        assert!(fs::rename(&library, parent.path().join("renamed")).is_err());
+        drop(guard);
+        assert!(!cleanup_files(&record).has_preserved_files());
+        fs::rename(&library, parent.path().join("renamed")).unwrap();
+        fs::remove_dir(parent.path().join("renamed")).unwrap();
+    }
 
     #[test]
     fn sealed_snapshot_never_adopts_later_unknown_additions() {

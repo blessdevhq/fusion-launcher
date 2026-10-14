@@ -209,6 +209,46 @@ pub(crate) async fn cleanup(record: InstallationOwnership) -> Result<Vec<String>
     .map_err(|e| e.to_string())
 }
 
+pub(crate) async fn approve_torrent_files(
+    store: Arc<Mutex<RepositoryStore>>,
+    id: String,
+    lease: OperationLease,
+    paths: Vec<String>,
+) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || {
+        if lease.is_cancelled() {
+            return Err(crate::downloads::DOWNLOAD_CANCELLED_MESSAGE.into());
+        }
+        let mut record = {
+            let guard = store.lock().map_err(|_| "Repository lock poisoned.")?;
+            read(&guard, &id)?
+        }
+        .ok_or(concat!(
+            "Legacy installation has no trusted ownership inventory; ",
+            "start a new download into a dedicated Fusion installation before resuming."
+        ))?;
+        if record.subject() != id || record.attempt() != lease.attempt() {
+            return Err("download_superseded".into());
+        }
+        let reserved = install_ownership::reserve_producer_files(&mut record, &paths);
+        let guard = store.lock().map_err(|_| "Repository lock poisoned.")?;
+        if guard
+            .download_attempt(&id)?
+            .is_none_or(|a| a.attempt != lease.attempt())
+        {
+            return Err("download_superseded".into());
+        }
+        guard.set_config(
+            &key(&id),
+            &serde_json::to_string(&record).map_err(|e| e.to_string())?,
+        )?;
+        lease.set_installation(&record)?;
+        reserved
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 pub(crate) fn renew_restored(
     store: &RepositoryStore,
     id: &str,

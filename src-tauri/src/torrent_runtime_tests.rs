@@ -9,6 +9,7 @@ struct FakeTorrent {
     path: String,
     stopped: bool,
     stats: EngineTorrentStats,
+    approved: bool,
 }
 
 struct FakeEngine {
@@ -21,6 +22,9 @@ struct FakeEngine {
     add_gate: watch::Sender<bool>,
     stop_fails: AtomicBool,
     add_fails: AtomicBool,
+    add_panics: AtomicBool,
+    late_inventory: AtomicBool,
+    hide_metadata: AtomicBool,
 }
 
 impl FakeEngine {
@@ -36,11 +40,22 @@ impl FakeEngine {
             add_gate,
             stop_fails: AtomicBool::new(false),
             add_fails: AtomicBool::new(false),
+            add_panics: AtomicBool::new(false),
+            late_inventory: AtomicBool::new(false),
+            hide_metadata: AtomicBool::new(false),
         }
     }
 
     fn add_count(&self) -> usize {
         self.adds.lock().unwrap().len()
+    }
+
+    fn approved(&self, id: usize) -> bool {
+        self.entries
+            .lock()
+            .unwrap()
+            .get(&id)
+            .is_some_and(|entry| entry.approved)
     }
 
     fn set_finished(&self, id: usize) {
@@ -70,6 +85,7 @@ impl FakeEngine {
                 path: path.to_string_lossy().into_owned(),
                 stopped: false,
                 stats: EngineTorrentStats::default(),
+                approved: false,
             },
         );
     }
@@ -80,12 +96,20 @@ impl TorrentEngine for FakeEngine {
     async fn add_magnet(&self, _: String, path: String) -> Result<usize, String> {
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
         std::fs::create_dir_all(&path).map_err(|error| error.to_string())?;
-        std::fs::write(Path::new(&path).join("payload.bin"), b"payload sentinel").unwrap();
-        std::fs::write(
-            Path::new(&path).join("resume.fastresume"),
-            b"resume sentinel",
-        )
-        .unwrap();
+        // Fault injection models an old/misbehaving writer that creates files
+        // before returning its handle. Those files must remain unowned.
+        if *self.add_gate.borrow() || self.add_fails.load(Ordering::SeqCst) {
+            std::fs::write(Path::new(&path).join("payload.bin"), b"payload sentinel").unwrap();
+            std::fs::write(
+                Path::new(&path).join("resume.fastresume"),
+                b"resume sentinel",
+            )
+            .unwrap();
+        }
+        let mut inventory = vec!["payload.bin".into(), "resume.fastresume".into()];
+        if self.late_inventory.load(Ordering::SeqCst) {
+            inventory.push("new-after-resume.bin".into());
+        }
         self.entries.lock().unwrap().insert(
             id,
             FakeTorrent {
@@ -93,8 +117,10 @@ impl TorrentEngine for FakeEngine {
                 stopped: false,
                 stats: EngineTorrentStats {
                     total_bytes: 16,
+                    inventory: (!self.hide_metadata.load(Ordering::SeqCst)).then_some(inventory),
                     ..EngineTorrentStats::default()
                 },
+                approved: false,
             },
         );
         self.adds.lock().unwrap().push((id, path));
@@ -102,10 +128,37 @@ impl TorrentEngine for FakeEngine {
         gate.wait_for(|blocked| !*blocked)
             .await
             .map_err(|error| error.to_string())?;
+        assert!(
+            !self.add_panics.load(Ordering::SeqCst),
+            "injected worker panic"
+        );
         if self.add_fails.load(Ordering::SeqCst) {
             return Err("injected add failure after writer creation".into());
         }
         Ok(id)
+    }
+
+    async fn approve_inventory(&self, id: usize) -> Result<(), String> {
+        let mut entries = self.entries.lock().unwrap();
+        let entry = entries.get_mut(&id).ok_or("missing fake runtime")?;
+        if entry.stopped {
+            return Err("fake runtime stopped".into());
+        }
+        let root = Path::new(&entry.path);
+        for relative in entry.stats.inventory.as_ref().unwrap() {
+            assert!(
+                root.join(relative).is_file(),
+                "Parent must reserve before acknowledgement"
+            );
+            let bytes: &[u8] = match relative.as_str() {
+                "payload.bin" => b"payload sentinel",
+                "resume.fastresume" => b"resume sentinel",
+                _ => b"late payload",
+            };
+            std::fs::write(root.join(relative), bytes).unwrap();
+        }
+        entry.approved = true;
+        Ok(())
     }
 
     async fn stop(&self, id: usize) -> Result<(), String> {
@@ -473,6 +526,7 @@ async fn removing_paused_torrent_does_not_adopt_files_added_after_pause() {
             .is_some_and(|r| r.status == "downloading")
     })
     .await;
+    eventually(|| fixture.engine.approved(1)).await;
     fixture.manager.pause_download("one".into()).await.unwrap();
     let sentinel = Path::new(&started.save_dir).join("unrelated.txt");
     std::fs::write(&sentinel, b"keep me").unwrap();
@@ -503,11 +557,18 @@ async fn resumed_completion_keeps_unknown_files_out_of_cleanup_authority() {
             .is_some_and(|r| r.status == "downloading")
     })
     .await;
+    eventually(|| fixture.engine.approved(1)).await;
     fixture.manager.pause_download("one".into()).await.unwrap();
     let sentinel = Path::new(&started.save_dir).join("personal-save.txt");
     std::fs::write(&sentinel, b"preserve after resume").unwrap();
+    fixture.engine.late_inventory.store(true, Ordering::SeqCst);
     fixture.manager.resume_download("one".into()).await.unwrap();
     eventually(|| fixture.engine.add_count() == 2).await;
+    eventually(|| fixture.engine.approved(2)).await;
+    assert_eq!(
+        std::fs::read(Path::new(&started.save_dir).join("new-after-resume.bin")).unwrap(),
+        b"late payload"
+    );
     fixture.engine.set_finished(2);
     eventually(|| {
         fixture
@@ -531,4 +592,299 @@ async fn resumed_completion_keeps_unknown_files_out_of_cleanup_authority() {
     assert!(!preserved.is_empty());
     assert_eq!(std::fs::read(sentinel).unwrap(), b"preserve after resume");
     assert!(!Path::new(&started.save_dir).join("payload.bin").exists());
+    assert!(!Path::new(&started.save_dir)
+        .join("new-after-resume.bin")
+        .exists());
+}
+
+#[tokio::test]
+async fn conventional_torrent_removal_leaves_no_owned_directory() {
+    let fixture = Fixture::new().await;
+    let started = fixture.start("one").await;
+    eventually(|| fixture.engine.approved(1)).await;
+    let ticket = fixture.operations.begin_delete("one").unwrap();
+    fixture.manager.stop_download("one").await.unwrap();
+    ticket.wait_owner(Duration::from_secs(2)).await.unwrap();
+    let owned = {
+        let store = fixture.manager.store.lock().unwrap();
+        crate::download_installation::read(&store, "one")
+            .unwrap()
+            .unwrap()
+    };
+    assert!(crate::download_installation::cleanup(owned)
+        .await
+        .unwrap()
+        .is_empty());
+    assert!(!Path::new(&started.save_dir).exists());
+}
+
+#[tokio::test]
+async fn metadata_received_only_after_resume_extends_previously_sealed_empty_inventory() {
+    let fixture = Fixture::new().await;
+    fixture.engine.hide_metadata.store(true, Ordering::SeqCst);
+    let started = fixture.start("one").await;
+    eventually(|| {
+        fixture
+            .manager
+            .get_game_download("one")
+            .unwrap()
+            .is_some_and(|r| r.status == "downloading")
+    })
+    .await;
+    assert!(!fixture.engine.approved(1));
+    fixture.manager.pause_download("one".into()).await.unwrap();
+    assert!(!Path::new(&started.save_dir).join("payload.bin").exists());
+    fixture.engine.hide_metadata.store(false, Ordering::SeqCst);
+    fixture.manager.resume_download("one".into()).await.unwrap();
+    eventually(|| fixture.engine.approved(2)).await;
+    let ticket = fixture.operations.begin_delete("one").unwrap();
+    fixture.manager.stop_download("one").await.unwrap();
+    ticket.wait_owner(Duration::from_secs(2)).await.unwrap();
+    let owned = {
+        let store = fixture.manager.store.lock().unwrap();
+        crate::download_installation::read(&store, "one")
+            .unwrap()
+            .unwrap()
+    };
+    assert!(crate::download_installation::cleanup(owned)
+        .await
+        .unwrap()
+        .is_empty());
+    assert!(!Path::new(&started.save_dir).exists());
+}
+
+#[tokio::test]
+async fn resumed_metadata_cannot_adopt_an_existing_unowned_payload_path() {
+    let fixture = Fixture::new().await;
+    let started = fixture.start("one").await;
+    eventually(|| fixture.engine.approved(1)).await;
+    fixture.manager.pause_download("one".into()).await.unwrap();
+    let collision = Path::new(&started.save_dir).join("new-after-resume.bin");
+    std::fs::write(&collision, b"personal file matches later metadata path").unwrap();
+    fixture.engine.late_inventory.store(true, Ordering::SeqCst);
+    fixture.manager.resume_download("one".into()).await.unwrap();
+    eventually(|| {
+        fixture
+            .manager
+            .get_game_download("one")
+            .unwrap()
+            .is_some_and(|record| record.status == "error")
+    })
+    .await;
+    assert!(!fixture.engine.approved(2));
+    assert!(!fixture.engine.live(2));
+    let ticket = fixture.operations.begin_delete("one").unwrap();
+    fixture.manager.stop_download("one").await.unwrap();
+    ticket.wait_owner(Duration::from_secs(2)).await.unwrap();
+    let owned = {
+        let store = fixture.manager.store.lock().unwrap();
+        crate::download_installation::read(&store, "one")
+            .unwrap()
+            .unwrap()
+    };
+    assert!(!crate::download_installation::cleanup(owned)
+        .await
+        .unwrap()
+        .is_empty());
+    assert_eq!(
+        std::fs::read(collision).unwrap(),
+        b"personal file matches later metadata path"
+    );
+    assert!(!Path::new(&started.save_dir).join("payload.bin").exists());
+}
+
+#[cfg(windows)]
+fn assert_library_handles_released(fixture: &Fixture, root: &str) {
+    let renamed = fixture._temp.path().join("renamed-library");
+    std::fs::rename(&fixture.parent, &renamed)
+        .expect("Confirmed terminal operation must release ancestor rename guards");
+    std::fs::rename(&renamed, &fixture.parent).unwrap();
+    let detached = fixture._temp.path().join("detached-installation");
+    std::fs::rename(root, &detached).expect("Installation guards must also be released");
+    std::fs::remove_dir(&fixture.parent)
+        .expect("Empty library must be removable after confirmed shutdown");
+    std::fs::create_dir(&fixture.parent).unwrap();
+    std::fs::rename(&detached, root).unwrap();
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn terminal_torrent_paths_release_library_handles() {
+    for terminal in ["pause", "cancel", "complete", "error"] {
+        let fixture = Fixture::new().await;
+        fixture
+            .engine
+            .add_fails
+            .store(terminal == "error", Ordering::SeqCst);
+        let started = fixture.start("one").await;
+        if terminal == "error" {
+            eventually(|| {
+                fixture
+                    .manager
+                    .tasks
+                    .lock()
+                    .unwrap()
+                    .get("one")
+                    .is_some_and(|task| task.inner().is_finished())
+            })
+            .await;
+        } else {
+            eventually(|| fixture.engine.approved(1)).await;
+            match terminal {
+                "pause" => {
+                    fixture.manager.pause_download("one".into()).await.unwrap();
+                }
+                "cancel" => {
+                    fixture.manager.cancel_download("one".into()).await.unwrap();
+                }
+                "complete" => {
+                    fixture.engine.set_finished(1);
+                    eventually(|| {
+                        fixture
+                            .manager
+                            .tasks
+                            .lock()
+                            .unwrap()
+                            .get("one")
+                            .is_some_and(|task| task.inner().is_finished())
+                    })
+                    .await;
+                }
+                _ => unreachable!(),
+            }
+        }
+        assert!(!fixture.engine.live(1), "{terminal} must confirm shutdown");
+        assert_library_handles_released(&fixture, &started.save_dir);
+    }
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn confirmed_stop_after_worker_panic_releases_library_handles() {
+    let fixture = Fixture::new().await;
+    fixture.engine.add_panics.store(true, Ordering::SeqCst);
+    let started = fixture.start("one").await;
+    eventually(|| {
+        fixture
+            .manager
+            .tasks
+            .lock()
+            .unwrap()
+            .get("one")
+            .is_some_and(|task| task.inner().is_finished())
+    })
+    .await;
+    // A panic may be returned as an error, but cannot keep OS handles alive
+    // once the engine has independently confirmed all writers are stopped.
+    let _ = fixture.manager.stop_download("one").await;
+    assert!(!fixture.engine.live(1));
+    assert_library_handles_released(&fixture, &started.save_dir);
+}
+
+/// Run through sidecar/test_native_inventory.py with its generated loopback
+/// seeder and FUSION_NATIVE_MANAGER_TEST_BINARY pointing at this test binary.
+#[cfg(windows)]
+#[tokio::test]
+#[ignore = "requires explicit native packaged sidecar and generated loopback seeder"]
+async fn native_packaged_sidecar_manager_pause_resume_and_remove() {
+    let executable = PathBuf::from(std::env::var("FUSION_NATIVE_SIDECAR_EXE").unwrap());
+    let magnet = std::env::var("FUSION_NATIVE_MAGNET").unwrap();
+    let temporary = tempfile::Builder::new()
+        .prefix("native-manager-")
+        .tempdir_in(Path::new(env!("CARGO_MANIFEST_DIR")).join("target"))
+        .unwrap();
+    let parent = temporary.path().join("library");
+    std::fs::create_dir(&parent).unwrap();
+    let store = Arc::new(StoreMutex::new(
+        RepositoryStore::open(&temporary.path().join("test.sqlite")).unwrap(),
+    ));
+    let engine =
+        Arc::new(crate::libtorrent_engine::LibtorrentEngine::with_test_executable(executable));
+    let operations = OperationCoordinator::new();
+    let manager = TorrentManager::build(
+        engine.clone(),
+        temporary.path().into(),
+        store.clone(),
+        Arc::new(TestEvents::default()),
+        operations.clone(),
+    )
+    .await
+    .unwrap();
+    let started = manager
+        .start_magnet_download(
+            "native".into(),
+            magnet,
+            parent.to_string_lossy().into_owned(),
+        )
+        .await
+        .unwrap();
+    async fn wait_bytes(
+        manager: &TorrentManager,
+        engine: &crate::libtorrent_engine::LibtorrentEngine,
+        threshold: u64,
+    ) -> u64 {
+        tokio::time::timeout(Duration::from_secs(90), async {
+            let mut last_log = std::time::Instant::now() - Duration::from_secs(10);
+            loop {
+                let record = manager.get_game_download("native").unwrap().unwrap();
+                if last_log.elapsed() >= Duration::from_secs(5) {
+                    println!("Native threshold={threshold} status={} run={:?} bytes={} engine1={:?} engine2={:?}",
+                        record.status, record.run_id, record.downloaded_bytes,
+                        engine.stats(1), engine.stats(2));
+                    println!("Native stderr1={:?} stderr2={:?}", engine.test_stderr(1), engine.test_stderr(2));
+                    last_log = std::time::Instant::now();
+                }
+                assert!(record.error_message.is_none(), "{:?}", record.error_message);
+                if record.downloaded_bytes >= threshold {
+                    break record.downloaded_bytes;
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        })
+        .await
+        .expect("Native sidecar failed to make expected progress")
+    }
+    let paused_bytes = wait_bytes(&manager, engine.as_ref(), 100 * 1024 * 1024).await;
+    manager.pause_download("native".into()).await.unwrap();
+    let persisted_bytes = engine.stats(1).unwrap().downloaded_bytes;
+    assert_eq!(
+        manager.get_game_download("native").unwrap().unwrap().status,
+        "paused"
+    );
+    let renamed = temporary.path().join("library-after-pause");
+    std::fs::rename(&parent, &renamed).expect("Paused real sidecar must release library handles");
+    std::fs::rename(&renamed, &parent).unwrap();
+    let root = Path::new(&started.save_dir);
+    let resume = std::fs::read_dir(root)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "fastresume")
+        })
+        .unwrap();
+    assert!(!std::fs::read(&resume).unwrap().is_empty());
+    let resumed_at = std::time::Instant::now();
+    manager.resume_download("native".into()).await.unwrap();
+    let resumed_bytes =
+        wait_bytes(&manager, engine.as_ref(), persisted_bytes + 8 * 1024 * 1024).await;
+    println!("Native manager paused_bytes={paused_bytes} persisted_bytes={persisted_bytes} resumed_bytes={resumed_bytes} resume_seconds={:.3}",
+        resumed_at.elapsed().as_secs_f64());
+    let ticket = operations.begin_delete("native").unwrap();
+    manager.stop_download("native").await.unwrap();
+    ticket.wait_owner(Duration::from_secs(10)).await.unwrap();
+    let owned = crate::download_installation::read(&store.lock().unwrap(), "native")
+        .unwrap()
+        .unwrap();
+    let preserved = crate::download_installation::cleanup(owned).await.unwrap();
+    assert!(
+        preserved.is_empty(),
+        "Native sidecar left unknown payload: {preserved:?}"
+    );
+    assert!(
+        !root.exists(),
+        "Confirmed native removal must remove the installation completely"
+    );
+    std::fs::remove_dir(&parent).expect("Stopped real sidecar must release all library handles");
+    println!("Native manager confirmed tree shutdown; owned installation and library removed");
 }

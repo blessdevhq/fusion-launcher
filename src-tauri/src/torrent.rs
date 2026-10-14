@@ -27,6 +27,7 @@ pub struct TorrentManager {
     events: Arc<dyn DownloadEventSink>,
     operations: OperationCoordinator,
     owners: Arc<StoreMutex<HashMap<String, OperationLease>>>,
+    writer_guards: Arc<StoreMutex<HashMap<String, crate::install_ownership::WriteProtection>>>,
     tasks: Arc<StoreMutex<HashMap<String, tauri::async_runtime::JoinHandle<()>>>>,
     control: Arc<Mutex<()>>,
 }
@@ -416,6 +417,9 @@ mod tests {
 
     #[async_trait::async_trait]
     impl TorrentEngine for NoopEngine {
+        async fn approve_inventory(&self, _: usize) -> Result<(), String> {
+            Ok(())
+        }
         async fn stop(&self, _: usize) -> Result<(), String> {
             Ok(())
         }

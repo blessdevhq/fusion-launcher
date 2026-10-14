@@ -151,7 +151,8 @@ pub(crate) async fn start_game_download_internal(
         }
     };
     let bytes = source_size_bytes(source).unwrap_or_else(|| file_size(&file.path));
-    let processed = post_process_game_archive_guarded(&game, &file.path, &file.sha256, lease.clone()).await;
+    let processed =
+        post_process_game_archive_guarded(&game, &file.path, &file.sha256, lease.clone()).await;
     // Capture only this fresh installation, while its lease still excludes cleanup.
     let snapshot = crate::download_installation::snapshot(
         Arc::clone(&state.store),
@@ -231,12 +232,12 @@ fn finish_game_worker_error(
 async fn post_process_game_archive_guarded(
     game: &CatalogGameView,
     path: &Path,
-    expected_sha256:&str,
+    expected_sha256: &str,
     lease: crate::download_operations::OperationLease,
 ) -> Result<PathBuf, String> {
     let game = game.clone();
     let path = path.to_path_buf();
-    let expected_sha256=expected_sha256.to_string();
+    let expected_sha256 = expected_sha256.to_string();
     tokio::task::spawn_blocking(move || {
         if lease.is_cancelled() {
             return Err(crate::downloads::DOWNLOAD_CANCELLED_MESSAGE.into());
@@ -254,8 +255,8 @@ async fn post_process_game_archive_guarded(
             return Ok(path);
         }
         let root = path.parent().ok_or("Archive has no parent.")?;
-        let _protection=lease.protect_writes()?;
-        let verified=open_verified_download(&path,&expected_sha256,&||lease.is_cancelled())?;
+        let _protection = lease.protect_writes()?;
+        let verified = open_verified_download(&path, &expected_sha256, &|| lease.is_cancelled())?;
         crate::archive::extract_archive_safely_guarded(&path, root, lease.clone())?;
         if lease.is_cancelled() {
             return Err(crate::downloads::DOWNLOAD_CANCELLED_MESSAGE.into());

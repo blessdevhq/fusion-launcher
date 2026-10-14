@@ -46,6 +46,7 @@ impl TorrentManager {
             events,
             operations,
             owners: Arc::new(StoreMutex::new(HashMap::new())),
+            writer_guards: Arc::new(StoreMutex::new(HashMap::new())),
             tasks: Arc::new(StoreMutex::new(HashMap::new())),
             control: Arc::new(Mutex::new(())),
         };
@@ -60,6 +61,20 @@ impl TorrentManager {
             .get(id)
             .cloned()
             .ok_or_else(|| format!("Torrent owner missing: {id}"))
+    }
+
+    fn release_writer_guard(&self, id: &str) {
+        if let Ok(mut guards) = self.writer_guards.lock() {
+            guards.remove(id);
+        }
+    }
+    fn retain_torrent_guard(&self, id: &str, owner: &OperationLease) -> Result<(), String> {
+        let guard = owner.protect_torrent_writes()?;
+        self.writer_guards
+            .lock()
+            .map_err(|_| "Torrent path guards poisoned.")?
+            .insert(id.into(), guard);
+        Ok(())
     }
 
     fn emit_attempt(&self, record: &TorrentDownloadRecord, identity: &DownloadAttempt) {
@@ -152,7 +167,10 @@ impl TorrentManager {
         if let Some(mut task) = task {
             match tokio::time::timeout(STOP_LIMIT, &mut task).await {
                 Ok(Ok(())) => {}
-                Ok(Err(e)) => return Err(format!("Torrent worker failed: {e}")),
+                // JoinError confirms that the future is gone, including on a
+                // panic. The caller must still confirm the sidecar tree below;
+                // returning early here would retain guards after a proven exit.
+                Ok(Err(e)) => eprintln!("Torrent worker exited abnormally for {id}: {e}"),
                 Err(_) => {
                     self.tasks
                         .lock()
@@ -210,6 +228,7 @@ impl TorrentManager {
             if runtime.identity.run > 0 {
                 self.engine.stop_for_path(&runtime.save_dir).await?;
             }
+            self.release_writer_guard(id);
             if capture {
                 if let Ok(owner) = self.owner(id) {
                     let owned = lock_store(&self.store)
@@ -307,6 +326,7 @@ impl TorrentManager {
         if runtime.identity.run > 0 {
             self.engine.stop_for_path(&runtime.save_dir).await?;
         }
+        self.release_writer_guard(&id);
         let owned =
             lock_store(&self.store).and_then(|s| crate::download_installation::read(&s, &id))?;
         if owned
@@ -553,6 +573,7 @@ impl TorrentManager {
             }
         }
         if stopped {
+            self.release_writer_guard(&runtime.game_id);
             self.schedule_queue();
         }
     }
@@ -561,6 +582,25 @@ impl TorrentManager {
         let identity = runtime.identity.clone();
         let id = &runtime.game_id;
         if owner.is_cancelled() {
+            return;
+        }
+        // Seal before metadata discovery; only exclusively reserved producer
+        // paths may subsequently extend the inventory. Never adopt a legacy root.
+        if let Err(error) = crate::download_installation::approve_torrent_files(
+            Arc::clone(&self.store),
+            id.clone(),
+            owner.clone(),
+            Vec::new(),
+        )
+        .await
+        {
+            self.finish_worker_error(&runtime, &owner, &error).await;
+            return;
+        }
+        // A resumed sidecar checks existing payload before publishing metadata.
+        // Protect every previously authorized name during that phase as well.
+        if let Err(error) = self.retain_torrent_guard(id, &owner) {
+            self.finish_worker_error(&runtime, &owner, &error).await;
             return;
         }
         let handle = match self
@@ -606,6 +646,7 @@ impl TorrentManager {
         }
         self.emit_attempt(&started, &identity);
         let mut interval = tokio::time::interval(POLL_INTERVAL);
+        let mut inventory_approved = false;
         loop {
             tokio::select! {_ = owner.cancelled()=>{let _=self.engine.stop(handle).await;return;},_ = interval.tick()=>{}}
             let active = self.records.lock().await.get(id).is_some_and(|r| {
@@ -622,6 +663,41 @@ impl TorrentManager {
             if let Some(error) = stats.error.as_deref() {
                 self.finish_worker_error(&runtime, &owner, error).await;
                 return;
+            }
+            if !inventory_approved {
+                let Some(paths) = stats.inventory.clone() else {
+                    continue;
+                };
+                let approved = crate::download_installation::approve_torrent_files(
+                    Arc::clone(&self.store),
+                    id.clone(),
+                    owner.clone(),
+                    paths,
+                )
+                .await;
+                if let Err(error) = approved {
+                    self.finish_worker_error(&runtime, &owner, &error).await;
+                    return;
+                }
+                if let Err(error) = self.retain_torrent_guard(id, &owner) {
+                    self.finish_worker_error(&runtime, &owner, &error).await;
+                    return;
+                }
+                // Cancellation between reservation and acknowledgement cannot
+                // permit a stopped or superseded worker to start payload writes.
+                if owner.is_cancelled()
+                    || !self.records.lock().await.get(id).is_some_and(|r| {
+                        r.identity == identity && r.state == TorrentRecordState::Downloading
+                    })
+                {
+                    let _ = self.engine.stop(handle).await;
+                    return;
+                }
+                if let Err(error) = self.engine.approve_inventory(handle).await {
+                    self.finish_worker_error(&runtime, &owner, &error).await;
+                    return;
+                }
+                inventory_approved = true;
             }
             if stats.finished || stats.progress >= 1.0 {
                 if let Err(error) = self.engine.stop(handle).await {
@@ -671,6 +747,7 @@ impl TorrentManager {
                         owners.remove(id);
                     }
                     let _ = self.engine.delete(handle, false).await;
+                    self.release_writer_guard(id);
                     self.schedule_queue();
                 } else if let Err(error) = completed {
                     self.finish_worker_error(&runtime, &owner, &error).await;

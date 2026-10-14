@@ -39,6 +39,86 @@ fn options() -> StreamOptions<'static> {
 }
 
 #[tokio::test]
+async fn http_releases_library_ancestor_handles_after_terminal_paths_and_panic() {
+    for terminal in ["success", "cancel", "error", "panic"] {
+        let temp = tempfile::tempdir().unwrap();
+        let library = temp.path().join("library");
+        std::fs::create_dir(&library).unwrap();
+        let registry = DirectDownloadRegistry::new();
+        let owner = registry.start("game").unwrap();
+        let ownership =
+            crate::install_ownership::allocate_directory(&library, "game", owner.attempt())
+                .unwrap();
+        owner.set_installation(&ownership).unwrap();
+        let root = ownership.root().to_path_buf();
+        let destination = root.join("game.bin");
+        let part = part_path_for(&destination);
+        let (file, hasher, offset) = prepare_partial(&part, true, Some(&owner)).await.unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buffer = [0u8; 2048];
+            let _ = socket.read(&mut buffer).await;
+            socket
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 6\r\n\r\nabcdef")
+                .await
+                .unwrap();
+        });
+        let response = reqwest::Client::builder()
+            .no_proxy()
+            .build()
+            .unwrap()
+            .get(format!("http://{address}/file"))
+            .send()
+            .await
+            .unwrap();
+        let task = tokio::spawn(async move {
+            let mut expected = options();
+            if terminal == "error" {
+                expected.expected_size_bytes = Some(999);
+            }
+            write_http_response(
+                response,
+                DownloadSession {
+                    destination,
+                    part,
+                    file,
+                    hasher,
+                    offset,
+                },
+                expected,
+                move |_, _| {
+                    assert_ne!(terminal, "panic", "injected progress panic");
+                },
+                move || terminal == "cancel",
+                Duration::from_secs(1),
+            )
+            .await
+        });
+        let result = task.await;
+        if terminal == "success" {
+            assert!(result.unwrap().is_ok());
+        } else if terminal == "panic" {
+            assert!(result.unwrap_err().is_panic());
+        } else {
+            assert!(result.unwrap().is_err());
+        }
+        server.await.unwrap();
+        // The lease may stay alive for status/history, but carries no path lock.
+        let moved = temp.path().join("released");
+        std::fs::rename(&library, &moved).unwrap();
+        let install = moved.join(root.file_name().unwrap());
+        for entry in std::fs::read_dir(&install).unwrap() {
+            std::fs::remove_file(entry.unwrap().path()).unwrap();
+        }
+        std::fs::remove_dir(install).unwrap();
+        std::fs::remove_dir(moved).unwrap();
+        drop(owner);
+    }
+}
+
+#[tokio::test]
 async fn stalled_body_preserves_partial_and_closes_file_for_retry() {
     let temp = tempfile::tempdir_in(std::env::current_dir().unwrap()).unwrap();
     let destination = temp.path().join("game.bin");

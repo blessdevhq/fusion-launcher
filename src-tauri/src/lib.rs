@@ -18,7 +18,6 @@ pub mod execution;
 mod game_files;
 mod github_resolver;
 mod install_ownership;
-pub(crate) mod job;
 mod launcher;
 mod libtorrent_engine;
 mod logging;
@@ -36,6 +35,8 @@ mod storage;
 pub mod system_files_detector;
 mod torrent;
 mod torrent_engine;
+#[cfg(windows)]
+mod windows_sidecar;
 
 use storage::RepositoryStore;
 use torrent::TorrentManager;
