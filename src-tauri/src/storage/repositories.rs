@@ -7,7 +7,20 @@ impl RepositoryStore {
         url: &str,
         repo: &RepositorySchema,
     ) -> Result<RepositorySummary, String> {
-        let tx = self.conn.transaction().map_err(|error| error.to_string())?;
+        self.store_repository_with_local_import(url, repo, |_| Ok(()))
+    }
+
+    /// Persist a user catalog and its local import records as one operation.
+    pub(crate) fn store_repository_with_local_import(
+        &mut self,
+        url: &str,
+        repo: &RepositorySchema,
+        import: impl FnOnce(&Self) -> Result<(), String>,
+    ) -> Result<RepositorySummary, String> {
+        let tx = self
+            .conn
+            .unchecked_transaction()
+            .map_err(|error| error.to_string())?;
         let now = Utc::now().to_rfc3339();
         let raw_json = serde_json::to_string(repo).map_err(|error| error.to_string())?;
         let content_hash = repo
@@ -146,6 +159,7 @@ impl RepositoryStore {
             .map_err(|error| error.to_string())?;
         }
 
+        import(self)?;
         tx.commit().map_err(|error| error.to_string())?;
         self.get_repository_summary(&repo.metadata.id)?
             .ok_or_else(|| "Repository was stored but could not be read back.".to_string())

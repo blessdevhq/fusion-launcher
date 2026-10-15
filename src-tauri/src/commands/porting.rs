@@ -43,6 +43,8 @@ pub struct CustomGameInput {
     pub enable_60fps: Option<bool>,
     pub shader_cache_url: Option<String>,
     pub import_source_path: Option<String>,
+    #[serde(default)]
+    pub import_in_place: bool,
 }
 
 pub fn slugify(value: &str) -> String {
@@ -141,21 +143,9 @@ pub fn detect_platform_from_path(path: &Path) -> (&'static str, &'static str, Ve
             "n64-rmg",
             vec![".z64".into(), ".n64".into(), ".v64".into()],
         ),
-        "sfc" | "smc" => (
-            "snes",
-            "snes-mesen",
-            vec![".sfc".into(), ".smc".into()],
-        ),
-        "nes" => (
-            "nes",
-            "nes-mesen",
-            vec![".nes".into()],
-        ),
-        "gba" => (
-            "gba",
-            "gba-mgba",
-            vec![".gba".into()],
-        ),
+        "sfc" | "smc" => ("snes", "snes-mesen", vec![".sfc".into(), ".smc".into()]),
+        "nes" => ("nes", "nes-mesen", vec![".nes".into()]),
+        "gba" => ("gba", "gba-mgba", vec![".gba".into()]),
         "cue" | "pbp" => (
             "ps1",
             "ps1-manual",
@@ -172,7 +162,10 @@ pub fn detect_platform_from_path(path: &Path) -> (&'static str, &'static str, Ve
 }
 
 #[tauri::command]
-pub fn inspect_game_file(path: String) -> Result<GameFileInspection, String> {
+pub fn inspect_game_file(
+    path: String,
+    compute_hash: Option<bool>,
+) -> Result<GameFileInspection, String> {
     let p = Path::new(&path);
     if !p.exists() || !p.is_file() {
         return Err(format!("File does not exist or is not a file: {path}"));
@@ -187,8 +180,16 @@ pub fn inspect_game_file(path: String) -> Result<GameFileInspection, String> {
     let (platform, setup_profile_id, expected_extensions) = detect_platform_from_path(p);
     let suggested_title = clean_game_title(&file_name);
 
-    let hashes = crate::rom_hasher::hash_rom(p, |_, _| {})
-        .map_err(|e| format!("Failed to hash file: {e}"))?;
+    let (size_bytes, sha256, crc32) = if compute_hash.unwrap_or(true) {
+        let hashes = crate::rom_hasher::hash_rom(p, |_, _| {})
+            .map_err(|e| format!("Failed to hash file: {e}"))?;
+        (hashes.size, hashes.sha256, hashes.crc32)
+    } else {
+        let metadata = p
+            .metadata()
+            .map_err(|e| format!("Failed to inspect file: {e}"))?;
+        (metadata.len(), String::new(), String::new())
+    };
 
     Ok(GameFileInspection {
         path,
@@ -197,9 +198,9 @@ pub fn inspect_game_file(path: String) -> Result<GameFileInspection, String> {
         platform: platform.to_string(),
         setup_profile_id: setup_profile_id.to_string(),
         expected_extensions,
-        size_bytes: hashes.size,
-        sha256: hashes.sha256,
-        crc32: hashes.crc32,
+        size_bytes,
+        sha256,
+        crc32,
     })
 }
 
@@ -226,6 +227,16 @@ fn create_default_user_repo() -> RepositorySchema {
 pub async fn add_custom_game(
     input: CustomGameInput,
     state: State<'_, AppState>,
+) -> Result<CatalogGameView, String> {
+    let target_download_root = download_root(&state)?;
+    let mut store = lock_store(&state)?;
+    add_custom_game_into_store(input, &mut store, &target_download_root)
+}
+
+pub(super) fn add_custom_game_into_store(
+    input: CustomGameInput,
+    store: &mut RepositoryStore,
+    target_download_root: &Path,
 ) -> Result<CatalogGameView, String> {
     let title = input.title.trim().to_string();
     if title.is_empty() {
@@ -264,7 +275,13 @@ pub async fn add_custom_game(
         .unwrap_or_else(|| match platform.as_str() {
             "switch" => vec![".nsp".into(), ".xci".into(), ".nca".into()],
             "ps2" => vec![".iso".into(), ".chd".into(), ".bin".into(), ".img".into()],
-            "ps1" => vec![".cue".into(), ".bin".into(), ".iso".into(), ".pbp".into(), ".chd".into()],
+            "ps1" => vec![
+                ".cue".into(),
+                ".bin".into(),
+                ".iso".into(),
+                ".pbp".into(),
+                ".chd".into(),
+            ],
             "psp" => vec![".iso".into(), ".cso".into(), ".pbp".into()],
             "n64" => vec![".z64".into(), ".n64".into(), ".v64".into()],
             "snes" => vec![".sfc".into(), ".smc".into()],
@@ -276,14 +293,24 @@ pub async fn add_custom_game(
     let mut downloads = Vec::new();
     let content_mode: Option<String>;
 
-    if let Some(magnet) = input.magnet_uri.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+    if let Some(magnet) = input
+        .magnet_uri
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
         downloads.push(SourceUri::Magnet {
             uri: magnet.to_string(),
             info_hash: None,
             size_bytes: input.size_bytes,
         });
         content_mode = Some("downloadable".to_string());
-    } else if let Some(http_url) = input.download_url.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+    } else if let Some(http_url) = input
+        .download_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
         downloads.push(SourceUri::Http {
             url: http_url.to_string(),
             sha256: input.sha256.clone().unwrap_or_default(),
@@ -302,19 +329,39 @@ pub async fn add_custom_game(
     let mut tags = Vec::new();
     let mut external_ids = std::collections::BTreeMap::new();
 
-    if let Some(author) = input.author_name.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+    if let Some(author) = input
+        .author_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
         tags.push(format!("author:{author}"));
         external_ids.insert("author".to_string(), author.to_string());
     }
-    if let Some(author_url) = input.author_url.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+    if let Some(author_url) = input
+        .author_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
         tags.push(format!("authorUrl:{author_url}"));
         external_ids.insert("authorUrl".to_string(), author_url.to_string());
     }
-    if let Some(patch) = input.patch_version.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+    if let Some(patch) = input
+        .patch_version
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
         tags.push(format!("patch:{patch}"));
         external_ids.insert("patch".to_string(), patch.to_string());
     }
-    if let Some(notes) = input.notes.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+    if let Some(notes) = input
+        .notes
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
         tags.push(format!("notes:{notes}"));
         external_ids.insert("notes".to_string(), notes.to_string());
     }
@@ -370,10 +417,20 @@ pub async fn add_custom_game(
     };
 
     let storage_id = crate::security::global_id(USER_REPO_ID, &game_id);
-    let target_download_root = download_root(&state)?;
+    let import_path = input
+        .import_source_path
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    if input.import_in_place && import_path.is_none() {
+        return Err("An existing local game file is required for import in place.".to_string());
+    }
+    if let Some(path) = import_path {
+        validate_import_source(Path::new(path))
+            .map_err(|error| format!("Local game import failed: {}", error.code))?;
+    }
 
     {
-        let mut store = lock_store(&state)?;
         let existing_raw = store.get_repository_raw_json(USER_REPO_ID)?;
 
         let mut repo: RepositorySchema = if let Some(raw) = existing_raw {
@@ -386,23 +443,23 @@ pub async fn add_custom_game(
         repo.catalog.push(new_game);
         repo.metadata.updated_at = Some(chrono::Utc::now().to_rfc3339());
 
-        store.store_repository(USER_REPO_URL, &repo)?;
-
-        // If a local file path was provided for import, import it into the store right away
-        if let Some(import_path) = input.import_source_path.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-            let p = Path::new(import_path);
-            if p.exists() && p.is_file() {
-                let _ = import_game_file_into_store(
-                    &store,
-                    &target_download_root,
-                    &storage_id,
-                    p,
-                );
+        store.store_repository_with_local_import(USER_REPO_URL, &repo, |store| {
+            // Linking is explicit: keep the caller's file outside Fusion's cleanup authority.
+            if let Some(import_path) = import_path {
+                let p = Path::new(import_path);
+                let report = if input.import_in_place {
+                    link_user_game_file_into_store(store, &storage_id, p)
+                } else {
+                    import_game_file_into_store(store, target_download_root, &storage_id, p)
+                };
+                if let Some(error) = report.error_code {
+                    return Err(format!("Local game import failed: {error}"));
+                }
             }
-        }
+            Ok(())
+        })?;
     }
 
-    let store = lock_store(&state)?;
     let game_view = store
         .get_game(&storage_id)?
         .ok_or_else(|| format!("Game '{storage_id}' was stored but could not be read back."))?;
@@ -411,10 +468,7 @@ pub async fn add_custom_game(
 }
 
 #[tauri::command]
-pub fn export_game_package(
-    input: CustomGameInput,
-    export_path: String,
-) -> Result<String, String> {
+pub fn export_game_package(input: CustomGameInput, export_path: String) -> Result<String, String> {
     let title = input.title.trim().to_string();
     if title.is_empty() {
         return Err("Game title cannot be empty.".to_string());
@@ -423,7 +477,8 @@ pub fn export_game_package(
     let target_path = Path::new(&export_path);
     if let Some(parent) = target_path.parent() {
         if !parent.exists() {
-            std::fs::create_dir_all(parent).map_err(|e| format!("Failed to create directories: {e}"))?;
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("Failed to create directories: {e}"))?;
         }
     }
 
@@ -462,36 +517,21 @@ mod porting_tests {
 
     #[test]
     fn detects_platforms_accurately() {
-        assert_eq!(
-            detect_platform_from_path(Path::new("game.nsp")).0,
-            "switch"
-        );
-        assert_eq!(
-            detect_platform_from_path(Path::new("game.iso")).0,
-            "ps2"
-        );
-        assert_eq!(
-            detect_platform_from_path(Path::new("game.z64")).0,
-            "n64"
-        );
-        assert_eq!(
-            detect_platform_from_path(Path::new("game.sfc")).0,
-            "snes"
-        );
-        assert_eq!(
-            detect_platform_from_path(Path::new("game.gba")).0,
-            "gba"
-        );
-        assert_eq!(
-            detect_platform_from_path(Path::new("game.cso")).0,
-            "psp"
-        );
+        assert_eq!(detect_platform_from_path(Path::new("game.nsp")).0, "switch");
+        assert_eq!(detect_platform_from_path(Path::new("game.iso")).0, "ps2");
+        assert_eq!(detect_platform_from_path(Path::new("game.z64")).0, "n64");
+        assert_eq!(detect_platform_from_path(Path::new("game.sfc")).0, "snes");
+        assert_eq!(detect_platform_from_path(Path::new("game.gba")).0, "gba");
+        assert_eq!(detect_platform_from_path(Path::new("game.cso")).0, "psp");
     }
 
     #[test]
     fn slugifies_properly() {
         assert_eq!(slugify("Super Mario 64"), "super-mario-64");
-        assert_eq!(slugify("Zelda: Breath of the Wild!"), "zelda-breath-of-the-wild");
+        assert_eq!(
+            slugify("Zelda: Breath of the Wild!"),
+            "zelda-breath-of-the-wild"
+        );
         assert_eq!(slugify(""), "custom-game");
     }
 }

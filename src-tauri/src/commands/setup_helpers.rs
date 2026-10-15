@@ -9,8 +9,7 @@ pub(crate) fn build_game_setup_state(
         _ => None,
     };
 
-    let repository_requirements =
-        build_requirements_report(store, content_dir, game)?.requirements;
+    let repository_requirements = build_requirements_report(store, content_dir, game)?.requirements;
     let expected_extensions = resolved_expected_extensions(game, profile.as_ref());
     let preferred_file = game
         .launch
@@ -27,7 +26,9 @@ pub(crate) fn build_game_setup_state(
         profile
             .system_files
             .iter()
-            .map(|requirement| inspect_profile_system_file(store, content_dir, profile, requirement))
+            .map(|requirement| {
+                inspect_profile_system_file(store, content_dir, profile, requirement)
+            })
             .collect::<Result<Vec<_>, _>>()?
     } else {
         Vec::new()
@@ -220,7 +221,7 @@ pub(super) fn inspect_profile_system_file(
     requirement: &ProfileSystemFileRequirement,
 ) -> Result<GameSetupSystemFileState, String> {
     let import = store.get_profile_system_file_import(&profile.id, &requirement.id)?;
-    let target = import
+    let mut target = import
         .as_ref()
         .and_then(|import| import.target_path.clone())
         .unwrap_or_else(|| {
@@ -228,6 +229,40 @@ pub(super) fn inspect_profile_system_file(
                 .to_string_lossy()
                 .to_string()
         });
+    // A manually selected, already configured Switch emulator can keep its
+    // existing keys. Detect only this exact native path; do not copy or adopt it.
+    let mut native_keys = false;
+    if !Path::new(&target).exists()
+        && profile.id == "switch-manual"
+        && requirement.id == "switch-prod-keys"
+    {
+        if let Some(executable) = store
+            .get_profile_emulator_config(&profile.id)?
+            .and_then(|config| config.exe_path)
+        {
+            let executable = Path::new(&executable);
+            let native = match crate::prelaunch_optimizer::detect_emulator_engine(executable) {
+                crate::prelaunch_optimizer::EmulatorEngine::Ryujinx => Some(
+                    crate::prelaunch_optimizer::resolve_ryujinx_data_root(executable)
+                        .join("system")
+                        .join("prod.keys"),
+                ),
+                crate::prelaunch_optimizer::EmulatorEngine::Eden => Some(
+                    crate::prelaunch_optimizer::resolve_eden_data_root(executable)
+                        .join("keys")
+                        .join("prod.keys"),
+                ),
+                _ => None,
+            };
+            if let Some(native) = native.filter(|path| {
+                path.metadata()
+                    .is_ok_and(|metadata| metadata.is_file() && metadata.len() > 0)
+            }) {
+                target = native.to_string_lossy().to_string();
+                native_keys = true;
+            }
+        }
+    }
     let path = Path::new(&target);
     let mut status = "missing".to_string();
     let mut message = requirement.notes.clone();
@@ -240,6 +275,9 @@ pub(super) fn inspect_profile_system_file(
                 requirement.label,
                 requirement.extensions.join(", ")
             ));
+        } else if native_keys && requirement.checksum.is_none() {
+            status = "ready".to_string();
+            message = Some(target.clone());
         } else {
             let actual = hash_file(path)?;
             if let Some(expected) = requirement.checksum.as_deref() {
@@ -395,8 +433,13 @@ pub(crate) fn adopt_bundled_profile_system_files(
             continue;
         };
         let found_str = found.to_string_lossy().to_string();
-        let report =
-            import_profile_system_file_into_store(store, content_dir, profile, requirement, &found)?;
+        let report = import_profile_system_file_into_store(
+            store,
+            content_dir,
+            profile,
+            requirement,
+            &found,
+        )?;
         crate::logging::log_event(
             data_dir,
             "adopt_system_file",

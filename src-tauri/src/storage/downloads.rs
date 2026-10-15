@@ -649,9 +649,25 @@ impl RepositoryStore {
         sha256: &str,
         total_bytes: u64,
     ) -> Result<(DownloadRecord, TorrentDownloadRecord), String> {
-        self.in_transaction(|| {
-            let download =
-                self.record_download(game_id, "game", Some(local_path), Some(sha256), None)?;
+        self.record_direct_game_download_completed_optional(
+            game_id,
+            source_kind,
+            local_path,
+            Some(sha256),
+            total_bytes,
+        )
+    }
+
+    pub(crate) fn record_direct_game_download_completed_optional(
+        &self,
+        game_id: &str,
+        source_kind: &str,
+        local_path: &str,
+        sha256: Option<&str>,
+        total_bytes: u64,
+    ) -> Result<(DownloadRecord, TorrentDownloadRecord), String> {
+        let write = || {
+            let download = self.record_download(game_id, "game", Some(local_path), sha256, None)?;
             self.record_direct_game_download_started(
                 game_id,
                 source_kind,
@@ -669,7 +685,14 @@ impl RepositoryStore {
                 0,
             )?;
             Ok((download, torrent))
-        })
+        };
+        if self.conn.is_autocommit() {
+            self.in_transaction(write)
+        } else {
+            // The surrounding repository/import transaction rolls back all
+            // metadata and download records if this operation fails.
+            write()
+        }
     }
 
     pub fn record_direct_asset_download_completed(

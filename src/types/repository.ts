@@ -351,6 +351,7 @@ export interface CustomGameInput {
   enable60Fps?: boolean;
   shaderCacheUrl?: string;
   importSourcePath?: string;
+  importInPlace?: boolean;
 }
 
 export type ImportGameFileStatus = 'installed' | 'already_installed' | 'error';

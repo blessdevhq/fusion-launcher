@@ -456,8 +456,8 @@ export const api = {
   registerDeepLinkProtocol() {
     return call<void>('register_deep_link_protocol');
   },
-  inspectGameFile(path: string) {
-    return call<GameFileInspection>('inspect_game_file', { path });
+  inspectGameFile(path: string, computeHash = true) {
+    return call<GameFileInspection>('inspect_game_file', { path, computeHash });
   },
   addCustomGame(input: CustomGameInput) {
     return call<CatalogGame>('add_custom_game', { input });

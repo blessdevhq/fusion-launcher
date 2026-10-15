@@ -55,6 +55,7 @@ export function GamePortingStudioModal({
   // File state
   const [inspecting, setInspecting] = useState(false);
   const [inspection, setInspection] = useState<GameFileInspection | null>(null);
+  const [importInPlace, setImportInPlace] = useState(true);
 
   // Form state
   const [title, setTitle] = useState('');
@@ -67,7 +68,7 @@ export function GamePortingStudioModal({
   const [genres, setGenres] = useState('');
 
   // Modding & presets
-  const [enable60Fps, setEnable60Fps] = useState(true);
+  const [enable60Fps, setEnable60Fps] = useState(false);
   const [autoGamepad, setAutoGamepad] = useState(true);
   const [patchVersion, setPatchVersion] = useState('');
   const [notes, setNotes] = useState('');
@@ -95,7 +96,7 @@ export function GamePortingStudioModal({
     if (!filePath) return;
     setInspecting(true);
     try {
-      const result = await api.inspectGameFile(filePath);
+      const result = await api.inspectGameFile(filePath, false);
       setInspection(result);
       setTitle((prev) => (!prev ? result.suggestedTitle : prev));
       setPlatform(result.platform);
@@ -187,14 +188,15 @@ export function GamePortingStudioModal({
       contentMode: contentMode === 'user_provided' ? 'user_provided' : 'downloadable',
       downloadUrl: contentMode === 'http' ? downloadUrl.trim() : undefined,
       magnetUri: contentMode === 'magnet' ? magnetUri.trim() : undefined,
-      sha256: inspection?.sha256,
+      sha256: inspection?.sha256 || undefined,
       sizeBytes: inspection?.sizeBytes,
       authorName: authorName.trim() || undefined,
       authorUrl: authorUrl.trim() || undefined,
       patchVersion: patchVersion.trim() || undefined,
       notes: notes.trim() || undefined,
       enable60Fps,
-      importSourcePath: inspection?.path
+      importSourcePath: contentMode === 'user_provided' ? inspection?.path : undefined,
+      importInPlace: contentMode === 'user_provided' && Boolean(inspection?.path) && importInPlace
     };
   };
 
@@ -333,7 +335,7 @@ export function GamePortingStudioModal({
                     <div className="truncate font-semibold text-sm text-white">{inspection.fileName}</div>
                     <div className="flex flex-wrap gap-x-3 text-xs text-white/45 font-mono">
                       <span>{(inspection.sizeBytes / (1024 * 1024)).toFixed(1)} MB</span>
-                      <span>SHA256: {inspection.sha256.substring(0, 16)}…</span>
+                      <span>{inspection.sha256 ? `SHA256: ${inspection.sha256.substring(0, 16)}…` : t.portingStudio.fileMetadataOnly}</span>
                       <span className="text-fusion-accent font-semibold uppercase">{inspection.platform}</span>
                     </div>
                   </div>
@@ -354,7 +356,7 @@ export function GamePortingStudioModal({
                 {inspecting ? (
                   <>
                     <Loader2 className="h-8 w-8 animate-spin text-fusion-accent mb-2" />
-                    <span className="text-sm font-semibold text-white/70">{t.portingStudio.inspectingFile}</span>
+                    <span className="text-sm font-semibold text-white/70">{t.portingStudio.inspectingFileMetadata}</span>
                   </>
                 ) : (
                   <>
@@ -366,6 +368,22 @@ export function GamePortingStudioModal({
               </button>
             )}
           </div>
+
+          {inspection && contentMode === 'user_provided' && (
+            <label className="flex items-start gap-3 text-sm text-[var(--rh-text)]">
+              <input
+                type="checkbox"
+                checked={importInPlace}
+                onChange={(event) => setImportInPlace(event.target.checked)}
+                data-testid="porting-import-in-place"
+                className="mt-1 h-4 w-4 accent-fusion-accent focus-visible:outline focus-visible:outline-fusion-accent"
+              />
+              <span>
+                <span className="block font-semibold">{t.portingStudio.keepFileInPlace}</span>
+                <span className="block text-xs text-[var(--rh-muted)]">{t.portingStudio.keepFileInPlaceDesc}</span>
+              </span>
+            </label>
+          )}
 
           {/* Section 2: Metadata & Artwork */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
