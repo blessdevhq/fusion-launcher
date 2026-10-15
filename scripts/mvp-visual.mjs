@@ -102,6 +102,9 @@ async function main() {
   await expectVisible(page.getByTestId('settings-modal-emulators'), 'settings modal emulators panel');
   await expectVisible(page.getByTestId('emulator-row-switch'), 'switch emulator row');
   await expectVisible(page.getByTestId('emulator-row-switch').getByRole('button', { name: 'Select' }), 'native executable picker button');
+  await page.getByTestId('settings-select-switch').click();
+  await expectVisible(page.getByTestId('emulator-row-switch').getByText('Ready', { exact: true }), 'configured manual emulator');
+  await expectVisible(page.getByTestId('settings-select-switch'), 'manual emulator can be selected again without removal');
   await expectVisible(page.getByRole('button', { name: 'Save' }), 'settings modal save button');
   await assertNestedScrollContainer(page.getByTestId('settings-modal'), '[data-testid="settings-modal-emulators"]', 'settings modal emulators scroll');
   await assertLightweightSettingsCompositing(page);
