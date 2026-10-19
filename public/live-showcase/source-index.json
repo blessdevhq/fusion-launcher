@@ -9,11 +9,11 @@
     }
   ],
   "schema_version": "1.0",
-  "signature": "w1vbsXx5Rsai+Xk8LedhQD7cV7PBEDsN3UP3x3eMNgRsgr5JoM8ocW58vKkUZHtjruRYwnfAgCuudQgag3PmDA==",
+  "signature": "xZc4Dt16ekisMC6mxfMuEvkHVE6zU3X09cJMN2yUJxeX995pfdm8WDXiH1gWhWADqn+k8H4KL0VwP4BYkOkdBw==",
   "source_info": {
-    "id": "dev.fusion.live-showcase",
+    "id": "dev.fusion.live-showcase.pages",
     "maintainer": "Denis",
-    "name": "Fusion Live Showcase Source",
+    "name": "Fusion Live Showcase Source (GitHub Pages)",
     "public_key": "3xAUGbuFL5C5H4ELQdUSD9N5YycAs3gjL8CRsvVdJjY=",
     "telemetry_endpoint": null
   }
