@@ -1,0 +1,20 @@
+{
+  "games": [
+    {
+      "id": "forza-horizon-2-showcase",
+      "manifest_blake3": "7d3e07657b695ee597ab93fc5cd0e1fb11e3a3b9b177a5c2cf18049b0589b3f1",
+      "manifest_url": "https://blessdevhq.github.io/fusion-launcher/live-showcase/manifests/forza-horizon-2-showcase-7d3e07657b695ee597ab93fc5cd0e1fb11e3a3b9b177a5c2cf18049b0589b3f1.json",
+      "title": "Forza Horizon 2 (Azimuth Showcase)",
+      "version": "1.0.0"
+    }
+  ],
+  "schema_version": "1.0",
+  "signature": "w1vbsXx5Rsai+Xk8LedhQD7cV7PBEDsN3UP3x3eMNgRsgr5JoM8ocW58vKkUZHtjruRYwnfAgCuudQgag3PmDA==",
+  "source_info": {
+    "id": "dev.fusion.live-showcase",
+    "maintainer": "Denis",
+    "name": "Fusion Live Showcase Source",
+    "public_key": "3xAUGbuFL5C5H4ELQdUSD9N5YycAs3gjL8CRsvVdJjY=",
+    "telemetry_endpoint": null
+  }
+}
