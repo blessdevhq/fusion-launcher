@@ -3,6 +3,8 @@ import { CollectionsPanel, HeroPanel, HomeRailsPanel, type CollectionTarget, typ
 import type { GameLibraryItem } from '@/lib/libraryStatus';
 import type { CatalogGame } from '@/types/repository';
 import type { BusyAction } from './types';
+import { useI18n } from '@/components/I18nProvider';
+import { fusionText } from '@/lib/fusionText';
 
 interface HomeScreenProps {
   loading: boolean;
@@ -15,6 +17,8 @@ interface HomeScreenProps {
   onOpenCollection: (target: CollectionTarget) => void;
   onOpenSettings: () => void;
   onFocus: (focusId: string) => void;
+  fusionCount?: number;
+  onOpenFusionLibrary?: () => void;
 }
 
 export function HomeScreen({
@@ -27,8 +31,12 @@ export function HomeScreen({
   onOpenDetails,
   onOpenCollection,
   onOpenSettings,
-  onFocus
+  onFocus,
+  fusionCount = 0,
+  onOpenFusionLibrary
 }: HomeScreenProps) {
+  const { locale } = useI18n();
+  const text = fusionText(locale);
   return (
     <motion.div
       initial={{ opacity: 0, y: 12 }}
@@ -54,6 +62,7 @@ export function HomeScreen({
             onOpenDetails={onOpenDetails}
             onFocus={onFocus}
           />
+          {fusionCount > 0 && <button type="button" onClick={onOpenFusionLibrary} onFocus={() => onFocus('fusion-library:open')} data-focus-id="fusion-library:open" data-focus-zone="home" data-testid="home-fusion-library" className="rh-mini-action rh-focusable justify-between">{text.catalog}<span>{fusionCount} →</span></button>}
           <CollectionsPanel
             items={collectionItems}
             onOpenCollection={onOpenCollection}

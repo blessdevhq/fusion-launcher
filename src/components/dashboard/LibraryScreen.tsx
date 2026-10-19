@@ -10,6 +10,9 @@ import { FILTERS, SORTS } from './constants';
 import { ScreenHeader } from './shared';
 import type { BusyAction } from './types';
 import { filterCountLabel } from './utils';
+import { FusionCatalogRows } from './FusionCatalogRows';
+import type { FusionCatalogEntry, FusionOperationProgress } from '@/types/fusionSource';
+import { selectFusionCatalog } from '@/lib/fusionCatalog';
 
 const LIBRARY_PAGE_SIZE = 60;
 
@@ -27,6 +30,10 @@ export function LibraryScreen({
   onOpenCollection,
   onPrimaryAction,
   onOpenDetails,
+  fusionEntries = [],
+  allFusionEntries = [],
+  fusionOperations = {},
+  onOpenFusion,
   onFocus
 }: {
   items: GameLibraryItem[];
@@ -42,6 +49,10 @@ export function LibraryScreen({
   onOpenCollection: (target: CollectionTarget) => void;
   onPrimaryAction: (item: GameLibraryItem) => void;
   onOpenDetails: (game: CatalogGame) => void;
+  fusionEntries?: FusionCatalogEntry[];
+  allFusionEntries?: FusionCatalogEntry[];
+  fusionOperations?: Record<string, FusionOperationProgress>;
+  onOpenFusion?: (game: FusionCatalogEntry) => void;
   onFocus: (focusId: string) => void;
 }) {
   const { t } = useI18n();
@@ -76,7 +87,7 @@ export function LibraryScreen({
 
   return (
     <motion.section initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="rh-screen rh-panel" data-testid="library-screen">
-      <ScreenHeader eyebrow={t.dashboard.library.eyebrow} title={t.dashboard.library.title} description={t.dashboard.library.description(items.length, totalCount)} />
+      <ScreenHeader eyebrow={t.dashboard.library.eyebrow} title={t.dashboard.library.title} description={t.dashboard.library.description(items.length + fusionEntries.length, totalCount + allFusionEntries.length)} />
       <div className="rh-library-collections">
         <CollectionsPanel
           items={allItems}
@@ -114,7 +125,7 @@ export function LibraryScreen({
       </div>
       <div className="mb-4 flex flex-wrap gap-2" data-testid="library-filters">
         {FILTERS.map((item) => {
-          const count = filterCountLabel(item, totalCount, allItems);
+          const count = filterCountLabel(item, totalCount, allItems) + selectFusionCatalog(allFusionEntries, item, '', 'title', fusionOperations).length;
           return (
             <button
               key={item}
@@ -131,7 +142,8 @@ export function LibraryScreen({
         })}
       </div>
       <div ref={gridRef} className="rh-library-grid" data-testid="library-grid">
-        {items.length === 0 ? (
+        {onOpenFusion && <FusionCatalogRows entries={fusionEntries} operations={fusionOperations} onOpen={onOpenFusion} onFocus={onFocus} />}
+        {items.length === 0 && fusionEntries.length === 0 ? (
           <div className="rh-empty-compact" data-testid="library-empty">{t.dashboard.library.empty}</div>
         ) : (
           <>

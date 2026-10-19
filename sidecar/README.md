@@ -21,6 +21,65 @@ fusion-torrent <magnet_link> <save_path>
 - **stderr** carries diagnostics/errors only — never parse it as JSON.
 - The process runs until killed by the parent (it keeps seeding after finishing).
 
+### Fusion Source artifact protocol
+
+The original positional command remains the legacy download protocol. Fusion
+Source uses an independent process for each single-file container:
+
+```text
+fusion-torrent --probe
+fusion-torrent --artifact [--web-seed http://127.0.0.1:<port>/<private-token>] <magnet> <private-save-path>
+```
+
+`--probe` checks the installed native bindings and starts a session with every
+network transport, discovery service and listening interface disabled. It emits
+one bounded capability document and exits. The host accepts the capability only
+after a successful exit of the complete Windows Job process tree within its
+probe deadline. The document contains `protocol_version: 1`, `artifact_v1`,
+`explicit_webseeds` and the installed `libtorrent` version.
+
+Artifact status lines add `artifact_layout` containing the actual metadata
+`info_hash` and one `files` entry with `path` and byte `size`. Before the parent
+acknowledges `inventory_approved`, priorities remain zero and upload-only mode
+blocks payload requests. The parent validates the identity and size, rejects
+multifile, padding, symlink and unsafe path layouts, then exclusively reserves
+the file. The sidecar rechecks the metadata before enabling payload delivery.
+
+Artifact mode never loads or saves fastresume data. Embedded and magnet WebSeeds
+are overridden; native HTTP seeds are removed. Explicit seeds must use the
+parent's private loopback relay. That relay maps unpredictable tokens to admitted
+HTTPS URLs and streams full or single-range responses through Fusion's existing
+DNS and redirect policy. Native `ssrf_mitigation` stays enabled.
+
+The host owns unique directories under
+`<library>/.fusion-source/torrent-staging`. Its supervisor awaits both the native
+process tree and relay before publishing a container without replacing an
+existing file. Cancellation and an aborted caller signal that private owner;
+unconfirmed process termination preserves the private directory. Transport
+digest validation and CAS insertion remain the resolver cascade's responsibility.
+
+Native acceptance uses generated data and loopback sockets:
+
+```powershell
+python -m venv .tmp/stage5b-python
+.tmp/stage5b-python/Scripts/python.exe -m pip install -r sidecar/requirements.txt
+$env:PATH = "$PWD\.tmp\stage5b-python\Scripts;$env:PATH"
+npm run sidecar:build
+$env:FUSION_NATIVE_SIDECAR_EXE = "$PWD\src-tauri\binaries\fusion-torrent-x86_64-pc-windows-msvc.exe"
+.tmp/stage5b-python/Scripts/python.exe sidecar/test_native_artifact.py
+```
+
+Set `FUSION_NATIVE_ADAPTER_TEST_BINARY` to the current compiled Rust library test
+executable to additionally run the ignored native adapter/Windows Job publication
+test against the fixture's live seeder. The fixture checks metadata before
+approval, a complete peer transfer through the Rust adapter, and a separate
+transfer using only the admitted BEP 19 seed after the peer seeder is paused.
+The Python lifecycle unit suite requires no sockets:
+
+```powershell
+.tmp/stage5b-python/Scripts/python.exe -m unittest discover -s sidecar -p test_torrent_sidecar_lifecycle.py
+```
+
 ## Building the standalone .exe
 
 The build is automated by `scripts/build-sidecar.mjs`, which runs PyInstaller and

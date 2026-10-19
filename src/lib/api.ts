@@ -1,5 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { previewApi } from './previewData.ts';
+import { fusionPreviewApi } from './fusionPreviewData.ts';
+import type { FusionCatalogEntry, FusionSourcePreview, FusionSourceSummary, FusionGameState, FusionGameOptions, FusionInstallInput, FusionOperationProgress, FusionCrashReport, SourcePreview, SourceSummary } from '../types/fusionSource.ts';
 import { isPreviewRuntime, isTauriRuntime, requireDesktopBridge } from './runtime.ts';
 import type {
   EmulatorInstallResult,
@@ -47,6 +49,7 @@ import type {
 } from '@/types/repository';
 
 type PreviewHandler = (args: Record<string, unknown>) => Promise<unknown>;
+type FusionGameIdentity = { sourceId: string; gameId: string };
 
 export interface InstallGameOptions {
   gameTargetDir?: string;
@@ -54,6 +57,24 @@ export interface InstallGameOptions {
 }
 
 const previewHandlers: Record<string, PreviewHandler> = {
+  fusion_source_preview: ({ url }) => fusionPreviewApi.preview(String(url ?? '')),
+  fusion_source_add: ({ url }) => fusionPreviewApi.add(String(url ?? '')),
+  fusion_source_list: () => fusionPreviewApi.list(),
+  fusion_source_refresh: ({ sourceId }) => fusionPreviewApi.refresh(String(sourceId)),
+  fusion_source_remove: ({ sourceId }) => fusionPreviewApi.remove(String(sourceId)),
+  fusion_source_list_catalog: () => fusionPreviewApi.catalog(),
+  fusion_game_get_state: ({ game }) => fusionPreviewApi.state((game as FusionGameIdentity).sourceId, (game as FusionGameIdentity).gameId),
+  fusion_game_set_options: ({ game, options }) => fusionPreviewApi.setOptions((game as FusionGameIdentity).sourceId, (game as FusionGameIdentity).gameId, options as FusionGameOptions),
+  fusion_game_install: ({ game, request }) => fusionPreviewApi.install((game as FusionGameIdentity).sourceId, (game as FusionGameIdentity).gameId, request as FusionInstallInput),
+  fusion_game_update: ({ game, request }) => fusionPreviewApi.install((game as FusionGameIdentity).sourceId, (game as FusionGameIdentity).gameId, request as FusionInstallInput),
+  fusion_game_cancel: ({ game }) => fusionPreviewApi.cancel((game as FusionGameIdentity).sourceId, (game as FusionGameIdentity).gameId),
+  fusion_game_rollback: ({ game }) => fusionPreviewApi.rollback((game as FusionGameIdentity).sourceId, (game as FusionGameIdentity).gameId),
+  fusion_game_launch: ({ game }) => fusionPreviewApi.launch((game as FusionGameIdentity).sourceId, (game as FusionGameIdentity).gameId),
+  fusion_game_remove: ({ game }) => fusionPreviewApi.removeGame((game as FusionGameIdentity).sourceId, (game as FusionGameIdentity).gameId),
+  fusion_game_trust_executable: ({ game, path, blake3 }) => fusionPreviewApi.trust((game as FusionGameIdentity).sourceId, (game as FusionGameIdentity).gameId, String(path), String(blake3)),
+  fusion_crash_preview: ({ reportId }) => fusionPreviewApi.crash(String(reportId)),
+  fusion_crash_send: ({ reportId, expectedEndpoint }) => fusionPreviewApi.sendCrash(String(reportId), String(expectedEndpoint)),
+  fusion_crash_discard: ({ reportId }) => fusionPreviewApi.discardCrash(String(reportId)),
   preview_repository: ({ url }) => previewApi.previewRepository(String(url ?? 'preview://fusion-launcher')),
   preview_repository_file: ({ path }) => previewApi.previewRepositoryFile(String(path ?? '')),
   preview_builtin_demo_repository: () => previewApi.previewBuiltInDemoRepository(),
@@ -216,6 +237,57 @@ async function call<T>(command: string, args?: Record<string, unknown>): Promise
 }
 
 export const api = {
+  fusionSourcePreview(input: string) {
+    return call<FusionSourcePreview>('fusion_source_preview', { url: input });
+  },
+  fusionSourceAdd(input: string) {
+    return call<FusionSourceSummary>('fusion_source_add', { url: input });
+  },
+  fusionSourceList() { return call<FusionSourceSummary[]>('fusion_source_list'); },
+  fusionSourceRefresh(sourceId: string) { return call<FusionSourceSummary>('fusion_source_refresh', { sourceId }); },
+  fusionSourceRemove(sourceId: string) { return call<void>('fusion_source_remove', { sourceId }); },
+  fusionSourceListCatalog() { return call<FusionCatalogEntry[]>('fusion_source_list_catalog'); },
+  fusionGameGetState(sourceId: string, gameId: string) { return call<FusionGameState>('fusion_game_get_state', { game: { sourceId, gameId } }); },
+  fusionGameSetOptions(sourceId: string, gameId: string, options: FusionGameOptions) {
+    return call<FusionGameState>('fusion_game_set_options', { game: { sourceId, gameId }, options });
+  },
+  fusionGameInstall(sourceId: string, gameId: string, input: FusionInstallInput) {
+    return call<FusionOperationProgress>('fusion_game_install', { game: { sourceId, gameId }, request: input });
+  },
+  fusionGameUpdate(sourceId: string, gameId: string, input: FusionInstallInput) {
+    return call<FusionOperationProgress>('fusion_game_update', { game: { sourceId, gameId }, request: input });
+  },
+  fusionGameCancel(sourceId: string, gameId: string) { return call<void>('fusion_game_cancel', { game: { sourceId, gameId } }); },
+  fusionGameRollback(sourceId: string, gameId: string) { return call<FusionOperationProgress>('fusion_game_rollback', { game: { sourceId, gameId } }); },
+  fusionGameLaunch(sourceId: string, gameId: string) { return call<FusionOperationProgress>('fusion_game_launch', { game: { sourceId, gameId } }); },
+  fusionGameRemove(sourceId: string, gameId: string) { return call<FusionOperationProgress>('fusion_game_remove', { game: { sourceId, gameId } }); },
+  fusionGameTrustExecutable(sourceId: string, gameId: string, path: string, blake3: string) {
+    return call<void>('fusion_game_trust_executable', { game: { sourceId, gameId }, path, blake3 });
+  },
+  fusionCrashPreview(reportId: string) { return call<FusionCrashReport>('fusion_crash_preview', { reportId }); },
+  fusionCrashSend(reportId: string, expectedEndpoint: string) { return call<void>('fusion_crash_send', { reportId, expectedEndpoint }); },
+  fusionCrashDiscard(reportId: string) { return call<void>('fusion_crash_discard', { reportId }); },
+  async previewAnySource(input: string): Promise<SourcePreview> {
+    if (input.trim().startsWith('{')) {
+      const json: unknown = JSON.parse(input);
+      if (typeof json === 'object' && json !== null && 'source_info' in json) {
+        throw new Error('Host source-index.json at an HTTPS URL, then paste that URL here.');
+      }
+      return { kind: 'legacy', source: await api.previewSource(input) };
+    }
+    try {
+      return { kind: 'fusion_source', source: await api.fusionSourcePreview(input) };
+    } catch (error) {
+      if (typeof error !== 'object' || error === null || !('code' in error) || error.code !== 'unsupported_schema') throw error;
+      return { kind: 'legacy', source: await api.previewSource(input) };
+    }
+  },
+  async addAnySource(input: string, preview?: SourcePreview): Promise<SourceSummary> {
+    const checked = preview ?? await api.previewAnySource(input);
+    return checked.kind === 'fusion_source'
+      ? { kind: 'fusion_source', source: await api.fusionSourceAdd(input) }
+      : { kind: 'legacy', source: await api.addSource(input) };
+  },
   previewRepository(url: string) {
     return call<RepositoryPreview>('preview_repository', { url });
   },

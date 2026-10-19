@@ -11,6 +11,21 @@
 //! — the reason the previous in-process librqbit engine was replaced.
 
 use async_trait::async_trait;
+use serde::Deserialize;
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct EngineArtifactFile {
+    pub path: String,
+    pub size: u64,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct EngineArtifactLayout {
+    pub info_hash: String,
+    pub files: Vec<EngineArtifactFile>,
+}
 
 /// Engine-agnostic snapshot of a torrent's live transfer stats. `progress` is a
 /// fraction in `0.0..=1.0`; the manager converts it to a percentage when needed.
@@ -26,6 +41,8 @@ pub struct EngineTorrentStats {
     pub error: Option<String>,
     /// Metadata-declared relative files, published before payload writes begin.
     pub inventory: Option<Vec<String>>,
+    /// Present only for the opt-in Fusion Source artifact_v1 protocol.
+    pub artifact_layout: Option<EngineArtifactLayout>,
 }
 
 /// Raw torrent operations the manager drives. Torrents are addressed by an
@@ -39,6 +56,15 @@ pub trait TorrentEngine: Send + Sync {
     /// Add a magnet and begin downloading into `save_dir`, returning the engine's
     /// id for the new torrent.
     async fn add_magnet(&self, magnet_uri: String, save_dir: String) -> Result<usize, String>;
+    /// DB-free artifact mode never loads or persists legacy fastresume state.
+    async fn add_artifact(
+        &self,
+        _magnet_uri: String,
+        _save_dir: String,
+        _web_seeds: Vec<String>,
+    ) -> Result<usize, String> {
+        Err("This torrent engine does not implement artifact_v1.".into())
+    }
     /// Permit payload writes only after the manager has reserved these exact files.
     async fn approve_inventory(&self, id: usize) -> Result<(), String>;
     /// Pause the torrent. A no-op if the engine no longer tracks `id`.

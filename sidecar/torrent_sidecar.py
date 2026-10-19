@@ -22,6 +22,7 @@ import os
 import sys
 import threading
 import time
+from urllib.parse import urlsplit
 
 import libtorrent as lt
 
@@ -97,6 +98,9 @@ def make_session():
         # add_dht_router() method in favour of this).
         "dht_bootstrap_nodes": ",".join(f"{host}:{port}" for host, port in DHT_ROUTERS),
         "alert_mask": alert_mask,
+        # Keep native protections enabled even though approved artifact seeds
+        # are served by a separate, checked loopback HTTP relay.
+        "ssrf_mitigation": True,
     }
     return lt.session(settings)
 
@@ -214,6 +218,98 @@ def metadata_inventory(handle, resume_file):
     if len(paths) > 32768:
         raise ValueError("torrent inventory exceeds the supported file count")
     return paths
+
+
+def artifact_layout(handle):
+    """The metadata identity, never the requested magnet's unverified identity."""
+    if not handle.status().has_metadata:
+        return None
+    torrent = handle.torrent_file()
+    hashes = torrent.info_hashes()
+    if not hashes.has_v1():
+        raise ValueError("artifact_v1 requires a v1 info hash")
+    storage = torrent.files()
+    if storage.num_files() != 1:
+        raise ValueError("artifact_v1 requires exactly one file without padding")
+    flags = storage.file_flags(0)
+    if flags & (lt.file_storage.flag_symlink | lt.file_storage.flag_pad_file):
+        raise ValueError("artifact_v1 does not support symlink or padding entries")
+    path = storage.file_path(0)
+    if not path or any(char in path for char in '/\\:') or path in ('.', '..'):
+        raise ValueError("artifact_v1 requires a plain single-file container")
+    size = int(storage.file_size(0))
+    if size < 0:
+        raise ValueError("artifact_v1 metadata has a negative file size")
+    return {"info_hash": str(hashes.v1), "files": [{"path": path, "size": size}]}
+
+
+def checked_relay_seeds(seeds):
+    """Only the private Rust relay can be passed as a native artifact WebSeed."""
+    if len(seeds) > 32:
+        raise ValueError("too many artifact WebSeeds")
+    for seed in seeds:
+        parsed = urlsplit(seed)
+        if (len(seed) > 4096 or parsed.scheme != 'http' or parsed.hostname != '127.0.0.1'
+                or not parsed.port or parsed.username or parsed.password
+                or parsed.query or parsed.fragment or not parsed.path.startswith('/')):
+            raise ValueError("artifact WebSeed must use the private loopback relay")
+    return list(seeds)
+
+
+def add_artifact(session, magnet_link, save_path, seeds):
+    params = lt.parse_magnet_uri(magnet_link)
+    params.save_path = save_path
+    # override_web_seeds prevents incoming metadata from reintroducing its own
+    # embedded seeds. Neither fastresume nor HTTP seeds are accepted here.
+    params.flags |= lt.torrent_flags.override_web_seeds
+    params.url_seeds = checked_relay_seeds(seeds)
+    params.http_seeds = []
+    return session.add_torrent(hold_payload(params))
+
+
+def enforce_artifact_seeds(handle, seeds):
+    for seed in handle.url_seeds():
+        if seed not in seeds:
+            handle.remove_url_seed(seed)
+    for seed in handle.http_seeds():
+        handle.remove_http_seed(seed)
+    for seed in seeds:
+        if seed not in handle.url_seeds():
+            handle.add_url_seed(seed)
+
+
+def probe_capabilities():
+    """Exercise installed native bindings with every network facility disabled."""
+    required_handles = ('url_seeds', 'http_seeds', 'remove_url_seed', 'remove_http_seed',
+                        'add_url_seed', 'prioritize_files', 'unset_flags', 'get_file_priorities')
+    if (not hasattr(lt.torrent_flags, 'override_web_seeds')
+            or any(not callable(getattr(lt.torrent_handle, name, None)) for name in required_handles)
+            or not callable(getattr(lt, 'parse_magnet_uri', None))
+            or not callable(getattr(lt.session, 'add_torrent', None))):
+        raise RuntimeError('libtorrent lacks required artifact_v1 bindings')
+    settings = {'listen_interfaces': '', 'enable_dht': False, 'enable_lsd': False,
+                'enable_upnp': False, 'enable_natpmp': False,
+                'enable_outgoing_tcp': False, 'enable_incoming_tcp': False,
+                'enable_outgoing_utp': False, 'enable_incoming_utp': False,
+                'dht_bootstrap_nodes': '', 'ssrf_mitigation': True}
+    probe = lt.session(settings)
+    try:
+        actual = probe.get_settings()
+        if any(actual.get(key) != value for key, value in settings.items()) or probe.listen_port() != 0:
+            raise RuntimeError('libtorrent probe did not honor network-disabled settings')
+        # Exercise the parameter properties used to override embedded WebSeeds;
+        # no torrent is added and no socket/discovery is permitted in this probe.
+        params = lt.parse_magnet_uri('magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567')
+        params.flags |= lt.torrent_flags.override_web_seeds
+        params.url_seeds = []
+        params.http_seeds = []
+        if params.url_seeds or params.http_seeds:
+            raise RuntimeError('libtorrent WebSeed override probe failed')
+    finally:
+        probe.pause()
+        del probe
+    return {'protocol_version': 1, 'artifact_v1': True, 'explicit_webseeds': True,
+            'libtorrent': str(lt.version)}
 
 
 def payload_priorities(handle):
@@ -361,9 +457,23 @@ def main():
     parser = argparse.ArgumentParser(
         description="Fusion Launcher libtorrent download sidecar."
     )
-    parser.add_argument("magnet_link", help="magnet: URI to download")
-    parser.add_argument("save_path", help="destination directory for the files")
+    parser.add_argument("--probe", action="store_true", help="report artifact protocol without network access")
+    parser.add_argument("--artifact", action="store_true", help="isolated single-container mode without resume files")
+    parser.add_argument("--web-seed", action="append", default=[])
+    parser.add_argument("magnet_link", nargs="?", help="magnet: URI to download")
+    parser.add_argument("save_path", nargs="?", help="destination directory for the files")
     args = parser.parse_args()
+
+    if args.probe:
+        if args.magnet_link or args.save_path or args.artifact or args.web_seed:
+            parser.error("--probe cannot be combined with a transfer")
+        emit(probe_capabilities())
+        return 0
+
+    if not args.magnet_link or not args.save_path:
+        parser.error("magnet_link and save_path are required")
+    if args.web_seed and not args.artifact:
+        parser.error("--web-seed requires --artifact")
 
     if not args.magnet_link.startswith("magnet:"):
         log("error: first argument must be a magnet: URI")
@@ -372,11 +482,13 @@ def main():
     session = make_session()
     btih = extract_btih(args.magnet_link)
     resume_file = None
-    if btih:
+    if btih and not args.artifact:
         os.makedirs(args.save_path, exist_ok=True)
         resume_file = os.path.join(args.save_path, f".{btih}.fastresume")
 
-    handle = add_magnet_with_resume(session, args.magnet_link, args.save_path, resume_file)
+    seeds = checked_relay_seeds(args.web_seed) if args.artifact else []
+    handle = (add_artifact(session, args.magnet_link, args.save_path, seeds) if args.artifact else
+              add_magnet_with_resume(session, args.magnet_link, args.save_path, resume_file))
 
     is_paused_flag = [False]
     stop_event = threading.Event()
@@ -392,6 +504,7 @@ def main():
     last_periodic_save = time.time()
     PERIODIC_RESUME_INTERVAL_SECS = 30
     inventory = None
+    validated_layout = None
     expected_total = None
     desired_priorities = None
     metadata_peers = list(lt.parse_magnet_uri(args.magnet_link).peers)
@@ -413,6 +526,9 @@ def main():
             if inventory is None:
                 inventory = metadata_inventory(handle, resume_file)
                 if inventory is not None:
+                    if args.artifact:
+                        validated_layout = artifact_layout(handle)
+                        enforce_artifact_seeds(handle, seeds)
                     storage = handle.torrent_file().files()
                     expected_total = sum(
                         storage.file_size(index)
@@ -428,6 +544,10 @@ def main():
             # the new priorities after we have enabled requests.
             checking = STATE_MAP.get(handle.status().state) == "checking"
             if inventory_approved.is_set() and not payload_requested and not checking:
+                if args.artifact:
+                    if artifact_layout(handle) != validated_layout:
+                        raise ValueError("artifact metadata changed before payload approval")
+                    enforce_artifact_seeds(handle, seeds)
                 # Disconnect the metadata-only connections before changing their
                 # upload-only role. A remote seeder can otherwise close the old
                 # connection after set_upload_mode(false) reset its retry clock,
@@ -455,7 +575,7 @@ def main():
                 for peer in metadata_peers:
                     handle.connect_peer(peer)
                 payload_enabled = True
-            if payload_enabled and now - last_periodic_save >= PERIODIC_RESUME_INTERVAL_SECS:
+            if payload_enabled and not args.artifact and now - last_periodic_save >= PERIODIC_RESUME_INTERVAL_SECS:
                 last_periodic_save = now
                 request_save_resume(handle, only_if_modified=True)
 
@@ -467,26 +587,30 @@ def main():
 
             payload = status_payload(handle, is_paused=is_paused_flag[0])
             payload["inventory"] = inventory
+            if args.artifact:
+                payload["artifact_layout"] = validated_layout
             if not payload_enabled:
                 payload["state"] = "checking"
                 payload["progress"] = 0.0
             emit(payload)
             time.sleep(1)
 
-        if payload_enabled:
+        if payload_enabled and not args.artifact:
             save_and_wait(session, handle, resume_file)
         # The last periodic report can lag behind pieces flushed during stop.
         # Publish the final byte count before the event stream closes. Keep the
         # ownership gate in the final report as well when stopped before approval.
         final_payload = status_payload(handle, is_paused=is_paused_flag[0])
         final_payload["inventory"] = inventory
+        if args.artifact:
+            final_payload["artifact_layout"] = validated_layout
         if not payload_enabled:
             final_payload["state"] = "paused" if is_paused_flag[0] else "checking"
             final_payload["progress"] = 0.0
         emit(final_payload)
         return 0
     except KeyboardInterrupt:
-        if payload_enabled:
+        if payload_enabled and not args.artifact:
             save_and_wait(session, handle, resume_file)
         return 0
 

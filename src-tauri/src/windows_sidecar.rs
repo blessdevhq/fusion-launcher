@@ -11,7 +11,8 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::os::windows::ffi::OsStrExt;
 use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
 use std::process::Command;
-use std::sync::Arc;
+use std::sync::{Arc, Condvar, Mutex, MutexGuard};
+use std::thread::JoinHandle;
 use tauri_plugin_shell::process::{CommandEvent, TerminatedPayload};
 
 type Handle = *mut c_void;
@@ -370,8 +371,124 @@ fn reader(
         })
 }
 
+#[derive(Default)]
+struct ObserverState {
+    process: Option<Arc<OwnedHandle>>,
+    cancelled: bool,
+    stdout: Option<JoinHandle<()>>,
+    stderr: Option<JoinHandle<()>>,
+}
+
+#[derive(Default)]
+struct ObserverHandoff {
+    state: Mutex<ObserverState>,
+    ready: Condvar,
+}
+
+impl ObserverHandoff {
+    fn lock(&self) -> MutexGuard<'_, ObserverState> {
+        // Rollback must also work while unwinding from an observer setup panic.
+        self.state.lock().unwrap_or_else(|error| error.into_inner())
+    }
+
+    fn join_readers(&self) {
+        let (stdout, stderr) = {
+            let mut state = self.lock();
+            (state.stdout.take(), state.stderr.take())
+        };
+        for reader in [stdout, stderr].into_iter().flatten() {
+            let _ = reader.join();
+        }
+    }
+}
+
+/// All fallible worker setup precedes native process creation. Until publication
+/// this owner closes the pipes, cancels the handoff and joins every worker on
+/// both ordinary errors and unwinding.
+struct PreparedObservers {
+    handoff: Arc<ObserverHandoff>,
+    exit: Option<JoinHandle<()>>,
+    receiver: Option<tauri::async_runtime::Receiver<CommandEvent>>,
+    child_pipes: Option<[OwnedHandle; 3]>,
+    process: Option<Arc<OwnedHandle>>,
+    job: Arc<WindowsJob>,
+    published: bool,
+}
+
+impl Drop for PreparedObservers {
+    fn drop(&mut self) {
+        if self.published {
+            return;
+        }
+        // A full output channel must not prevent its reader from being joined.
+        drop(self.receiver.take());
+        drop(self.child_pipes.take());
+        if let Some(process) = &self.process {
+            // There are no fallible operations after native birth. This path
+            // covers unexpected unwinding nevertheless: never release caller
+            // control (which can remove staging) without positive exit proof.
+            loop {
+                let _ = self.job.terminate();
+                let exited = unsafe { WaitForSingleObject(process.as_raw_handle(), 25) } == 0;
+                if exited && matches!(self.job.is_empty(), Ok(true)) {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(25));
+            }
+        }
+        self.handoff.lock().cancelled = true;
+        self.handoff.ready.notify_one();
+        if let Some(exit) = self.exit.take() {
+            let _ = exit.join();
+        }
+        self.handoff.join_readers();
+    }
+}
+
+fn exit_observer(handoff: Arc<ObserverHandoff>, tx: tauri::async_runtime::Sender<CommandEvent>) {
+    let process = {
+        let mut state = handoff.lock();
+        while state.process.is_none() && !state.cancelled {
+            state = handoff
+                .ready
+                .wait(state)
+                .unwrap_or_else(|error| error.into_inner());
+        }
+        if state.cancelled {
+            None
+        } else {
+            state.process.take()
+        }
+    };
+    let event = process.map(|process| {
+        let result = unsafe { WaitForSingleObject(process.as_raw_handle(), u32::MAX) };
+        let mut code = 0;
+        if result == 0 && unsafe { GetExitCodeProcess(process.as_raw_handle(), &mut code) } != 0 {
+            CommandEvent::Terminated(TerminatedPayload {
+                code: Some(code as i32),
+                signal: None,
+            })
+        } else {
+            CommandEvent::Error(error("Waiting for sidecar process failed"))
+        }
+    });
+    // Preserve the final progress/error line before publishing exit. If
+    // descendants retain pipes, stop's bounded timeout terminates the job.
+    handoff.join_readers();
+    if let Some(event) = event {
+        send(&tx, event);
+    }
+}
+
 pub(crate) fn spawn(
     command: Command,
+) -> Result<(tauri::async_runtime::Receiver<CommandEvent>, WindowsChild), String> {
+    spawn_prepared(command, |_| Ok(()))
+}
+
+fn spawn_prepared(
+    command: Command,
+    mut before_observer: impl FnMut(&Arc<WindowsJob>) -> std::io::Result<()>,
 ) -> Result<(tauri::async_runtime::Receiver<CommandEvent>, WindowsChild), String> {
     // Callers currently inherit the launcher environment. Reject unsupported
     // overrides instead of silently changing the shell plugin's semantics.
@@ -410,6 +527,33 @@ pub(crate) fn spawn(
     startup.startup.stdout = handles[1];
     startup.startup.stderr = handles[2];
     startup.attributes = attributes.ptr();
+    let (tx, rx) = tauri::async_runtime::channel(32);
+    let mut observers = PreparedObservers {
+        handoff: Arc::new(ObserverHandoff::default()),
+        exit: None,
+        receiver: Some(rx),
+        child_pipes: Some([child_stdin, child_stdout, child_stderr]),
+        process: None,
+        job: Arc::clone(&job),
+        published: false,
+    };
+    before_observer(&job).map_err(|error| error.to_string())?;
+    observers.handoff.lock().stdout =
+        Some(reader(stdout, tx.clone(), false).map_err(|error| error.to_string())?);
+    before_observer(&job).map_err(|error| error.to_string())?;
+    observers.handoff.lock().stderr =
+        Some(reader(stderr, tx.clone(), true).map_err(|error| error.to_string())?);
+    before_observer(&job).map_err(|error| error.to_string())?;
+    let handoff = Arc::clone(&observers.handoff);
+    observers.exit = Some(
+        std::thread::Builder::new()
+            .name("fusion-sidecar-exit".into())
+            .spawn(move || exit_observer(handoff, tx))
+            .map_err(|error| error.to_string())?,
+    );
+    // Acquire the handoff before birth: publication is only an infallible
+    // assignment/notification, with no channel send or further thread spawn.
+    let mut handoff = observers.handoff.lock();
     let mut info: ProcessInfo = unsafe { std::mem::zeroed() };
     // Assignment is part of process creation. There is no running or suspended
     // unassigned process if the launcher crashes between spawn and publication.
@@ -432,37 +576,16 @@ pub(crate) fn spawn(
             "Creating job-bound sidecar failed (Windows 10+ required)",
         ));
     }
-    let process = unsafe { OwnedHandle::from_raw_handle(info.process) };
+    let process = Arc::new(unsafe { OwnedHandle::from_raw_handle(info.process) });
+    observers.process = Some(Arc::clone(&process));
+    handoff.process = Some(process);
     let thread = unsafe { OwnedHandle::from_raw_handle(info.thread) };
     drop(thread);
-    drop((child_stdin, child_stdout, child_stderr));
-    let (tx, rx) = tauri::async_runtime::channel(32);
-    let stdout_reader = reader(stdout, tx.clone(), false).map_err(|e| e.to_string())?;
-    let stderr_reader = reader(stderr, tx.clone(), true).map_err(|e| e.to_string())?;
-    std::thread::Builder::new()
-        .name("fusion-sidecar-exit".into())
-        .spawn(move || {
-            let result = unsafe { WaitForSingleObject(process.as_raw_handle(), u32::MAX) };
-            let mut code = 0;
-            let event = if result == 0
-                && unsafe { GetExitCodeProcess(process.as_raw_handle(), &mut code) } != 0
-            {
-                CommandEvent::Terminated(TerminatedPayload {
-                    code: Some(code as i32),
-                    signal: None,
-                })
-            } else {
-                CommandEvent::Error(error("Waiting for sidecar process failed"))
-            };
-            drop(process);
-            // Preserve the final progress/error line before publishing exit.
-            // If descendants retain pipes, stop's bounded timeout terminates
-            // the private job and releases these readers.
-            let _ = stdout_reader.join();
-            let _ = stderr_reader.join();
-            send(&tx, event);
-        })
-        .map_err(|e| e.to_string())?;
+    drop(observers.child_pipes.take());
+    drop(handoff);
+    observers.handoff.ready.notify_one();
+    let rx = observers.receiver.take().expect("prepared event receiver");
+    observers.published = true;
     Ok((
         rx,
         WindowsChild {
@@ -525,6 +648,89 @@ mod tests {
             );
             std::thread::sleep(Duration::from_millis(25));
         }
+    }
+
+    #[test]
+    fn observer_setup_failures_precede_native_birth_and_release_workers() {
+        for failed_observer in 0..3 {
+            let temp = tempfile::tempdir().unwrap();
+            let marker = temp.path().join("payload-writer-started.txt");
+            let marker_literal = marker.to_string_lossy().replace('\'', "''");
+            let command = powershell(&format!(
+                "[IO.File]::WriteAllText('{marker_literal}', 'started'); Start-Sleep -Seconds 120"
+            ));
+            let mut observer = 0;
+            let mut retained_job = None;
+            let result = spawn_prepared(command, |job| {
+                assert!(
+                    job.is_empty().unwrap(),
+                    "observer setup followed native birth"
+                );
+                retained_job = Some(Arc::clone(job));
+                let current = observer;
+                observer += 1;
+                if current == failed_observer {
+                    Err(std::io::Error::other("injected observer creation failure"))
+                } else {
+                    Ok(())
+                }
+            });
+            let Err(error) = result else {
+                panic!("observer {failed_observer} fault did not reject spawn");
+            };
+            assert!(error.contains("injected observer creation failure"));
+            assert_eq!(observer, failed_observer + 1);
+            let job = retained_job.unwrap();
+            assert!(
+                job.is_empty().unwrap(),
+                "failed setup left a native process"
+            );
+            assert!(!marker.exists(), "failed setup started a payload writer");
+            // Error return has synchronously joined every prepared worker.
+            assert_eq!(Arc::strong_count(&job), 1);
+            let released = temp.path().with_extension("released");
+            std::fs::rename(temp.path(), &released).unwrap();
+            std::fs::remove_dir_all(released).unwrap();
+        }
+    }
+
+    #[test]
+    fn native_create_failure_cancels_and_joins_all_prepared_observers() {
+        let temp = tempfile::tempdir().unwrap();
+        let command = Command::new(temp.path().join("missing-sidecar.exe"));
+        let mut observers = 0;
+        let mut retained_job = None;
+        let result = spawn_prepared(command, |job| {
+            retained_job = Some(Arc::clone(job));
+            observers += 1;
+            Ok(())
+        });
+        let Err(error) = result else {
+            panic!("missing native executable unexpectedly started");
+        };
+        assert!(error.contains("Creating job-bound sidecar failed"));
+        assert_eq!(observers, 3);
+        let job = retained_job.unwrap();
+        assert!(job.is_empty().unwrap());
+        assert_eq!(Arc::strong_count(&job), 1);
+    }
+
+    #[test]
+    fn observer_setup_unwind_cancels_and_joins_prepared_workers() {
+        let mut retained_job = None;
+        let mut observers = 0;
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = spawn_prepared(powershell("Start-Sleep -Seconds 120"), |job| {
+                retained_job = Some(Arc::clone(job));
+                observers += 1;
+                assert!(observers < 3, "injected observer setup panic");
+                Ok(())
+            });
+        }));
+        assert!(result.is_err());
+        let job = retained_job.unwrap();
+        assert!(job.is_empty().unwrap());
+        assert_eq!(Arc::strong_count(&job), 1);
     }
 
     fn job_process_handles(job: &WindowsJob) -> Vec<(usize, OwnedHandle)> {

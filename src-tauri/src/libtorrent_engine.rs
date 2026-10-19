@@ -31,7 +31,7 @@ use tauri_plugin_shell::process::CommandChild;
 use tauri_plugin_shell::process::CommandEvent;
 use tauri_plugin_shell::ShellExt;
 
-use crate::torrent_engine::{EngineTorrentStats, TorrentEngine};
+use crate::torrent_engine::{EngineArtifactLayout, EngineTorrentStats, TorrentEngine};
 
 /// Name of the bundled sidecar binary (Tauri `externalBin`, resolved per target
 /// triple at runtime).
@@ -55,6 +55,8 @@ struct SidecarProgress {
     total_bytes: u64,
     #[serde(default)]
     inventory: Option<Vec<String>>,
+    #[serde(default)]
+    artifact_layout: Option<EngineArtifactLayout>,
 }
 
 /// Parse a single JSON status line into engine stats, or `None` if the line is
@@ -73,6 +75,7 @@ fn parse_progress_line(line: &str) -> Option<EngineTorrentStats> {
         finished,
         error: None,
         inventory: parsed.inventory,
+        artifact_layout: parsed.artifact_layout,
     })
 }
 
@@ -80,6 +83,8 @@ struct TorrentEntry {
     magnet: String,
     save_dir: String,
     save_identity: String,
+    /// None retains the original legacy command line and resume semantics.
+    artifact_seeds: Option<Vec<String>>,
     /// The running sidecar process, or `None` when paused/terminated.
     child: Option<CommandChild>,
     /// Generation counter incremented on each process spawn.
@@ -573,15 +578,14 @@ impl LibtorrentEngine {
             .map_err(|_| "Torrent engine state is poisoned.".to_string())
     }
 
-    fn create_sidecar_process(
+    fn create_sidecar_process_args(
         &self,
-        magnet: &str,
-        save_dir: &str,
+        args: &[String],
     ) -> Result<(tauri::async_runtime::Receiver<CommandEvent>, CommandChild), String> {
         #[cfg(all(test, windows))]
         if let SidecarLauncher::Executable(executable) = &self.launcher {
             let mut command = std::process::Command::new(executable);
-            command.args([magnet, save_dir]);
+            command.args(args);
             return crate::windows_sidecar::spawn(command);
         }
         #[cfg(not(all(test, windows)))]
@@ -598,7 +602,7 @@ impl LibtorrentEngine {
             .shell()
             .sidecar(SIDECAR_NAME)
             .map_err(|error| format!("Failed to locate torrent sidecar: {error}"))?
-            .args([magnet, save_dir]);
+            .args(args.to_vec());
         #[cfg(windows)]
         let (rx, child) = crate::windows_sidecar::spawn(command.into())?;
         #[cfg(not(windows))]
@@ -607,6 +611,81 @@ impl LibtorrentEngine {
             .map_err(|error| format!("Failed to start torrent sidecar: {error}"))?;
 
         Ok((rx, child))
+    }
+
+    /// Probe executes no torrent/network session; availability requires both a
+    /// bounded capability document and confirmed exit of the complete tree.
+    pub(crate) async fn probe_artifact(&self) -> Result<(), String> {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Probe {
+            protocol_version: u32,
+            artifact_v1: bool,
+            explicit_webseeds: bool,
+            libtorrent: String,
+        }
+        let (mut rx, child) = self.create_sidecar_process_args(&["--probe".into()])?;
+        let completion = ProcessCompletion::for_child(0, 0, &child);
+        let mut child = Some(child);
+        let result = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            let mut document = None;
+            let mut output_bytes = 0usize;
+            while let Some(event) = rx.recv().await {
+                match event {
+                    CommandEvent::Stdout(bytes) => {
+                        output_bytes = output_bytes.saturating_add(bytes.len());
+                        if output_bytes > 4096 || document.is_some() {
+                            return Err("Torrent probe output exceeds its protocol limit.".into());
+                        }
+                        let probe: Probe = serde_json::from_slice(&bytes)
+                            .map_err(|_| "Invalid torrent probe document.".to_string())?;
+                        if probe.protocol_version != 1
+                            || !probe.artifact_v1
+                            || !probe.explicit_webseeds
+                            || probe.libtorrent.is_empty()
+                            || probe.libtorrent.len() > 64
+                        {
+                            return Err("Torrent sidecar does not support artifact_v1.".into());
+                        }
+                        document = Some(probe);
+                    }
+                    CommandEvent::Terminated(payload) => {
+                        completion.terminated(0, 0);
+                        if payload.code != Some(0) || document.is_none() {
+                            return Err("Torrent probe failed or returned no capabilities.".into());
+                        }
+                        completion.wait(std::time::Duration::from_secs(5)).await?;
+                        return Ok(());
+                    }
+                    CommandEvent::Error(error) => return Err(error),
+                    _ => {}
+                }
+            }
+            Err("Torrent probe closed without confirmed exit.".into())
+        })
+        .await
+        .unwrap_or_else(|_| Err("Torrent sidecar probe timed out.".into()));
+        if result.is_err() {
+            #[cfg(windows)]
+            if let Some(tree) = &completion.tree {
+                let _ = tree.terminate();
+            }
+            if let Some(process) = child.take() {
+                let _ = process.kill();
+            }
+            // Keep consuming termination, even after malformed output/timeout.
+            let _ = tokio::time::timeout(KILLED_STOP_TIMEOUT, async {
+                while let Some(event) = rx.recv().await {
+                    if let CommandEvent::Terminated(_) = event {
+                        completion.terminated(0, 0);
+                        break;
+                    }
+                }
+                completion.wait(KILLED_STOP_TIMEOUT).await
+            })
+            .await;
+        }
+        result
     }
 
     fn start_sidecar_event_loop(
@@ -778,7 +857,7 @@ impl LibtorrentEngine {
 
     // Observer installation precedes every fallible post-spawn operation.
     async fn spawn_locked(&self, id: usize) -> Result<(), String> {
-        let (magnet, save_dir, generation) = {
+        let (magnet, save_dir, generation, artifact_seeds) = {
             let mut map = self.lock()?;
             let Some(identity) = map.get(&id).map(|entry| entry.save_identity.clone()) else {
                 return Ok(());
@@ -804,9 +883,18 @@ impl LibtorrentEngine {
                 entry.magnet.clone(),
                 entry.save_dir.clone(),
                 entry.generation,
+                entry.artifact_seeds.clone(),
             )
         };
-        let (rx, child) = match self.create_sidecar_process(&magnet, &save_dir) {
+        let mut args = Vec::new();
+        if let Some(seeds) = artifact_seeds {
+            args.push("--artifact".to_string());
+            for seed in seeds {
+                args.extend(["--web-seed".to_string(), seed]);
+            }
+        }
+        args.extend([magnet, save_dir]);
+        let (rx, child) = match self.create_sidecar_process_args(&args) {
             Ok(pair) => pair,
             Err(error) => {
                 if let Some(entry) = self.lock()?.get_mut(&id) {
@@ -847,9 +935,13 @@ impl LibtorrentEngine {
     }
 }
 
-#[async_trait]
-impl TorrentEngine for LibtorrentEngine {
-    async fn add_magnet(&self, magnet_uri: String, save_dir: String) -> Result<usize, String> {
+impl LibtorrentEngine {
+    async fn add_entry(
+        &self,
+        magnet_uri: String,
+        save_dir: String,
+        artifact_seeds: Option<Vec<String>>,
+    ) -> Result<usize, String> {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let save_identity = Self::save_identity(&save_dir);
         let operation = self.path_operation(&save_identity)?;
@@ -874,6 +966,7 @@ impl TorrentEngine for LibtorrentEngine {
                     magnet: magnet_uri,
                     save_dir,
                     save_identity,
+                    artifact_seeds,
                     child: None,
                     generation: 0,
                     operation: Arc::clone(&operation),
@@ -899,6 +992,25 @@ impl TorrentEngine for LibtorrentEngine {
             return Err(error);
         }
         Ok(id)
+    }
+}
+
+#[async_trait]
+impl TorrentEngine for LibtorrentEngine {
+    async fn add_magnet(&self, magnet_uri: String, save_dir: String) -> Result<usize, String> {
+        self.add_entry(magnet_uri, save_dir, None).await
+    }
+
+    async fn add_artifact(
+        &self,
+        magnet_uri: String,
+        save_dir: String,
+        web_seeds: Vec<String>,
+    ) -> Result<usize, String> {
+        if web_seeds.len() > 32 || web_seeds.iter().any(|seed| seed.len() > 4096) {
+            return Err("Artifact WebSeed limit exceeded.".into());
+        }
+        self.add_entry(magnet_uri, save_dir, Some(web_seeds)).await
     }
 
     async fn pause(&self, id: usize) -> Result<(), String> {
@@ -930,6 +1042,12 @@ impl TorrentEngine for LibtorrentEngine {
         for id in ids {
             self.stop_locked(id, "stop").await?;
         }
+        // Artifact sessions are one-shot and never participate in legacy pause
+        // or resume. A failed add may have published an entry without returning
+        // an id, so retire confirmed artifact entries by their private path.
+        self.lock()?.retain(|_, entry| {
+            !(entry.save_identity == identity && entry.artifact_seeds.is_some())
+        });
         Ok(())
     }
 

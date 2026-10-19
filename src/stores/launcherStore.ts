@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { DEFAULT_SETTINGS, type AppSettings } from '../lib/settings.ts';
+import { combineCatalog, type CatalogEntry, type FusionCatalogEntry } from '../types/fusionSource.ts';
 import type {
   CatalogGame,
   DownloadProgressEvent,
@@ -22,6 +23,8 @@ export interface ActivityEvent {
 
 interface LauncherState {
   catalog: CatalogGame[];
+  fusionCatalog: FusionCatalogEntry[];
+  catalogEntries: CatalogEntry[];
   repositories: RepositorySummary[];
   libraryStatuses: LibraryGameStatus[];
   downloads: TorrentDownloadRecord[];
@@ -32,6 +35,7 @@ interface LauncherState {
   activityEvents: ActivityEvent[];
   removedDownloads: DownloadRemovedEvent[];
   setCatalog: (catalog: CatalogGame[]) => void;
+  setFusionCatalog: (catalog: FusionCatalogEntry[]) => void;
   setRepositories: (repositories: RepositorySummary[]) => void;
   setLibraryStatuses: (statuses: LibraryGameStatus[]) => void;
   setDownloads: (downloads: TorrentDownloadRecord[]) => void;
@@ -46,6 +50,8 @@ interface LauncherState {
 
 export const useLauncherStore = create<LauncherState>((set) => ({
   catalog: [],
+  fusionCatalog: [],
+  catalogEntries: [],
   repositories: [],
   libraryStatuses: [],
   downloads: [],
@@ -55,7 +61,8 @@ export const useLauncherStore = create<LauncherState>((set) => ({
   selectedGameId: null,
   activityEvents: [],
   removedDownloads: [],
-  setCatalog: (catalog) => set({ catalog }),
+  setCatalog: (catalog) => set((state) => ({ catalog, catalogEntries: combineCatalog(catalog, state.fusionCatalog) })),
+  setFusionCatalog: (fusionCatalog) => set((state) => ({ fusionCatalog, catalogEntries: combineCatalog(state.catalog, fusionCatalog) })),
   setRepositories: (repositories) => set({ repositories }),
   setLibraryStatuses: (libraryStatuses) => set((state) => ({
     libraryStatuses: libraryStatuses.map((status) => {

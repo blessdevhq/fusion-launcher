@@ -860,7 +860,7 @@ fn migration_from_v0_legacy_database_with_mixed_records() {
             .conn
             .query_row("PRAGMA user_version;", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(v, 3, "user_version must be bumped to 3 after migration");
+        assert_eq!(v, 4, "user_version must be bumped to 4 after migration");
 
         // Verify attacker repo was demoted, but builtin was kept official
         let attacker = store

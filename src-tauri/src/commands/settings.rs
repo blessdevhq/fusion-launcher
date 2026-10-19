@@ -33,7 +33,14 @@ pub fn get_library_root(state: State<'_, AppState>) -> Result<String, String> {
 }
 
 #[tauri::command]
-pub fn set_library_root(path: String, state: State<'_, AppState>) -> Result<String, String> {
+pub fn set_library_root(
+    path: String,
+    state: State<'_, AppState>,
+    fusion: State<'_, fusion_source::FusionBridge>,
+) -> Result<String, String> {
+    if fusion.has_active_operations() {
+        return Err("Wait for the active Fusion operation before changing the library folder.".into());
+    }
     let trimmed = path.trim();
     if trimmed.is_empty() {
         return Err("Library folder cannot be empty.".to_string());

@@ -181,6 +181,46 @@ pub(crate) async fn fetch_external_bytes(
     .map_err(|_| "External resource timed out while reading body".to_string())?
 }
 
+/// A report upload is an explicit user action. Reject redirects entirely so a
+/// source cannot relay even sanitized report data to an unreviewed destination.
+pub(crate) async fn post_external_json(
+    url: &url::Url,
+    body: &[u8],
+    timeout: Duration,
+) -> Result<(), String> {
+    if url.scheme() != "https" {
+        return Err("Report delivery requires HTTPS".into());
+    }
+    if body.len() > 1024 * 1024 {
+        return Err("Report exceeds the upload limit".into());
+    }
+    let builder = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .connect_timeout(timeout)
+        .user_agent(HTTP_USER_AGENT);
+    let client = target_resolver_builder(builder, url, false)?
+        .build()
+        .map_err(|error| error.to_string())?;
+    let response = tokio::time::timeout(
+        timeout,
+        client
+            .post(url.clone())
+            .header(reqwest::header::CONTENT_TYPE, "application/json")
+            .body(body.to_owned())
+            .send(),
+    )
+    .await
+    .map_err(|_| "Report delivery timed out".to_owned())?
+    .map_err(|error| format_reqwest_error("report delivery", &error))?;
+    if !response.status().is_success() {
+        return Err(format!(
+            "Report delivery returned HTTP {}",
+            response.status()
+        ));
+    }
+    Ok(())
+}
+
 async fn read_bounded_body(
     mut response: reqwest::Response,
     max_bytes: usize,
@@ -728,6 +768,31 @@ mod tests {
 
         assert!(message.contains("source library"));
         assert!(message.contains("Network request failed"));
+    }
+
+    #[tokio::test]
+    async fn report_upload_rejects_unsafe_destinations_and_oversize_before_connecting() {
+        for target in [
+            "http://example.com/report",
+            "https://127.0.0.1/report",
+            "https://192.168.1.1/report",
+            "https://user:password@example.com/report",
+        ] {
+            assert!(post_external_json(
+                &url::Url::parse(target).unwrap(),
+                b"{}",
+                Duration::from_secs(1)
+            )
+            .await
+            .is_err());
+        }
+        let endpoint = url::Url::parse("https://example.com/report").unwrap();
+        assert!(
+            post_external_json(&endpoint, &vec![0; 1024 * 1024 + 1], Duration::from_secs(1))
+                .await
+                .unwrap_err()
+                .contains("upload limit")
+        );
     }
 
     #[tokio::test]

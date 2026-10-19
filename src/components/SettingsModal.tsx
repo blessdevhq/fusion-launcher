@@ -11,6 +11,7 @@ import { GeneralSection } from '@/components/settings/GeneralSection';
 import { MetadataSection } from '@/components/settings/MetadataSection';
 import { MetricLine } from '@/components/settings/shared';
 import { SourcesSection } from '@/components/settings/SourcesSection';
+import { useFusionSourceStore } from '@/stores/fusionSourceStore';
 import { StorageSection } from '@/components/settings/StorageSection';
 import type { BusyAction, BusyState, SettingsSection, UpdatePanelState } from '@/components/settings/types';
 import { getFocusableElements, sectionTitle } from '@/components/settings/utils';
@@ -86,6 +87,7 @@ export function SettingsModal({
   onInstallAppUpdate
 }: SettingsModalProps) {
   const { locale, t } = useI18n();
+  const fusionSourcesCount = useFusionSourceStore((state) => state.sources.length);
   const [savedSettings, setSavedSettings] = useState<AppSettings>(settings);
   const [draftSettings, setDraftSettings] = useState<AppSettings>(settings);
   const [activeSection, setActiveSection] = useState<SettingsSection>('emulators');
@@ -508,7 +510,7 @@ export function SettingsModal({
             <div className="mt-3 grid gap-2 text-xs text-white/[0.54]">
               <MetricLine label={t.settings.readiness.configured} value={`${configuredCount}/${EMULATOR_MANAGER_PLATFORMS.length}`} />
               <MetricLine label={t.settings.readiness.ready} value={`${readyCount}/${EMULATOR_MANAGER_PLATFORMS.length}`} />
-              <MetricLine label={t.settings.readiness.sources} value={String(repositories.length)} />
+              <MetricLine label={t.settings.readiness.sources} value={String(repositories.length + fusionSourcesCount)} />
               <MetricLine label={t.settings.readiness.unsaved} value={hasUnsavedChanges ? t.common.yes : t.common.no} />
             </div>
           </div>
@@ -559,7 +561,7 @@ export function SettingsModal({
               <GeneralSection
                 configuredCount={configuredCount}
                 readyCount={readyCount}
-                repositoriesCount={repositories.length}
+                repositoriesCount={repositories.length + fusionSourcesCount}
                 activeDownloadsCount={activeDownloadsCount}
                 updatePhase={updatePanel.phase}
                 healthReport={healthReport}

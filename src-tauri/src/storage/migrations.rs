@@ -273,7 +273,125 @@ impl RepositoryStore {
             }
         }
 
+        if user_version < 4 {
+            self.migrate_v3_to_v4_inner()?;
+        }
+
         Ok(())
+    }
+
+    fn migrate_v3_to_v4_inner(&self) -> rusqlite::Result<()> {
+        self.conn.execute_batch("BEGIN IMMEDIATE")?;
+        let result = self.conn.execute_batch(
+            r#"
+            CREATE TABLE fusion_sources (
+              id TEXT PRIMARY KEY,
+              url TEXT NOT NULL,
+              public_key TEXT,
+              name TEXT NOT NULL,
+              index_json TEXT NOT NULL,
+              connected INTEGER NOT NULL DEFAULT 1 CHECK (connected IN (0, 1)),
+              connected_at TEXT NOT NULL,
+              refreshed_at TEXT NOT NULL
+            );
+            CREATE TABLE fusion_source_entries (
+              source_id TEXT NOT NULL,
+              game_id TEXT NOT NULL,
+              entry_json TEXT NOT NULL,
+              PRIMARY KEY (source_id, game_id),
+              FOREIGN KEY (source_id) REFERENCES fusion_sources(id)
+            );
+            CREATE TABLE fusion_manifest_snapshots (
+              source_id TEXT NOT NULL,
+              game_id TEXT NOT NULL,
+              manifest_blake3 TEXT NOT NULL,
+              raw_bytes BLOB NOT NULL,
+              canonical_json TEXT NOT NULL,
+              canonical_blake3 TEXT NOT NULL,
+              verified_at TEXT NOT NULL,
+              PRIMARY KEY (source_id, game_id, manifest_blake3)
+            );
+            CREATE TABLE fusion_cas_objects (
+              digest TEXT PRIMARY KEY,
+              size_bytes INTEGER NOT NULL DEFAULT 0 CHECK (size_bytes >= 0),
+              ref_count INTEGER NOT NULL DEFAULT 0 CHECK (ref_count >= 0)
+            );
+            CREATE TABLE fusion_installations (
+              source_id TEXT NOT NULL,
+              game_id TEXT NOT NULL,
+              options_json TEXT NOT NULL DEFAULT '{}',
+              active_snapshot_id TEXT,
+              library_root TEXT,
+              external_workspace_root TEXT,
+              active_version TEXT,
+              active_manifest_blake3 TEXT,
+              status TEXT NOT NULL DEFAULT 'not_installed',
+              updated_at TEXT NOT NULL,
+              PRIMARY KEY (source_id, game_id)
+            );
+            CREATE TABLE fusion_workspace_snapshots (
+              id TEXT PRIMARY KEY,
+              source_id TEXT NOT NULL,
+              game_id TEXT NOT NULL,
+              manifest_blake3 TEXT,
+              snapshot_json TEXT NOT NULL,
+              snapshot_blake3 TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              FOREIGN KEY (source_id, game_id) REFERENCES fusion_installations(source_id, game_id)
+            );
+            CREATE TABLE fusion_layer_refs (
+              snapshot_id TEXT NOT NULL,
+              layer_id TEXT NOT NULL,
+              cas_digest TEXT NOT NULL,
+              PRIMARY KEY (snapshot_id, layer_id),
+              FOREIGN KEY (snapshot_id) REFERENCES fusion_workspace_snapshots(id) ON DELETE CASCADE,
+              FOREIGN KEY (cas_digest) REFERENCES fusion_cas_objects(digest)
+            );
+            CREATE TABLE fusion_operations (
+              id TEXT PRIMARY KEY,
+              source_id TEXT NOT NULL,
+              game_id TEXT NOT NULL,
+              kind TEXT NOT NULL,
+              phase TEXT NOT NULL,
+              sequence INTEGER NOT NULL DEFAULT 0 CHECK (sequence >= 0),
+              status TEXT NOT NULL CHECK (status IN ('queued','running','cancelling','completed','cancelled','failed','interrupted')),
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL
+            );
+            CREATE UNIQUE INDEX idx_fusion_active_operation
+              ON fusion_operations(source_id, game_id)
+              WHERE status IN ('queued','running','cancelling');
+            CREATE TABLE fusion_save_snapshots (
+              id TEXT PRIMARY KEY,
+              source_id TEXT NOT NULL,
+              game_id TEXT NOT NULL,
+              snapshot_json TEXT NOT NULL,
+              created_at TEXT NOT NULL
+            );
+            CREATE TABLE fusion_crash_reports (
+              id TEXT PRIMARY KEY,
+              source_id TEXT NOT NULL,
+              game_id TEXT NOT NULL,
+              signature TEXT NOT NULL,
+              report_json TEXT NOT NULL,
+              occurrences INTEGER NOT NULL DEFAULT 1 CHECK (occurrences > 0),
+              status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','sent','discarded')),
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL,
+              UNIQUE (source_id, game_id, signature)
+            );
+            CREATE INDEX idx_fusion_snapshots_game ON fusion_workspace_snapshots(source_id, game_id);
+            CREATE INDEX idx_fusion_crash_game ON fusion_crash_reports(source_id, game_id, status);
+            PRAGMA user_version = 4;
+            "#,
+        );
+        match result {
+            Ok(()) => self.conn.execute_batch("COMMIT"),
+            Err(error) => {
+                let _ = self.conn.execute_batch("ROLLBACK");
+                Err(error)
+            }
+        }
     }
 
     fn migrate_v0_to_v1_inner(&self) -> rusqlite::Result<()> {

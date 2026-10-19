@@ -5,6 +5,7 @@ import net from 'node:net';
 import path from 'node:path';
 
 import { chromium } from '@playwright/test';
+import { runFusionVisual } from './fusion-visual.mjs';
 
 const root = process.cwd();
 const screenshotsDir = path.join(root, '.tmp', 'mvp-visual');
@@ -137,6 +138,8 @@ async function main() {
   await screenshot(page, '09-settings-modal.png');
   await assertNoHorizontalOverflow(page, 'settings modal');
   await assertNestedScrollContainer(page.getByTestId('settings-modal'), '[data-testid="settings-modal-emulators"]', 'settings modal stable scroll');
+
+  await runFusionVisual(page, { screenshot, assertNoHorizontalOverflow, expectVisible, clickNav });
 
   await page.getByTestId('settings-tab-general').click();
   await expectVisible(page.getByTestId('settings-modal-general'), 'settings modal general panel');

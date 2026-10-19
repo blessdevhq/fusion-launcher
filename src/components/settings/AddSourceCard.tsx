@@ -2,6 +2,8 @@ import { useState } from 'react';
 import { AlertTriangle, Loader2, PackagePlus, ShieldAlert } from 'lucide-react';
 import { useI18n } from '@/components/I18nProvider';
 import { api } from '@/lib/api';
+import { fusionErrorMessage, type SourcePreview } from '@/types/fusionSource';
+import { fusionText } from '@/lib/fusionText';
 import { displayProductText } from '@/lib/brandText';
 import { sourceTrustLabel } from '@/lib/sourceTrust';
 import type { RepositoryPreview } from '@/types/repository';
@@ -12,12 +14,13 @@ import { shortHash, trustBadgeClass } from './utils';
 // (`preview_source` / `add_source`) auto-detects the format and registers it as a
 // browsable library source without installing anything.
 export function AddSourceCard({ onAdded }: { onAdded: () => Promise<void> }) {
-  const { t } = useI18n();
+  const { locale, t } = useI18n();
+  const fusion = fusionText(locale);
   const strings = t.settings.sourcesPanel;
   const [input, setInput] = useState('');
   const [checking, setChecking] = useState(false);
   const [adding, setAdding] = useState(false);
-  const [preview, setPreview] = useState<RepositoryPreview | null>(null);
+  const [preview, setPreview] = useState<SourcePreview | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -31,9 +34,9 @@ export function AddSourceCard({ onAdded }: { onAdded: () => Promise<void> }) {
     setNotice(null);
     setPreview(null);
     try {
-      setPreview(await api.previewSource(trimmed));
+      setPreview(await api.previewAnySource(trimmed));
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught));
+      setError(fusionErrorMessage(caught));
     } finally {
       setChecking(false);
     }
@@ -45,13 +48,13 @@ export function AddSourceCard({ onAdded }: { onAdded: () => Promise<void> }) {
     setError(null);
     setNotice(null);
     try {
-      await api.addSource(trimmed);
+      await api.addAnySource(trimmed, preview ?? undefined);
       await onAdded();
       setNotice(strings.added);
       setInput('');
       setPreview(null);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught));
+      setError(fusionErrorMessage(caught));
     } finally {
       setAdding(false);
     }
@@ -68,7 +71,8 @@ export function AddSourceCard({ onAdded }: { onAdded: () => Promise<void> }) {
       <div className="mt-3 grid gap-2 lg:grid-cols-[minmax(0,1fr)_auto_auto]">
         <textarea
           value={input}
-          onChange={(event) => setInput(event.target.value)}
+          disabled={busy}
+          onChange={(event) => { setInput(event.target.value); setPreview(null); }}
           onKeyDown={(event) => {
             if ((event.ctrlKey || event.metaKey) && event.key === 'Enter' && !busy && trimmed) void check();
           }}
@@ -112,7 +116,17 @@ export function AddSourceCard({ onAdded }: { onAdded: () => Promise<void> }) {
         </div>
       )}
 
-      {preview && <SourcePreviewCard preview={preview} />}
+      {preview?.kind === 'legacy' && <SourcePreviewCard preview={preview.source} />}
+      {preview?.kind === 'fusion_source' && (
+        <div className="mt-4 border-t border-fusion-line pt-4 text-sm" data-testid="add-source-preview">
+          <div className="font-semibold">{preview.source.name}</div>
+          <div className="mt-1 break-all text-white/50">{preview.source.url}</div>
+          <div className="mt-2 text-white/70">Fusion Source v1.0 · {preview.source.gameCount} {t.common.games}</div>
+          <p className="mt-2 break-all text-white/50">{fusion.publicKey}: {preview.source.publicKey ?? fusion.noKey}</p>
+          <p className="mt-2 text-white/50">{fusion.signatureNote}</p>
+          <p className="mt-2 text-white/50">{fusion.indexNote}</p>
+        </div>
+      )}
     </div>
   );
 }

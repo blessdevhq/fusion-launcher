@@ -5,6 +5,8 @@ import { Dashboard } from '@/components/Dashboard';
 import { I18nProvider } from '@/components/I18nProvider';
 import { OnboardingWizard } from '@/components/OnboardingWizard';
 import { api } from '@/lib/api';
+import { useFusionSourceStore } from '@/stores/fusionSourceStore';
+import { useLauncherStore } from '@/stores/launcherStore';
 import { DEFAULT_SETTINGS, loadSettings, type AppSettings } from '@/lib/settings';
 import type { CatalogGame, OnboardingState, RepositorySummary } from '@/types/repository';
 
@@ -15,21 +17,26 @@ export default function HomePage() {
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState<string | null>(null);
+  const fusionSources = useFusionSourceStore((state) => state.sources);
 
   const reload = useCallback(async () => {
     setLoading(true);
     try {
       await api.repairLibrary();
-      const [nextRepositories, nextCatalog, nextOnboardingState, nextSettings] = await Promise.all([
+      const [nextRepositories, nextCatalog, nextOnboardingState, nextSettings, nextFusionSources, nextFusionCatalog] = await Promise.all([
         api.listRepositories(),
         api.getCatalog(),
         api.getOnboardingState(),
-        loadSettings().catch(() => DEFAULT_SETTINGS)
+        loadSettings().catch(() => DEFAULT_SETTINGS),
+        api.fusionSourceList(),
+        api.fusionSourceListCatalog()
       ]);
       setRepositories(nextRepositories);
       setCatalog(nextCatalog);
       setOnboardingState(nextOnboardingState);
       setSettings(nextSettings);
+      useFusionSourceStore.getState().setSourcesAndCatalog(nextFusionSources, nextFusionCatalog);
+      useLauncherStore.getState().setFusionCatalog(nextFusionCatalog);
       setMessage(null);
     } catch (error) {
       setRepositories([]);
@@ -69,7 +76,7 @@ export default function HomePage() {
   // First run shows onboarding only until a source is connected. Metadata and
   // emulator setup are no longer gates here: the emulator installs on demand
   // when a game is installed, and metadata is configured in Settings.
-  if (repositories.length === 0) {
+  if (repositories.length === 0 && fusionSources.length === 0) {
     return (
       <I18nProvider locale={settings.language}>
         <OnboardingWizard

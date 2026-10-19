@@ -25,6 +25,83 @@ def hashes(v1="requested", v2=None):
 
 
 class StdinLifecycleTests(unittest.TestCase):
+    def test_artifact_rejects_every_nonprivate_webseed(self):
+        for seed in ('https://public.example/file', 'http://localhost:1234/file',
+                     'http://127.0.0.1/file', 'http://user@127.0.0.1:1234/file',
+                     'http://127.0.0.1:1234/file?redirect=1', 'http://[::1]:1234/file'):
+            with self.subTest(seed=seed), self.assertRaises(ValueError):
+                sidecar.checked_relay_seeds([seed])
+        self.assertEqual(sidecar.checked_relay_seeds(['http://127.0.0.1:1234/private-token']),
+                         ['http://127.0.0.1:1234/private-token'])
+
+    def test_artifact_overrides_metadata_webseeds_without_resume_loading(self):
+        flags = Mock(upload_mode=1, default_dont_download=2, auto_managed=4,
+                     paused=8, seed_mode=16, override_web_seeds=32)
+        params = SimpleNamespace(flags=0, file_priorities=[4],
+                                 url_seeds=['https://embedded.invalid/file'],
+                                 http_seeds=['http://embedded.invalid/file'])
+        session = Mock()
+        with patch.object(sidecar.lt, 'parse_magnet_uri', return_value=params), \
+             patch.object(sidecar.lt, 'torrent_flags', flags):
+            sidecar.add_artifact(session, 'magnet:?xt=test', 'private',
+                                 ['http://127.0.0.1:1234/token'])
+        self.assertEqual(params.url_seeds, ['http://127.0.0.1:1234/token'])
+        self.assertEqual(params.http_seeds, [])
+        self.assertEqual(params.flags, 1 | 2 | 32)
+        self.assertEqual(params.file_priorities, [0])
+
+    def test_artifact_layout_reports_real_metadata_identity_and_size(self):
+        handle = Mock()
+        handle.status.return_value.has_metadata = True
+        handle.torrent_file.return_value.info_hashes.return_value = hashes('real-metadata')
+        storage = handle.torrent_file.return_value.files.return_value
+        storage.num_files.return_value = 1
+        storage.file_flags.return_value = 0
+        storage.file_path.return_value = 'payload.bin'
+        storage.file_size.return_value = 123
+        with patch.object(sidecar.lt, 'file_storage', Mock(flag_symlink=1, flag_pad_file=2)):
+            self.assertEqual(sidecar.artifact_layout(handle),
+                             {'info_hash': 'real-metadata', 'files': [{'path': 'payload.bin', 'size': 123}]})
+            for filename in ('../outside', 'nested/file.bin', 'file:stream', ''):
+                storage.file_path.return_value = filename
+                with self.subTest(filename=filename), self.assertRaises(ValueError):
+                    sidecar.artifact_layout(handle)
+            storage.num_files.return_value = 2
+            with self.assertRaises(ValueError):
+                sidecar.artifact_layout(handle)
+
+    def test_probe_constructs_only_a_network_disabled_native_session(self):
+        native_session = Mock()
+        native_session.get_settings.side_effect = lambda: sidecar.lt.session.call_args.args[0]
+        native_session.listen_port.return_value = 0
+        params = SimpleNamespace(flags=0, url_seeds=['embedded'], http_seeds=['embedded'])
+        with patch.object(sys, 'argv', ['sidecar', '--probe']), \
+             patch.object(sidecar, 'make_session') as make_session, \
+             patch.object(sidecar.lt, 'session', return_value=native_session) as constructor, \
+             patch.object(sidecar.lt, 'parse_magnet_uri', return_value=params), \
+             patch.object(sidecar.lt, 'torrent_flags', Mock(override_web_seeds=32)), \
+             patch.object(sidecar.lt, 'version', '2.0.11'), \
+             patch.object(sidecar, 'emit') as emit:
+            self.assertEqual(sidecar.main(), 0)
+        make_session.assert_not_called()
+        settings = constructor.call_args.args[0]
+        self.assertEqual(settings['listen_interfaces'], '')
+        self.assertEqual(settings['dht_bootstrap_nodes'], '')
+        self.assertTrue(settings['ssrf_mitigation'])
+        self.assertTrue(all(not value for key, value in settings.items() if key.startswith('enable_')))
+        native_session.add_torrent.assert_not_called()
+        native_session.pause.assert_called_once()
+        self.assertEqual(emit.call_args.args[0], {'protocol_version': 1, 'artifact_v1': True,
+                         'explicit_webseeds': True, 'libtorrent': '2.0.11'})
+
+    def test_probe_rejects_native_runtime_ignoring_network_disable(self):
+        native_session = Mock()
+        native_session.get_settings.return_value = {'listen_interfaces': '0.0.0.0:6881'}
+        with patch.object(sidecar.lt, 'session', return_value=native_session):
+            with self.assertRaises(RuntimeError):
+                sidecar.probe_capabilities()
+        native_session.add_torrent.assert_not_called()
+
     def test_resume_rejects_mapped_paths_before_add(self):
         for mapped in ("C:/foreign/payload.bin", "../foreign.bin", "renamed.bin"):
             with self.subTest(mapped=mapped):

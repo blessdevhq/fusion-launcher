@@ -6,6 +6,7 @@ import { open, confirm } from '@tauri-apps/plugin-dialog';
 import { I18nProvider } from '@/components/I18nProvider';
 import { DeepLinkConfirmModal, type PendingDeepLinkRequest } from '@/components/DeepLinkConfirmModal';
 import { GameDetailsModal } from '@/components/GameDetailsModal';
+import { FusionGameDetailsModal } from '@/components/FusionGameDetailsModal';
 import { GamePortingStudioModal } from '@/components/GamePortingStudioModal';
 import { GlobalDropZone } from '@/components/GlobalDropZone';
 import { LaunchErrorModal } from '@/components/LaunchErrorModal';
@@ -22,6 +23,10 @@ import { collectionTargetForId, type CollectionTarget } from '@/components/shell
 import { useGamepad } from '@/hooks/useGamepad';
 import { buildGameLibraryItems, searchAndSortLibraryItems, type GameLibraryItem, type LibraryFilter, type LibrarySort } from '@/lib/libraryStatus';
 import { api } from '@/lib/api';
+import { fusionPreviewApi } from '@/lib/fusionPreviewData';
+import { selectFusionCatalog } from '@/lib/fusionCatalog';
+import { useFusionSourceStore, isFusionOperationTerminal } from '@/stores/fusionSourceStore';
+import { fusionGameKey, type FusionOperationProgress } from '@/types/fusionSource';
 import { displayProductText } from '@/lib/brandText';
 import { isDirectGameDownload } from '@/lib/downloadActions';
 import { getUiText } from '@/lib/i18n';
@@ -60,6 +65,12 @@ export function Dashboard({
 }: DashboardProps) {
   const storeCatalog = useLauncherStore((state) => state.catalog);
   const storeRepositories = useLauncherStore((state) => state.repositories);
+  const fusionSources = useFusionSourceStore((state) => state.sources);
+  const fusionCatalog = useLauncherStore((state) => state.fusionCatalog);
+  const fusionOperations = useFusionSourceStore((state) => state.operations);
+  const setFusionCatalog = useLauncherStore((state) => state.setFusionCatalog);
+  const setFusionSourcesAndCatalog = useFusionSourceStore((state) => state.setSourcesAndCatalog);
+  const mergeFusionOperation = useFusionSourceStore((state) => state.mergeOperation);
   const libraryStatuses = useLauncherStore((state) => state.libraryStatuses);
   const downloads = useLauncherStore((state) => state.downloads);
   const settings = useLauncherStore((state) => state.settings);
@@ -83,6 +94,7 @@ export function Dashboard({
   const [librarySearch, setLibrarySearch] = useState('');
   const [librarySort, setLibrarySort] = useState<LibrarySort>('title');
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [selectedFusionKey, setSelectedFusionKey] = useState<string | null>(null);
   const [portingStudioOpen, setPortingStudioOpen] = useState(false);
   const [portingStudioInitialFile, setPortingStudioInitialFile] = useState<string | undefined>(undefined);
   const [settingsMessage, setSettingsMessage] = useState<string | null>(null);
@@ -117,21 +129,39 @@ export function Dashboard({
 
   const refreshLauncherData = useCallback(async () => {
     try {
-      const [nextCatalog, nextLibraryStatuses, nextDownloads] = await Promise.all([
+      const [nextCatalog, nextLibraryStatuses, nextDownloads, nextRepositories, nextFusionSources, nextFusionCatalog] = await Promise.all([
         api.getCatalog(),
         api.getLibraryStatuses(),
-        api.listTorrentDownloads()
+        api.listTorrentDownloads(),
+        api.listRepositories(),
+        api.fusionSourceList(),
+        api.fusionSourceListCatalog()
       ]);
       setCatalog(nextCatalog);
       setLibraryStatuses(nextLibraryStatuses);
       setDownloads(nextDownloads);
+      setRepositories(nextRepositories);
+      setFusionSourcesAndCatalog(nextFusionSources, nextFusionCatalog);
+      setFusionCatalog(nextFusionCatalog);
       setLauncherMessage(null);
     } catch (error) {
       setLauncherMessage(error instanceof Error ? error.message : String(error));
     } finally {
       setDataReady(true);
     }
-  }, [setCatalog, setDownloads, setLibraryStatuses]);
+  }, [setCatalog, setDownloads, setLibraryStatuses, setRepositories, setFusionSourcesAndCatalog, setFusionCatalog]);
+
+  useEffect(() => {
+    let active = true;
+    const receive = (event: FusionOperationProgress) => {
+      if (!active) return;
+      mergeFusionOperation(event);
+      if (isFusionOperationTerminal(event)) void refreshLauncherData();
+    };
+    if (!isTauriRuntime()) return fusionPreviewApi.subscribe(receive);
+    const registration = listen<FusionOperationProgress>('fusion-source:operation-progress', (event) => receive(event.payload));
+    return () => { active = false; void registration.then((unlisten) => unlisten()); };
+  }, [mergeFusionOperation, refreshLauncherData]);
 
   useEffect(() => {
     let cancelled = false;
@@ -280,6 +310,8 @@ export function Dashboard({
     [downloads]
   );
   const selectedGame = selectedGameId ? storeCatalog.find((game) => game.id === selectedGameId) ?? null : null;
+  const selectedFusionGame = selectedFusionKey ? fusionCatalog.find((game) => fusionGameKey(game) === selectedFusionKey) ?? null : null;
+  const visibleFusionCatalog = useMemo(() => selectFusionCatalog(fusionCatalog, libraryFilter, librarySearch, librarySort, fusionOperations), [fusionCatalog, libraryFilter, librarySearch, librarySort, fusionOperations]);
   const visibleLibraryItems = useMemo(
     () => searchAndSortLibraryItems(items, libraryFilter, librarySearch, librarySort),
     [items, libraryFilter, librarySearch, librarySort]
@@ -592,6 +624,14 @@ export function Dashboard({
       setActiveView(value as LauncherView);
       return;
     }
+    if (kind === 'fusion-game') {
+      setSelectedGameId(null);
+      setSelectedFusionKey(safeDecodeURIComponent(value));
+      return;
+    }
+    if (kind === 'fusion-library') {
+      setActiveView('library'); setLibraryFilter('all'); setLibrarySearch(''); return;
+    }
     if (kind === 'top') {
       if (value === 'refresh') void refreshAll();
       if (value === 'notifications') setNotificationsOpen((open) => !open);
@@ -680,14 +720,15 @@ export function Dashboard({
     document
       .querySelector<HTMLElement>(`[data-focus-id="${cssEscape(focusedItemId)}"]`)
       ?.setAttribute('data-focus-active', 'true');
-  }, [activeView, downloads.length, focusedItemId, items.length, notificationsOpen, selectedGameId, settingsOpen]);
+  }, [activeView, downloads.length, focusedItemId, items.length, notificationsOpen, selectedGameId, selectedFusionKey, settingsOpen]);
 
   useGamepad({
     focusedItemId,
     setFocusedItemId,
     onActivate: focusActivate,
     onBack: () => {
-      if (notificationsOpen) setNotificationsOpen(false);
+      if (selectedFusionKey) setSelectedFusionKey(null);
+      else if (notificationsOpen) setNotificationsOpen(false);
       else if (selectedGameId) setSelectedGameId(null);
       else if (settingsOpen) setSettingsOpen(false);
       else setActiveView('home');
@@ -704,8 +745,8 @@ export function Dashboard({
     <I18nProvider locale={locale}>
       <AppShell
         activeView={activeView}
-        repositoriesCount={storeRepositories.length}
-        activeDownloadsCount={activeDownloadsCount}
+        repositoriesCount={storeRepositories.length + fusionSources.length}
+        activeDownloadsCount={activeDownloadsCount + Object.values(fusionOperations).filter((operation) => !isFusionOperationTerminal(operation)).length}
         onNavigate={setActiveView}
         onOpenSettings={() => {
           setNotificationsOpen(false);
@@ -759,6 +800,8 @@ export function Dashboard({
             onOpenCollection={openLibraryCollection}
             onOpenSettings={() => setSettingsOpen(true)}
             onFocus={setFocusedItemId}
+            fusionCount={fusionCatalog.length}
+            onOpenFusionLibrary={() => { setActiveView('library'); setLibraryFilter('all'); setLibrarySearch(''); }}
           />
         )}
 
@@ -778,12 +821,19 @@ export function Dashboard({
             onPrimaryAction={(item) => void executePrimaryAction(item)}
             onOpenDetails={(game) => setSelectedGameId(game.id)}
             onFocus={setFocusedItemId}
+            fusionEntries={visibleFusionCatalog}
+            allFusionEntries={fusionCatalog}
+            fusionOperations={fusionOperations}
+            onOpenFusion={(game) => { setSelectedGameId(null); setSelectedFusionKey(fusionGameKey(game)); }}
           />
         )}
 
         {activeView === 'downloads' && (
           <DownloadsScreen
             downloads={downloads}
+            fusionOperations={fusionOperations}
+            fusionGames={fusionCatalog}
+            onOpenFusion={(game) => { setSelectedGameId(null); setSelectedFusionKey(fusionGameKey(game)); }}
             itemsByGameId={itemsByGameId}
             busyAction={busyAction}
             onOpenDetails={(game) => setSelectedGameId(game.id)}
@@ -808,7 +858,9 @@ export function Dashboard({
           />
         )}
 
-        {selectedGame && (
+        {selectedFusionGame && <FusionGameDetailsModal game={selectedFusionGame} onClose={() => setSelectedFusionKey(null)} onRefresh={refreshLauncherData} />}
+
+        {selectedGame && !selectedFusionGame && (
           <GameDetailsModal
             game={selectedGame}
             settings={settings}

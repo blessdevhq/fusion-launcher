@@ -31,6 +31,8 @@ use crate::setup_profiles;
 use crate::storage::RepositoryStore;
 use crate::AppState;
 
+pub mod fusion_source;
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RepairLibraryReport {

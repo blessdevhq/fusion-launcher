@@ -57,6 +57,7 @@ mod catalog;
 mod config;
 mod downloads;
 mod emulators;
+pub mod fusion_source;
 mod metadata;
 mod migrations;
 mod operations;

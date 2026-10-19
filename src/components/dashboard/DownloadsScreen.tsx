@@ -10,6 +10,8 @@ import { ACTIVE_DOWNLOAD_STATUSES, RESUMABLE_DOWNLOAD_STATUSES } from './constan
 import { ScreenHeader } from './shared';
 import type { BusyAction } from './types';
 import { downloadStatusHint, formatBytes, formatSpeed, summarizeDownloads } from './utils';
+import { FusionOperationRows } from './FusionOperationRows';
+import type { FusionCatalogEntry, FusionOperationProgress } from '@/types/fusionSource';
 
 export function DownloadsScreen({
   downloads,
@@ -23,7 +25,10 @@ export function DownloadsScreen({
   onOpenFolder,
   onDeleteFiles,
   onPlay,
-  onFocus
+  onFocus,
+  fusionOperations = {},
+  fusionGames = [],
+  onOpenFusion
 }: {
   downloads: TorrentDownloadRecord[];
   itemsByGameId: Map<string, GameLibraryItem>;
@@ -37,6 +42,9 @@ export function DownloadsScreen({
   onDeleteFiles: (gameId: string) => Promise<void>;
   onPlay: (item: GameLibraryItem) => void;
   onFocus: (focusId: string) => void;
+  fusionOperations?: Record<string, FusionOperationProgress>;
+  fusionGames?: FusionCatalogEntry[];
+  onOpenFusion?: (game: FusionCatalogEntry) => void;
 }) {
   const { t } = useI18n();
   const summary = summarizeDownloads(downloads);
@@ -87,7 +95,8 @@ export function DownloadsScreen({
           <DownloadMetric label={t.dashboard.downloads.downloaded} value={formatBytes(summary.downloadedBytes)} tone="ready" />
         </div>
         <div className="rh-download-list">
-          {downloads.length === 0 ? (
+          {onOpenFusion && <FusionOperationRows operations={fusionOperations} games={fusionGames} onOpen={onOpenFusion} onFocus={onFocus} />}
+          {downloads.length === 0 && Object.keys(fusionOperations).length === 0 ? (
             <div className="rh-empty-compact">{t.dashboard.downloads.empty}</div>
           ) : groups.map(({ parent, children }) => (
             <div key={parent.gameId} className={children.length > 0 ? 'rh-download-group' : undefined}>

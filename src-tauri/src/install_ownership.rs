@@ -906,13 +906,16 @@ mod windows_identity {
             .ok_or("Publication path is too long.")?;
         let length = offset
             .checked_add(bytes)
+            .and_then(|length| length.checked_add(std::mem::size_of::<u16>()))
             .ok_or("Publication path is too long.")?;
         let size = u32::try_from(length).map_err(|_| "Publication path is too long.")?;
         // usize backing gives the structure its required HANDLE alignment.
         let mut buffer = vec![0usize; length.div_ceil(std::mem::size_of::<usize>())];
         let information = buffer.as_mut_ptr().cast::<RenameInformation>();
-        // SAFETY: aligned allocation covers the header and the complete UTF-16
-        // filename, and remains live through the synchronous kernel call.
+        // Win32 path conversion can read the UTF-16 terminator even though
+        // FileNameLength excludes it. Reserve it explicitly for every alignment.
+        // SAFETY: aligned allocation covers the header, name and terminator,
+        // and remains live through the synchronous kernel call.
         let success = unsafe {
             (*information).replace_if_exists = 0;
             (*information).root_directory = std::ptr::null_mut();
@@ -922,6 +925,13 @@ mod windows_identity {
                 buffer.as_mut_ptr().cast::<u8>().add(offset).cast::<u16>(),
                 name.len(),
             );
+            buffer
+                .as_mut_ptr()
+                .cast::<u8>()
+                .add(offset)
+                .cast::<u16>()
+                .add(name.len())
+                .write(0);
             SetFileInformationByHandle(file.as_raw_handle(), 3, information.cast(), size)
         };
         if success == 0 {
@@ -1167,6 +1177,53 @@ mod tests {
         delete_open_file(&file).unwrap();
         drop(file);
         assert!(!path.exists());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn publication_terminates_utf16_names_for_all_alignments_and_preserves_collisions() {
+        use std::collections::BTreeSet;
+        use std::os::windows::ffi::OsStrExt;
+        let directory = tempfile::tempdir().unwrap();
+        let long_parent = directory
+            .path()
+            .join("长目录".repeat(20))
+            .join("длинный-каталог".repeat(4))
+            .join("nested".repeat(12));
+        fs::create_dir_all(&long_parent).unwrap();
+        let mut alignments = BTreeSet::new();
+        for parent in [directory.path().to_owned(), long_parent] {
+            for stem in ["payload", "файл", "🔒-文件"] {
+                for suffix in 0..8 {
+                    let destination = parent.join(format!("{stem}{}.bin", "x".repeat(suffix)));
+                    alignments.insert(
+                        parent
+                            .canonicalize()
+                            .unwrap()
+                            .join(destination.file_name().unwrap())
+                            .as_os_str()
+                            .encode_wide()
+                            .count()
+                            % 4,
+                    );
+                    let source = parent.join("private.part");
+                    fs::write(&source, b"verified bytes").unwrap();
+                    let file = open_publication_file(&source).unwrap();
+                    publish_rename_no_replace(&file, &destination).unwrap();
+                    drop(file);
+                    assert!(!source.exists());
+                    assert_eq!(fs::read(&destination).unwrap(), b"verified bytes");
+                    fs::write(&source, b"collision bytes").unwrap();
+                    let file = open_publication_file(&source).unwrap();
+                    assert!(publish_rename_no_replace(&file, &destination).is_err());
+                    drop(file);
+                    assert_eq!(fs::read(&destination).unwrap(), b"verified bytes");
+                    assert_eq!(fs::read(&source).unwrap(), b"collision bytes");
+                    fs::remove_file(source).unwrap();
+                }
+            }
+        }
+        assert_eq!(alignments, BTreeSet::from([0, 1, 2, 3]));
     }
 
     #[cfg(windows)]

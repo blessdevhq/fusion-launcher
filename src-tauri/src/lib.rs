@@ -15,6 +15,7 @@ mod downloads;
 mod emulator_profiles;
 pub(crate) mod exe_integrity;
 pub mod execution;
+pub mod fusion_source;
 mod game_files;
 mod github_resolver;
 mod install_ownership;
@@ -155,6 +156,10 @@ pub fn run() {
                 library_scrape: scraper::LibraryScrapeRuntime::new(),
             };
             app.manage(app_state.clone());
+            app.manage(
+                commands::fusion_source::FusionBridge::new(app.handle(), &app_state)
+                    .map_err(|error| setup_error(error.to_string()))?,
+            );
 
             // Background cover backfill: fill in missing cover art for catalog
             // games on launch. No-op without a SteamGridDB key, and capped so a
@@ -179,6 +184,24 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            commands::fusion_source::fusion_source_preview,
+            commands::fusion_source::fusion_source_add,
+            commands::fusion_source::fusion_source_list,
+            commands::fusion_source::fusion_source_refresh,
+            commands::fusion_source::fusion_source_remove,
+            commands::fusion_source::fusion_source_list_catalog,
+            commands::fusion_source::fusion_game_get_state,
+            commands::fusion_source::fusion_game_set_options,
+            commands::fusion_source::fusion_game_install,
+            commands::fusion_source::fusion_game_update,
+            commands::fusion_source::fusion_game_cancel,
+            commands::fusion_source::fusion_game_rollback,
+            commands::fusion_source::fusion_game_launch,
+            commands::fusion_source::fusion_game_remove,
+            commands::fusion_source::fusion_game_trust_executable,
+            commands::fusion_source::fusion_crash_preview,
+            commands::fusion_source::fusion_crash_send,
+            commands::fusion_source::fusion_crash_discard,
             commands::preview_repository,
             commands::preview_repository_file,
             commands::preview_builtin_demo_repository,

@@ -1,0 +1,55 @@
+{
+  "schema_version": "1.0",
+  "id": "ps5-azimuth",
+  "title": "PS5 / Azimuth / shadPS4 (fictional compatibility example)",
+  "version": "2.0.0",
+  "platform": "ps5",
+  "capabilities": {
+    "required": ["core.layers.v1", "vfs.hardlink.v1", "resolver.https.v1", "patch.xdelta3.v1", "provider.github_releases.v1"],
+    "optional": []
+  },
+  "layers": [
+    {
+      "id": "base",
+      "kind": "base",
+      "size_bytes": 120000000000,
+      "source": {"kind": "user_provided", "instructions": "Select your own game files; this fixture distributes no game content."},
+      "mount_path": "game",
+      "critical_files": [{"path": "eboot.bin", "blake3": "1111111111111111111111111111111111111111111111111111111111111111", "role": "core_library"}]
+    },
+    {
+      "id": "delta-update",
+      "kind": "patch",
+      "depends_on": ["base"],
+      "source": {"kind": "remote", "mirrors": ["https://example.org/fusion-fixtures/example-update.xdelta"], "archive": "raw"},
+      "transport_digest": {"algorithm": "sha256", "value": "2222222222222222222222222222222222222222222222222222222222222222"},
+      "mount_path": "patches",
+      "patch": {
+        "format": "xdelta3",
+        "base_layer": "base",
+        "input_path": "game/data/level.bin",
+        "output_path": "game/data/level.bin",
+        "input_digest": {"algorithm": "blake3", "value": "3333333333333333333333333333333333333333333333333333333333333333"},
+        "output_digest": {"algorithm": "blake3", "value": "4444444444444444444444444444444444444444444444444444444444444444"}
+      }
+    },
+    {
+      "id": "runtime",
+      "kind": "runtime",
+      "source": {"kind": "remote", "mirrors": ["https://example.org/fusion-fixtures/azimuth-shadps4.zip"], "archive": "zip"},
+      "transport_digest": {"algorithm": "blake3", "value": "5555555555555555555555555555555555555555555555555555555555555555"},
+      "mount_path": "runtime",
+      "writable_copy_paths": ["config/**", "cache/**"],
+      "critical_files": [
+        {"path": "emulator.exe", "blake3": "6666666666666666666666666666666666666666666666666666666666666666", "role": "main_executable"},
+        {"path": "core.dll", "blake3": "7777777777777777777777777777777777777777777777777777777777777777", "role": "core_library"}
+      ],
+      "dynamic_provider": {"repo": "example/azimuth-shadps4-fixture", "asset_mask": "*-windows-x64.zip", "channel": "nightly", "tag": "nightly"}
+    }
+  ],
+  "runtime": {"layer_id": "runtime", "executable": "runtime/emulator.exe", "args": ["{{WORKSPACE_DIR}}/game/eboot.bin"], "default_channel": "pinned"},
+  "persistence": {"saves_paths": ["workspace/runtime/user/savedata", "{{LOCALAPPDATA}}/FusionExample/azimuth/saves"]},
+  "config_templates": [
+    {"id": "runtime-config", "path": "runtime/config/settings.json", "format": "json", "template": "{\"width\":{{DISPLAY_WIDTH}},\"height\":{{DISPLAY_HEIGHT}}}"}
+  ]
+}
