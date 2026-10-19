@@ -117,7 +117,7 @@ export function FusionGameDetailsModal({ game, onClose, onRefresh }: {
         </header>
         <div className="min-h-0 overflow-y-auto p-5">
           {loading && <p role="status" className="flex gap-2 text-sm text-white/60"><Loader2 className="h-4 w-4 animate-spin" />{text.loading}</p>}
-          {message && <p role="alert" className="rh-banner !m-0 !mb-4 break-words whitespace-pre-line" data-testid="fusion-game-message">{message}</p>}
+          {message && <p role="alert" className="rh-banner select-text !m-0 !mb-4 break-words whitespace-pre-line" data-testid="fusion-game-message">{message}</p>}
           {!isTauriRuntime() && <p className="mb-4 text-xs text-white/50">{text.previewNote}</p>}
           {state && <>
             <div className="mb-5 flex flex-wrap gap-x-6 gap-y-2 text-sm">
@@ -126,7 +126,7 @@ export function FusionGameDetailsModal({ game, onClose, onRefresh }: {
             </div>
             {state.blockers.length > 0 && <div className="mb-5 border-l-2 border-[var(--rh-warning)] pl-3" data-testid="fusion-blockers">
               <h3 className="font-semibold">{text.blockers}</h3>
-              {state.blockers.map((blocker, index) => <p key={`${blocker.code}:${index}`} className="mt-2 break-words text-sm text-white/70"><span className="font-mono text-xs">{blocker.code}</span> · {blocker.message}</p>)}
+              {state.blockers.map((blocker, index) => <p key={`${blocker.code}:${index}`} className="mt-2 select-text break-words text-sm text-white/70"><span className="font-mono text-xs">{blocker.code}</span> · {blocker.message}</p>)}
             </div>}
             {state.warnings.length > 0 && <div className="mb-5 text-sm text-white/60"><h3 className="font-semibold text-white/80">{text.warnings}</h3>{state.warnings.map((warning, i) => <p className="mt-2" key={i}>{warning}</p>)}</div>}
             <div className="grid gap-5 border-t border-fusion-line py-5 sm:grid-cols-2">
@@ -156,7 +156,7 @@ export function FusionGameDetailsModal({ game, onClose, onRefresh }: {
               <p className="break-words text-white/70">{exe.path}</p><p className="mt-1 select-text break-all font-mono text-white/40">BLAKE3 {exe.blake3}</p>
               {exe.trusted ? <p className="mt-2 text-fusion-accent">{text.trusted}</p> : <button type="button" onClick={() => void run(() => api.fusionGameTrustExecutable(game.sourceId, game.gameId, exe.path, exe.blake3))} className="rh-mini-action rh-focusable mt-2" disabled={disabled} data-testid="fusion-trust-executable"><ShieldCheck className="h-4 w-4" />{text.trust}</button>}
             </div>)}
-            {activeOperation && <div className="mb-5 border-t border-fusion-line pt-3" role="status" data-testid="fusion-operation-progress"><p className="text-sm text-white/70">{text.operation}: {activeOperation.phase}{activeOperation.layerId ? ` · ${activeOperation.layerId}` : ''} · {activeOperation.status}</p>{activeOperation.error && <p className="mt-2 text-sm text-white/60">{activeOperation.error.message}</p>}</div>}
+            {activeOperation && <div className="mb-5 border-t border-fusion-line pt-3" role="status" data-testid="fusion-operation-progress"><p className="text-sm text-white/70">{text.operation}: {activeOperation.phase}{activeOperation.layerId ? ` · ${activeOperation.layerId}` : ''} · {activeOperation.status}</p>{activeOperation.error && <p className="mt-2 select-text break-words text-sm text-white/60">{activeOperation.error.message}</p>}</div>}
             {state.crashReportIds?.length > 0 && <div className="border-t border-fusion-line py-4"><h3 className="mb-2 text-sm font-semibold">{text.crashes}</h3>{state.crashReportIds.map((reportId) => <button key={reportId} type="button" className="rh-mini-action rh-focusable" onClick={() => void run(async () => setReport(await api.fusionCrashPreview(reportId)))} data-testid="fusion-crash-preview">{text.previewCrash}</button>)}</div>}
             {report && <div className="border-t border-fusion-line py-4" data-testid="fusion-crash-report"><pre className="max-h-64 overflow-auto whitespace-pre-wrap break-all rounded-sm bg-fusion-bg p-3 text-xs text-white/70">{JSON.stringify(report, null, 2)}</pre><p className="mt-2 break-all text-xs text-white/50">{report.canSend ? `${text.endpoint}: ${report.endpoint}` : text.noEndpoint}</p><div className="mt-3 flex flex-wrap gap-2"><button type="button" disabled={disabled || !report.canSend || !report.endpoint} className="rh-mini-action rh-focusable" onClick={() => void run(() => api.fusionCrashSend(report.reportId, report.endpoint!), text.reported)} data-testid="fusion-crash-send">{text.send}</button><button type="button" disabled={disabled} className="rh-mini-action rh-focusable" onClick={() => void run(async () => { await api.fusionCrashDiscard(report.reportId); setReport(null); }, text.discarded)} data-testid="fusion-crash-discard">{text.discard}</button></div></div>}
           </>}

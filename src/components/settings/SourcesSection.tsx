@@ -103,7 +103,7 @@ function FusionSourceCard({ source, onRefresh }: { source: FusionSourceSummary; 
       <button type="button" disabled={busy} className="rh-mini-action rh-focusable" onClick={() => void run(() => api.fusionSourceRefresh(source.sourceId))} data-testid="fusion-source-refresh">{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCcw className="h-4 w-4" />}{text.refresh}</button>
       <button type="button" disabled={busy} className="rh-mini-action rh-focusable" onClick={() => { if (window.confirm(text.removeSourceConfirm)) void run(() => api.fusionSourceRemove(source.sourceId)); }} data-testid="fusion-source-remove"><Ban className="h-4 w-4" />{text.disconnect}</button>
     </div>
-    {error && <p role="alert" className="mt-3 break-words text-xs text-[var(--rh-warning)]">{error}</p>}
+    {error && <p role="alert" className="mt-3 select-text break-words text-xs text-[var(--rh-warning)]">{error}</p>}
   </div>;
 }
 

@@ -226,7 +226,7 @@ export function DeepLinkConfirmModal({ request, onClose }: DeepLinkConfirmModalP
         {errorMessage && (
           <div className="mt-4 flex items-start gap-2.5 rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-200">
             <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-red-400" />
-            <div className="min-w-0 flex-1 break-words">{errorMessage}</div>
+            <div className="min-w-0 flex-1 select-text break-words">{errorMessage}</div>
           </div>
         )}
 

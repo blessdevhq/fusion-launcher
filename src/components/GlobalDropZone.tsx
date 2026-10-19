@@ -282,7 +282,7 @@ export function GlobalDropZone({
           )}
         </div>
 
-        <h3 className="mb-2 text-2xl font-black tracking-tight text-white">
+        <h3 className={`mb-2 text-2xl font-black tracking-tight text-white ${lastResult && !lastResult.success ? 'select-text break-words' : ''}`}>
           {isProcessing
             ? t.dashboard.dropzone.processing
             : lastResult

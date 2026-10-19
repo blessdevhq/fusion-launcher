@@ -786,7 +786,7 @@ export function Dashboard({
             setActiveView('library');
           }}
         />
-        {bannerMessage && <div className="rh-banner break-words">{bannerMessage}</div>}
+        {bannerMessage && <div className="rh-banner select-text break-words">{bannerMessage}</div>}
 
         {activeView === 'home' && (
           <HomeScreen
