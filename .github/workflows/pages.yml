@@ -16,6 +16,7 @@ on:
       - 'scripts/validate-source-library.mjs'
       - 'src/types/repository.ts'
       - 'templates/source-library/**'
+      - 'public/live-showcase/**'
   workflow_dispatch:
 
 permissions:
@@ -51,6 +52,11 @@ jobs:
 
       - name: Build Pages artifact
         run: npm run pages:build
+
+      - name: Add signed live showcase source
+        run: |
+          mkdir -p out/live-showcase
+          cp -R public/live-showcase/. out/live-showcase/
 
       - name: Configure Pages
         uses: actions/configure-pages@v6

@@ -1,0 +1,159 @@
+{
+  "capabilities": {
+    "optional": [],
+    "required": []
+  },
+  "config_templates": [
+    {
+      "format": "toml",
+      "id": "display-cfg",
+      "path": "runtime/config/display.toml",
+      "template": "workspace_dir = \"{{WORKSPACE_DIR}}\"\nwidth = {{DISPLAY_WIDTH}}\nheight = {{DISPLAY_HEIGHT}}\nrefresh_rate = {{REFRESH_RATE}}\nunlock_60fps = {{ADDON_ENABLED:addon-60fps}}\ncrash_sim = {{ADDON_ENABLED:addon-crash-test}}\n"
+    }
+  ],
+  "extends": null,
+  "fallback": [],
+  "id": "forza-horizon-2-showcase",
+  "launch": null,
+  "layers": [
+    {
+      "content": "generic",
+      "critical_files": [],
+      "default_enabled": false,
+      "depends_on": [],
+      "dynamic_provider": null,
+      "id": "base",
+      "kind": "base",
+      "mount_path": "",
+      "optional": false,
+      "patch": null,
+      "size_bytes": 190126,
+      "source": {
+        "archive": "zip",
+        "kind": "remote",
+        "mirrors": [
+          "https://blessdevhq.github.io/fusion-launcher/live-showcase/artifacts/99539494e31ed5e0a5cd2140afea285cd2a035660018dae4b8a796afd60cafe8.zip"
+        ]
+      },
+      "transport_digest": {
+        "algorithm": "blake3",
+        "value": "99539494e31ed5e0a5cd2140afea285cd2a035660018dae4b8a796afd60cafe8"
+      },
+      "writable_copy_paths": []
+    },
+    {
+      "content": "generic",
+      "critical_files": [
+        {
+          "blake3": "12120e4238013dbd1a9133c0ab80c08040cb56ab43cd3ffa24db84d231dca0f7",
+          "path": "core.dll",
+          "role": "core_library"
+        },
+        {
+          "blake3": "acd524d03227a92185fca05985f809b1e32e91c6cd9dc445fda19b537a640efa",
+          "path": "emulator.exe",
+          "role": "main_executable"
+        }
+      ],
+      "default_enabled": false,
+      "depends_on": [
+        "base"
+      ],
+      "dynamic_provider": null,
+      "id": "runtime",
+      "kind": "runtime",
+      "mount_path": "runtime",
+      "optional": false,
+      "patch": null,
+      "size_bytes": 1565520,
+      "source": {
+        "archive": "zip",
+        "kind": "remote",
+        "mirrors": [
+          "https://blessdevhq.github.io/fusion-launcher/live-showcase/artifacts/e71f3bdfa28cb48208b6a000b4ced022856a3b1a1f45d850b9830816124aff08.zip"
+        ]
+      },
+      "transport_digest": {
+        "algorithm": "blake3",
+        "value": "e71f3bdfa28cb48208b6a000b4ced022856a3b1a1f45d850b9830816124aff08"
+      },
+      "writable_copy_paths": []
+    },
+    {
+      "content": "generic",
+      "critical_files": [],
+      "default_enabled": true,
+      "depends_on": [
+        "base"
+      ],
+      "dynamic_provider": null,
+      "id": "addon-60fps",
+      "kind": "addon",
+      "mount_path": "mods",
+      "optional": true,
+      "patch": null,
+      "size_bytes": 164,
+      "source": {
+        "archive": "zip",
+        "kind": "remote",
+        "mirrors": [
+          "https://blessdevhq.github.io/fusion-launcher/live-showcase/artifacts/2cfc428c9556b6554316f609c41a900f22992026990a4ed993ee9a0ef7067e0d.zip"
+        ]
+      },
+      "transport_digest": {
+        "algorithm": "blake3",
+        "value": "2cfc428c9556b6554316f609c41a900f22992026990a4ed993ee9a0ef7067e0d"
+      },
+      "writable_copy_paths": []
+    },
+    {
+      "content": "generic",
+      "critical_files": [],
+      "default_enabled": false,
+      "depends_on": [
+        "base"
+      ],
+      "dynamic_provider": null,
+      "id": "addon-crash-test",
+      "kind": "addon",
+      "mount_path": "mods",
+      "optional": true,
+      "patch": null,
+      "size_bytes": 156,
+      "source": {
+        "archive": "zip",
+        "kind": "remote",
+        "mirrors": [
+          "https://blessdevhq.github.io/fusion-launcher/live-showcase/artifacts/786bb7ce7223796d346492f749bbcb3a291cfa315675313cee6fc7d20d1fb7cc.zip"
+        ]
+      },
+      "transport_digest": {
+        "algorithm": "blake3",
+        "value": "786bb7ce7223796d346492f749bbcb3a291cfa315675313cee6fc7d20d1fb7cc"
+      },
+      "writable_copy_paths": []
+    }
+  ],
+  "local_placement": "require_same_volume",
+  "orchestrator": null,
+  "persistence": {
+    "saves_paths": [
+      "workspace/saves"
+    ]
+  },
+  "platform": "pc",
+  "post_setup_steps": [],
+  "runtime": {
+    "args": [
+      "--workspace",
+      "{{WORKSPACE_DIR}}"
+    ],
+    "default_channel": "pinned",
+    "env": {},
+    "executable": "runtime/emulator.exe",
+    "layer_id": "runtime"
+  },
+  "schema_version": "1.0",
+  "title": "Forza Horizon 2 (Azimuth Showcase)",
+  "version": "1.0.0"
+}
