@@ -57,6 +57,8 @@ export interface InstallGameOptions {
 }
 
 const previewHandlers: Record<string, PreviewHandler> = {
+  fusion_source_preview_local: ({ directory }) => fusionPreviewApi.previewLocal(String(directory)),
+  fusion_source_add_local: ({ directory, expectedSourceId, prepareEden }) => fusionPreviewApi.addLocal(String(directory), String(expectedSourceId), Boolean(prepareEden)),
   fusion_source_preview: ({ url }) => fusionPreviewApi.preview(String(url ?? '')),
   fusion_source_add: ({ url }) => fusionPreviewApi.add(String(url ?? '')),
   fusion_source_list: () => fusionPreviewApi.list(),
@@ -237,6 +239,12 @@ async function call<T>(command: string, args?: Record<string, unknown>): Promise
 }
 
 export const api = {
+  fusionSourcePreviewLocal(directory: string) {
+    return call<FusionSourcePreview>('fusion_source_preview_local', { directory });
+  },
+  fusionSourceAddLocal(directory: string, expectedSourceId: string, prepareEden = false) {
+    return call<FusionSourceSummary>('fusion_source_add_local', { directory, expectedSourceId, prepareEden });
+  },
   fusionSourcePreview(input: string) {
     return call<FusionSourcePreview>('fusion_source_preview', { url: input });
   },

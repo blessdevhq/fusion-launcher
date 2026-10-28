@@ -21,10 +21,10 @@ import { composeHomeRails, cssEscape, normalizeUpdateCheckError, safeDecodeURICo
 import { AppShell } from '@/components/shell/AppShell';
 import { collectionTargetForId, type CollectionTarget } from '@/components/shell/CockpitPanels';
 import { useGamepad } from '@/hooks/useGamepad';
-import { buildGameLibraryItems, searchAndSortLibraryItems, type GameLibraryItem, type LibraryFilter, type LibrarySort } from '@/lib/libraryStatus';
+import { buildGameLibraryItems, type GameLibraryItem, type LibraryFilter, type LibrarySort } from '@/lib/libraryStatus';
 import { api } from '@/lib/api';
 import { fusionPreviewApi } from '@/lib/fusionPreviewData';
-import { selectFusionCatalog } from '@/lib/fusionCatalog';
+import { buildUnifiedLibraryItems, selectUnifiedLibraryItems } from '@/lib/unifiedLibrary';
 import { useFusionSourceStore, isFusionOperationTerminal } from '@/stores/fusionSourceStore';
 import { fusionGameKey, type FusionOperationProgress } from '@/types/fusionSource';
 import { displayProductText } from '@/lib/brandText';
@@ -68,6 +68,7 @@ export function Dashboard({
   const fusionSources = useFusionSourceStore((state) => state.sources);
   const fusionCatalog = useLauncherStore((state) => state.fusionCatalog);
   const fusionOperations = useFusionSourceStore((state) => state.operations);
+  const fusionReadinessBlockers = useFusionSourceStore((state) => state.readinessBlockers);
   const setFusionCatalog = useLauncherStore((state) => state.setFusionCatalog);
   const setFusionSourcesAndCatalog = useFusionSourceStore((state) => state.setSourcesAndCatalog);
   const mergeFusionOperation = useFusionSourceStore((state) => state.mergeOperation);
@@ -91,6 +92,7 @@ export function Dashboard({
   const addActivityEvent = useLauncherStore((state) => state.addActivityEvent);
 
   const [libraryFilter, setLibraryFilter] = useState<LibraryFilter>('all');
+  const [libraryPlatform, setLibraryPlatform] = useState<string | null>(null);
   const [librarySearch, setLibrarySearch] = useState('');
   const [librarySort, setLibrarySort] = useState<LibrarySort>('title');
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -311,10 +313,16 @@ export function Dashboard({
   );
   const selectedGame = selectedGameId ? storeCatalog.find((game) => game.id === selectedGameId) ?? null : null;
   const selectedFusionGame = selectedFusionKey ? fusionCatalog.find((game) => fusionGameKey(game) === selectedFusionKey) ?? null : null;
-  const visibleFusionCatalog = useMemo(() => selectFusionCatalog(fusionCatalog, libraryFilter, librarySearch, librarySort, fusionOperations), [fusionCatalog, libraryFilter, librarySearch, librarySort, fusionOperations]);
+  const unifiedLibraryItems = useMemo(() => {
+    const blockedKeys = new Set(fusionCatalog.filter((game) => {
+      const blocked = fusionReadinessBlockers[fusionGameKey(game)];
+      return blocked && blocked.activeSnapshotId === game.activeSnapshotId;
+    }).map(fusionGameKey));
+    return buildUnifiedLibraryItems(items, fusionCatalog, fusionOperations, blockedKeys);
+  }, [items, fusionCatalog, fusionOperations, fusionReadinessBlockers]);
   const visibleLibraryItems = useMemo(
-    () => searchAndSortLibraryItems(items, libraryFilter, librarySearch, librarySort),
-    [items, libraryFilter, librarySearch, librarySort]
+    () => selectUnifiedLibraryItems(unifiedLibraryItems, libraryFilter, librarySearch, librarySort, libraryPlatform),
+    [unifiedLibraryItems, libraryFilter, librarySearch, librarySort, libraryPlatform]
   );
   const homeRails = useMemo(() => composeHomeRails(items, t), [items, t]);
   const notificationAlertKey = useMemo(() => {
@@ -609,6 +617,7 @@ export function Dashboard({
 
   const openLibraryCollection = useCallback((target: CollectionTarget) => {
     setLibraryFilter(target.filter);
+    setLibraryPlatform(target.platform ?? null);
     setLibrarySearch(target.query);
     setLibrarySort(target.sort);
     setActiveView('library');
@@ -630,7 +639,7 @@ export function Dashboard({
       return;
     }
     if (kind === 'fusion-library') {
-      setActiveView('library'); setLibraryFilter('all'); setLibrarySearch(''); return;
+      setActiveView('library'); setLibraryFilter('all'); setLibraryPlatform(null); setLibrarySearch(''); return;
     }
     if (kind === 'top') {
       if (value === 'refresh') void refreshAll();
@@ -782,7 +791,11 @@ export function Dashboard({
           games={items}
           onSelectGame={(gameId) => setSelectedGameId(gameId)}
           onNavigateToLibrary={(query) => {
-            if (query !== undefined) setLibrarySearch(query);
+            if (query !== undefined) {
+              setLibrarySearch(query);
+              setLibraryFilter('all');
+              setLibraryPlatform(null);
+            }
             setActiveView('library');
           }}
         />
@@ -801,29 +814,25 @@ export function Dashboard({
             onOpenSettings={() => setSettingsOpen(true)}
             onFocus={setFocusedItemId}
             fusionCount={fusionCatalog.length}
-            onOpenFusionLibrary={() => { setActiveView('library'); setLibraryFilter('all'); setLibrarySearch(''); }}
+            onOpenFusionLibrary={() => { setActiveView('library'); setLibraryFilter('all'); setLibraryPlatform(null); setLibrarySearch(''); }}
           />
         )}
 
         {activeView === 'library' && (
           <LibraryScreen
             items={visibleLibraryItems}
-            allItems={items}
-            totalCount={items.length}
+            allItems={unifiedLibraryItems}
             filter={libraryFilter}
+            platform={libraryPlatform}
             query={librarySearch}
             sort={librarySort}
             busyAction={busyAction}
-            onFilterChange={setLibraryFilter}
             onQueryChange={setLibrarySearch}
             onSortChange={setLibrarySort}
             onOpenCollection={openLibraryCollection}
             onPrimaryAction={(item) => void executePrimaryAction(item)}
             onOpenDetails={(game) => setSelectedGameId(game.id)}
             onFocus={setFocusedItemId}
-            fusionEntries={visibleFusionCatalog}
-            allFusionEntries={fusionCatalog}
-            fusionOperations={fusionOperations}
             onOpenFusion={(game) => { setSelectedGameId(null); setSelectedFusionKey(fusionGameKey(game)); }}
           />
         )}

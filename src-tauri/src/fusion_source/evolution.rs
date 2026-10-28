@@ -85,6 +85,7 @@ impl SchemaUpcaster {
             title: manifest.title.clone(),
             version: manifest.version.clone(),
             platform: manifest.platform.clone(),
+            cover_url: manifest.cover_url.clone(),
             extends: manifest.extends.as_ref().map(ToString::to_string),
             capabilities: manifest.capabilities.clone(),
             fallback: manifest.fallback.clone(),
@@ -143,6 +144,12 @@ impl SchemaUpcaster {
             unique(&mut ids, &game.id.to_ascii_lowercase(), "games.id")?;
             nonempty(&game.title, "games.title")?;
             nonempty(&game.version, "games.version")?;
+            if let Some(platform) = &game.platform {
+                validate_id(platform, "games.platform")?;
+            }
+            if let Some(cover_url) = &game.cover_url {
+                validate_https(cover_url, "games.cover_url")?;
+            }
             if game.manifest_url.contains(':') || game.manifest_url.starts_with("//") {
                 validate_https(&game.manifest_url, "games.manifest_url")?;
             } else {
@@ -193,6 +200,7 @@ impl SchemaUpcaster {
             title: manifest.title,
             version: manifest.version,
             platform: manifest.platform,
+            cover_url: manifest.cover_url,
             extends,
             capabilities: manifest.capabilities,
             fallback: manifest.fallback,
@@ -352,6 +360,7 @@ fn merge_manifest(
     base.title = child.title;
     base.version = child.version;
     base.platform = child.platform.or(base.platform);
+    base.cover_url = child.cover_url.or(base.cover_url);
     base.extends = child.extends;
     // Placement belongs to the derived installation, never to the locator's
     // publisher. Its default remains fail-closed on a cross-volume projection.
@@ -386,6 +395,9 @@ fn validate_game_shape(manifest: &GameManifest) -> Result<(), FusionError> {
     validate_id(&manifest.id, "id")?;
     nonempty(&manifest.title, "title")?;
     nonempty(&manifest.version, "version")?;
+    if let Some(cover_url) = &manifest.cover_url {
+        validate_https(cover_url, "cover_url")?;
+    }
     if let Some(platform) = &manifest.platform {
         validate_id(platform, "platform")?;
     }
@@ -462,6 +474,9 @@ fn validate_game_shape(manifest: &GameManifest) -> Result<(), FusionError> {
 }
 
 fn validate_layer(layer: &LayerSpec) -> Result<(), FusionError> {
+    if let Some(title) = &layer.title {
+        nonempty(title, "layers.title")?;
+    }
     validate_relative_path(&layer.mount_path, false, true, "layers.mount_path")?;
     let mut dependencies = BTreeSet::new();
     for dependency in &layer.depends_on {

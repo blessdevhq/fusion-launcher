@@ -44,6 +44,8 @@ pub struct CanonicalGameManifest {
     pub title: String,
     pub version: String,
     pub platform: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cover_url: Option<String>,
     pub extends: Option<QualifiedGameId>,
     pub capabilities: CapabilityRequirements,
     pub fallback: Vec<CapabilityFallback>,
@@ -74,6 +76,10 @@ pub enum CasAccess {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CanonicalLayer {
     pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
     pub kind: LayerKind,
     pub content: LayerContent,
     pub depends_on: Vec<String>,
@@ -95,6 +101,8 @@ impl From<LayerSpec> for CanonicalLayer {
     fn from(layer: LayerSpec) -> Self {
         Self {
             id: layer.id,
+            title: layer.title,
+            description: layer.description,
             kind: layer.kind,
             content: layer.content,
             depends_on: layer.depends_on,
@@ -117,6 +125,8 @@ impl From<CanonicalLayer> for LayerSpec {
     fn from(layer: CanonicalLayer) -> Self {
         Self {
             id: layer.id,
+            title: layer.title,
+            description: layer.description,
             kind: layer.kind,
             content: layer.content,
             depends_on: layer.depends_on,

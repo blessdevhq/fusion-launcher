@@ -39,6 +39,10 @@ pub struct SourceGameEntry {
     pub id: String,
     pub title: String,
     pub version: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub platform: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cover_url: Option<String>,
     pub manifest_url: String,
     /// BLAKE3 of the exact downloaded manifest bytes, before parsing or normalization.
     pub manifest_blake3: String,
@@ -53,6 +57,8 @@ pub struct GameManifest {
     pub version: String,
     #[serde(default)]
     pub platform: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cover_url: Option<String>,
     #[serde(default)]
     pub extends: Option<String>,
     #[serde(default)]
@@ -107,6 +113,10 @@ pub enum FallbackStrategy {
 #[serde(deny_unknown_fields)]
 pub struct LayerSpec {
     pub id: String,
+    #[serde(default, alias = "name", skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
     pub kind: LayerKind,
     #[serde(default)]
     pub content: LayerContent,

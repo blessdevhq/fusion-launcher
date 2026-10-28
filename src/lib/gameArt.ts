@@ -58,7 +58,7 @@ export interface GeneratedGameArt {
   initials: string;
 }
 
-export function createGameArt(game: Pick<CatalogGame, 'id' | 'title' | 'platform'>): GeneratedGameArt {
+export function createGameArt(game: { id: string; title: string; platform: string }): GeneratedGameArt {
   const seed = hashString(`${game.id}:${game.platform}:${game.title}`);
   const palette = PALETTES[seed % PALETTES.length];
   const angle = 120 + (seed % 80);

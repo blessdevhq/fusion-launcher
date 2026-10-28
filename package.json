@@ -37,6 +37,7 @@
     "rust:clippy": "cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings",
     "qa": "npm run check && npm run rust:test && npm run rust:fmt && npm run rust:clippy",
     "tauri": "tauri",
+    "totk:local": "node scripts/totk-local.mjs",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
     "tauri:build:vs": "scripts\\tauri-build-vs.cmd",

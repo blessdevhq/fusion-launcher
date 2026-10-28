@@ -62,8 +62,12 @@ pub struct FusionCatalogEntry {
     pub game_id: String,
     pub title: String,
     pub version: String,
+    pub platform: Option<String>,
+    pub cover_url: Option<String>,
     pub installed: bool,
     pub active_version: Option<String>,
+    pub active_snapshot_id: Option<String>,
+    pub ready_to_play: bool,
     pub update_available: bool,
 }
 
@@ -86,6 +90,16 @@ pub struct FusionManifestRecord {
     pub digest: String,
     pub raw_bytes: Vec<u8>,
     pub canonical: CanonicalGameManifest,
+}
+
+/// One local metadata read for the whole catalog; no manifest resolution or payload hashing.
+#[derive(Default)]
+pub struct CatalogLocalState {
+    pub installations: BTreeMap<QualifiedGameId, FusionInstallationRecord>,
+    pub snapshots: BTreeMap<QualifiedGameId, super::workspace::WorkspaceSnapshot>,
+    pub manifests: BTreeMap<QualifiedGameId, CanonicalGameManifest>,
+    pub trusted_executables: BTreeMap<QualifiedGameId, BTreeSet<(String, String)>>,
+    pub active_operations: BTreeSet<QualifiedGameId>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -127,6 +141,8 @@ pub struct OperationProgress {
 #[serde(rename_all = "camelCase")]
 pub struct AddonState {
     pub id: String,
+    pub title: Option<String>,
+    pub description: Option<String>,
     pub kind: String,
     pub enabled: bool,
 }
@@ -164,6 +180,9 @@ pub struct FusionGameState {
     pub update_available: bool,
     pub ready: bool,
     pub options: GameOptions,
+    pub applied_options: Option<GameOptions>,
+    pub default_runtime_channel: Option<RuntimeChannel>,
+    pub external_workspace_root: Option<String>,
     pub addons: Vec<AddonState>,
     pub runtime_channels: Vec<RuntimeChannel>,
     pub user_layers: Vec<UserLayerRequirement>,
@@ -172,6 +191,16 @@ pub struct FusionGameState {
     pub blockers: Vec<FusionError>,
     pub operation: Option<OperationProgress>,
     pub crash_report_ids: Vec<String>,
+    pub crash_reports: Vec<CrashSummary>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CrashSummary {
+    pub report_id: String,
+    pub created_at: String,
+    pub exit_code: Option<i64>,
+    pub crash_signature_hash: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]

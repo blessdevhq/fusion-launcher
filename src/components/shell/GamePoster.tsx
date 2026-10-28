@@ -1,14 +1,16 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { motion } from 'framer-motion';
 import { Download, Play, RotateCw, ShieldAlert } from 'lucide-react';
 import { useI18n } from '../I18nProvider';
 import { displayProductText } from '../../lib/brandText.ts';
 import { createGameArt, selectGameArtImageUrl, resolveArtworkUrl } from '../../lib/gameArt.ts';
-import { PLATFORM_LABELS } from '../../types/platform.ts';
 import type { GameLibraryItem, PrimaryGameAction } from '../../lib/libraryStatus.ts';
 import type { CatalogGame } from '../../types/repository.ts';
+import { libraryPlatformLabel, type UnifiedLibraryItem } from '../../lib/unifiedLibrary.ts';
+import type { StatusTone } from '../../lib/libraryStatus.ts';
+import type { FusionCatalogEntry } from '../../types/fusionSource.ts';
 
 interface GamePosterProps {
   item: GameLibraryItem;
@@ -36,6 +38,69 @@ export function GamePoster({
   const progressVisible = item.isDownloading || item.isPaused || item.hasError
     || (item.progressPercent > 0 && item.progressPercent < 100);
 
+  return <PosterCard
+    game={item.game}
+    focusId={focusId}
+    zone={zone}
+    compact={compact}
+    selected={selected}
+    statusLabel={compact ? shortStatusLabel(item.statusLabel, t) : displayStatusLabel(item.statusLabel, t)}
+    statusTone={item.statusTone}
+    progressVisible={progressVisible}
+    progressPercent={item.readyToPlay ? 100 : item.progressPercent}
+    needsSetup={item.missingRequirements.length > 0}
+    onOpen={() => onOpen(item.game)}
+    onFocus={onFocus}
+    action={onAction ? <button
+      onClick={() => onAction(item)}
+      aria-label={displayActionLabel(item.primaryActionLabel, t)}
+      className="rh-card-action absolute right-2 grid h-7 w-7 place-items-center rounded-md bg-black/72 text-white opacity-0 backdrop-blur transition hover:bg-fusion-accent group-hover:opacity-100"
+      title={displayActionLabel(item.primaryActionLabel, t)}
+    ><ActionIcon className="h-3.5 w-3.5" /></button> : undefined}
+  />;
+}
+
+export function FusionGamePoster({ item, onOpen, onFocus }: {
+  item: Extract<UnifiedLibraryItem, { kind: 'fusion_source' }>;
+  onOpen: (game: FusionCatalogEntry) => void;
+  onFocus: (focusId: string) => void;
+}) {
+  const { t } = useI18n();
+  return <PosterCard
+    game={{ id: item.key, title: item.title, platform: item.platform ?? '', coverImageUrl: item.game.coverUrl ?? undefined }}
+    focusId={item.focusId}
+    zone="library"
+    statusLabel={displayStatusLabel(item.statusLabel, t)}
+    statusTone={item.statusTone}
+    progressVisible={item.isDownloading}
+    progressPercent={item.progressPercent}
+    needsSetup={item.needsSetup}
+    onOpen={() => onOpen(item.game)}
+    onFocus={onFocus}
+    testId={`fusion-catalog-${item.game.gameId}`}
+  />;
+}
+
+type GameArtInput = Pick<CatalogGame, 'id' | 'title' | 'artwork' | 'coverImageUrl'> & { platform: string };
+
+function PosterCard({ game, focusId, zone, compact, selected, statusLabel, statusTone, progressVisible, progressPercent,
+  needsSetup, onOpen, onFocus, action, testId }: {
+  game: GameArtInput;
+  focusId: string;
+  zone: string;
+  compact?: boolean;
+  selected?: boolean;
+  statusLabel: string;
+  statusTone: StatusTone;
+  progressVisible: boolean;
+  progressPercent: number;
+  needsSetup: boolean;
+  onOpen: () => void;
+  onFocus?: (focusId: string) => void;
+  action?: ReactNode;
+  testId?: string;
+}) {
+  const platformLabel = libraryPlatformLabel(game.platform);
   return (
     <motion.article
       whileHover={{ scale: compact ? 1.035 : 1.025 }}
@@ -45,36 +110,28 @@ export function GamePoster({
         data-focus-id={focusId}
         data-focus-zone={zone}
         onFocus={() => onFocus?.(focusId)}
-        onClick={() => onOpen(item.game)}
+        onClick={onOpen}
         className="rh-focusable rh-card-button"
+        data-testid={testId}
       >
-        <GameArt game={item.game} className={compact ? 'rh-compact-art' : 'rh-card-art'} />
-        <div className={`rh-card-status rh-card-status-${item.statusTone}`}>
-          {compact ? shortStatusLabel(item.statusLabel, t) : displayStatusLabel(item.statusLabel, t)}
+        <GameArt game={game} className={compact ? 'rh-compact-art' : 'rh-card-art'} />
+        <div className={`rh-card-status rh-card-status-${statusTone}`} title={statusLabel}>
+          {statusLabel}
         </div>
         {progressVisible && (
           <div className="rh-card-progress">
-            <div style={{ width: `${item.readyToPlay ? 100 : item.progressPercent}%` }} />
+            <div style={{ width: `${progressPercent}%` }} />
           </div>
         )}
         <div className={compact ? 'rh-compact-card-copy' : 'rh-card-copy'}>
-          <div className={`${compact ? 'text-[11px]' : 'text-sm'} line-clamp-2 font-semibold leading-tight text-white`}>{displayProductText(item.game.title)}</div>
+          <div className={`${compact ? 'text-[11px]' : 'text-sm'} line-clamp-2 font-semibold leading-tight text-white`}>{displayProductText(game.title)}</div>
           <div className="mt-1 flex items-center justify-between gap-2 text-[11px] text-white/46">
-            <span>{item.game.platform}</span>
-            {item.missingRequirements.length > 0 && <ShieldAlert className="h-3 w-3 text-amber-200" />}
+            {platformLabel && <span className={compact ? undefined : 'rounded border border-fusion-line px-1.5 text-[10px] leading-[14px]'}>{platformLabel}</span>}
+            {needsSetup && <ShieldAlert className="h-3 w-3 text-amber-200" />}
           </div>
         </div>
       </button>
-      {onAction && (
-        <button
-          onClick={() => onAction(item)}
-          aria-label={displayActionLabel(item.primaryActionLabel, t)}
-          className="rh-card-action absolute right-2 grid h-7 w-7 place-items-center rounded-md bg-black/72 text-white opacity-0 backdrop-blur transition hover:bg-fusion-accent group-hover:opacity-100"
-          title={displayActionLabel(item.primaryActionLabel, t)}
-        >
-          <ActionIcon className="h-3.5 w-3.5" />
-        </button>
-      )}
+      {action}
     </motion.article>
   );
 }
@@ -103,7 +160,7 @@ export function GameArt({
   className,
   hero
 }: {
-  game: CatalogGame;
+  game: GameArtInput;
   className: string;
   hero?: boolean;
 }) {
@@ -135,18 +192,14 @@ export function GameArt({
         {hero ? (
           <div className="rh-hero-figure">
             <span>{generated.initials}</span>
-            <small>{PLATFORM_LABELS[game.platform]}</small>
+            <small>{libraryPlatformLabel(game.platform)}</small>
           </div>
         ) : (
           <>
-            <div className="absolute inset-x-4 top-4 flex items-center justify-between text-[10px] font-semibold text-white/56">
-              <span>{game.platform}</span>
-              <span>fusion</span>
-            </div>
             <div className="absolute inset-0 grid place-items-center">
               <div className="text-center">
                 <div className="text-3xl font-black tracking-normal text-white/90">{generated.initials}</div>
-                <div className="mt-2 max-w-[120px] text-[10px] font-bold uppercase leading-tight text-white/52">{PLATFORM_LABELS[game.platform]}</div>
+                <div className="mt-2 max-w-[120px] text-[10px] font-bold uppercase leading-tight text-white/52">{libraryPlatformLabel(game.platform)}</div>
               </div>
             </div>
           </>

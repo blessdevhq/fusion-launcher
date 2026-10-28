@@ -2,7 +2,7 @@
 //! Source identities remain reserved after disconnect, so reconnecting an ID cannot
 //! change the URL or public-key metadata of an installed or historical source.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -15,8 +15,9 @@ use crate::fusion_source::canonical::{
     CanonicalGameManifest, CanonicalSourceIndex, QualifiedGameId,
 };
 use crate::fusion_source::dto::{
-    FusionCatalogRecord, FusionCrashRecord, FusionInstallationRecord, FusionManifestRecord,
-    FusionOperationRecord, FusionSourceRecord, FusionWorkspaceRecord, GameOptions,
+    CatalogLocalState, FusionCatalogRecord, FusionCrashRecord, FusionInstallationRecord,
+    FusionManifestRecord, FusionOperationRecord, FusionSourceRecord, FusionWorkspaceRecord,
+    GameOptions,
 };
 use crate::fusion_source::errors::{ErrorCode, FusionError};
 use crate::fusion_source::evolution::SchemaUpcaster;
@@ -61,6 +62,56 @@ fn validate_game(game: &QualifiedGameId) -> Result<(), FusionError> {
 }
 
 impl RepositoryStore {
+    pub fn fusion_local_source(
+        &self,
+        source_id: &str,
+    ) -> Result<Option<crate::local_sources::LocalSourceBinding>, FusionError> {
+        self.conn.query_row(
+            "SELECT l.directory,l.prepare_eden FROM fusion_local_sources l JOIN fusion_sources s ON s.id=l.source_id WHERE l.source_id=?1 AND s.connected=1",
+            params![source_id],
+            |row| Ok(crate::local_sources::LocalSourceBinding { directory: row.get(0)?, prepare_eden: row.get(1)? }),
+        ).optional().map_err(database_error)
+    }
+
+    /// Bind only host-selected directories, atomically with the verified index.
+    /// Source manifests cannot create or replace this filesystem authority.
+    pub fn fusion_connect_local_source(
+        &self,
+        index: &CanonicalSourceIndex,
+        binding: &crate::local_sources::LocalSourceBinding,
+    ) -> Result<FusionSourceRecord, FusionError> {
+        validated_index(index)?;
+        let directory = Path::new(&binding.directory);
+        if !directory.is_absolute() {
+            return Err(FusionError::new(
+                ErrorCode::InvalidPath,
+                "Select an absolute source directory.",
+            ));
+        }
+        let _guard = crate::fusion_source::fs_safety::guard(directory)?;
+        let transport = crate::fusion_source::offline::OfflineTransport::open(
+            directory,
+            &index.source_info.id,
+        )?;
+        let url = transport.index_url();
+        let tx = self.conn.unchecked_transaction().map_err(database_error)?;
+        // Other hosts sharing the database cannot move a live operation's input.
+        let active: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM fusion_operations WHERE source_id=?1 AND status IN ('queued','running','cancelling'))", params![index.source_info.id], |row| row.get(0)).map_err(database_error)?;
+        if active {
+            return Err(FusionError::new(
+                ErrorCode::OperationInProgress,
+                "Wait for this source's active operation before replacing its directory.",
+            ));
+        }
+        write_source(&tx, index, &url)?;
+        tx.execute("INSERT INTO fusion_local_sources(source_id,directory,prepare_eden) VALUES (?1,?2,?3) ON CONFLICT(source_id) DO UPDATE SET directory=excluded.directory,prepare_eden=excluded.prepare_eden", params![index.source_info.id,binding.directory,binding.prepare_eden]).map_err(database_error)?;
+        tx.commit().map_err(database_error)?;
+        self.fusion_list_sources()?
+            .into_iter()
+            .find(|s| s.index.source_info.id == index.source_info.id)
+            .ok_or_else(|| FusionError::new(ErrorCode::Io, "The connected source disappeared."))
+    }
+
     pub fn fusion_bind_installation_root(
         &self,
         game: &QualifiedGameId,
@@ -207,6 +258,115 @@ impl RepositoryStore {
             })
         })
         .collect()
+    }
+
+    /// Read all catalog enrichment in bounded queries. Only metadata is checked;
+    /// the launch guard still rehashes critical game files immediately before launch.
+    pub fn fusion_catalog_local_state(&self) -> Result<CatalogLocalState, FusionError> {
+        let mut state = CatalogLocalState {
+            installations: self
+                .fusion_list_installations()?
+                .into_iter()
+                .map(|record| (record.game.clone(), record))
+                .collect(),
+            ..CatalogLocalState::default()
+        };
+        let mut trust_statement = self.conn.prepare("SELECT asset_id,local_path,sha256 FROM trusted_executables WHERE sha256 LIKE 'blake3:%'").map_err(database_error)?;
+        let trusts = trust_statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })
+            .map_err(database_error)?
+            .collect::<Result<BTreeSet<_>, _>>()
+            .map_err(database_error)?;
+        let mut snapshots = self.conn.prepare("SELECT s.id,s.source_id,s.game_id,s.manifest_blake3,s.snapshot_json,s.snapshot_blake3 FROM fusion_workspace_snapshots s JOIN fusion_installations i ON i.active_snapshot_id=s.id AND i.source_id=s.source_id AND i.game_id=s.game_id").map_err(database_error)?;
+        for row in snapshots
+            .query_map([], workspace_row)
+            .map_err(database_error)?
+        {
+            // A damaged installation remains visible but cannot be advertised as ready.
+            let Ok(record) = decode_workspace(row.map_err(database_error)?) else {
+                continue;
+            };
+            let snapshot: WorkspaceSnapshot =
+                serde_json::from_str(&record.snapshot_json).map_err(json_error)?;
+            if SchemaUpcaster::validate_canonical(&snapshot.manifest).is_err()
+                || blake3::hash(&serde_json::to_vec(&snapshot.manifest).map_err(json_error)?)
+                    .to_hex()
+                    .as_str()
+                    != snapshot.canonical_blake3
+                || snapshot.plan.game != snapshot.game
+            {
+                continue;
+            }
+            let trusted = crate::fusion_source::service::critical_inventory(&snapshot)
+                .into_iter()
+                .filter_map(|(path, file)| {
+                    let id = trust_id(&snapshot.game, &path, &file.blake3).ok()?;
+                    trusts
+                        .contains(&(
+                            id,
+                            path.clone(),
+                            format!("blake3:{}", file.blake3.to_ascii_lowercase()),
+                        ))
+                        .then_some((path, file.blake3))
+                })
+                .collect();
+            state
+                .trusted_executables
+                .insert(snapshot.game.clone(), trusted);
+            state.snapshots.insert(snapshot.game.clone(), snapshot);
+        }
+        let mut manifests = self.conn.prepare("SELECT m.source_id,m.game_id,m.manifest_blake3,m.raw_bytes,m.canonical_json,m.canonical_blake3 FROM fusion_manifest_snapshots m JOIN fusion_source_entries e ON e.source_id=m.source_id AND e.game_id=m.game_id WHERE lower(json_extract(e.entry_json,'$.manifest_blake3'))=m.manifest_blake3").map_err(database_error)?;
+        let rows = manifests
+            .query_map([], |row| {
+                Ok((
+                    QualifiedGameId {
+                        source_id: row.get(0)?,
+                        game_id: row.get(1)?,
+                    },
+                    row.get::<_, String>(2)?,
+                    row.get::<_, Vec<u8>>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, String>(5)?,
+                ))
+            })
+            .map_err(database_error)?;
+        for row in rows {
+            let (game, digest, raw, canonical_json, canonical_digest) =
+                row.map_err(database_error)?;
+            if blake3::hash(&raw).to_hex().as_str() != digest
+                || blake3::hash(canonical_json.as_bytes()).to_hex().as_str() != canonical_digest
+            {
+                continue;
+            }
+            let Ok(canonical) = serde_json::from_str::<CanonicalGameManifest>(&canonical_json)
+            else {
+                continue;
+            };
+            if canonical.source_id == game.source_id
+                && canonical.id == game.game_id
+                && SchemaUpcaster::validate_canonical(&canonical).is_ok()
+            {
+                state.manifests.insert(game, canonical);
+            }
+        }
+        let mut operations = self.conn.prepare("SELECT source_id,game_id FROM fusion_operations WHERE status IN ('queued','running','cancelling')").map_err(database_error)?;
+        state.active_operations = operations
+            .query_map([], |row| {
+                Ok(QualifiedGameId {
+                    source_id: row.get(0)?,
+                    game_id: row.get(1)?,
+                })
+            })
+            .map_err(database_error)?
+            .collect::<Result<_, _>>()
+            .map_err(database_error)?;
+        Ok(state)
     }
 
     pub fn fusion_remove_source(&self, source_id: &str) -> Result<(), FusionError> {
@@ -987,6 +1147,19 @@ pub struct SqliteFusionStorage {
     store: Arc<Mutex<RepositoryStore>>,
 }
 impl SqliteFusionStorage {
+    pub fn local_source(
+        &self,
+        source_id: &str,
+    ) -> Result<Option<crate::local_sources::LocalSourceBinding>, FusionError> {
+        self.with_store(|store| store.fusion_local_source(source_id))
+    }
+    pub fn connect_local_source(
+        &self,
+        index: &CanonicalSourceIndex,
+        binding: &crate::local_sources::LocalSourceBinding,
+    ) -> Result<FusionSourceRecord, FusionError> {
+        self.with_store(|store| store.fusion_connect_local_source(index, binding))
+    }
     pub fn new(store: Arc<Mutex<RepositoryStore>>) -> Self {
         Self { store }
     }
@@ -1045,6 +1218,9 @@ impl crate::fusion_source::service::FusionStorage for SqliteFusionStorage {
     }
     fn list_catalog(&self) -> Result<Vec<FusionCatalogRecord>, FusionError> {
         self.with_store(RepositoryStore::fusion_list_catalog)
+    }
+    fn catalog_local_state(&self) -> Result<CatalogLocalState, FusionError> {
+        self.with_store(RepositoryStore::fusion_catalog_local_state)
     }
     fn put_manifest(&self, record: &FusionManifestRecord) -> Result<(), FusionError> {
         self.with_store(|store| store.fusion_put_manifest(record))
@@ -1199,7 +1375,7 @@ mod tests {
                 .conn
                 .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
                 .unwrap(),
-            4
+            5
         );
         assert_eq!(
             store

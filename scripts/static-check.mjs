@@ -6,6 +6,7 @@ const excludedDirs = new Set([
   '.git',
   '.next',
   '.npm-cache',
+  '.tmp',
   'node_modules',
   'out',
   'src-tauri/target'

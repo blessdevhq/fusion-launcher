@@ -90,6 +90,7 @@ than hashes or file sizes:
       "title": "My test game",
       "version": "1.0.0",
       "platform": "pc",
+      "cover_url": "https://example.org/my-source/images/cover.webp",
       "layers": [
         {
           "id": "base",
@@ -135,6 +136,17 @@ artifact names include their transport digest; mirror placeholders expand to
 those names. A root or layer `base_url` provides an artifacts URL when explicit
 mirrors are omitted. `archive: "raw"` represents a single file, with `raw_path`
 specifying its path inside the layer.
+
+Layer metadata also accepts optional `title` (or the input alias `name`) and
+`description`, used as plain text in the install options. For example,
+`"id": "addon-60fps", "title": "60 FPS", "description": "Enables the higher frame-rate preset."`.
+Omitting these fields keeps existing recipes valid; the launcher formats the
+layer ID when no display title is supplied. Published manifests use `title`.
+
+The optional game `cover_url` must be an HTTPS URL. The packer copies it and
+`platform` into the compact source-index entry so library cards do not need to
+download individual game manifests. Both metadata fields are covered by the
+normal manifest digest and index signature. Covers grant no executable trust.
 
 Layer metadata also accepts `content`, `optional`, `default_enabled`, `patch`,
 `dynamic_provider` and `attestation`; game execution, capability, persistence,

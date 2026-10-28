@@ -21,6 +21,7 @@ mod github_resolver;
 mod install_ownership;
 mod launcher;
 mod libtorrent_engine;
+mod local_sources;
 mod logging;
 mod manifest;
 mod net;
@@ -185,6 +186,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::fusion_source::fusion_source_preview,
+            commands::fusion_source::fusion_source_preview_local,
+            commands::fusion_source::fusion_source_add_local,
             commands::fusion_source::fusion_source_add,
             commands::fusion_source::fusion_source_list,
             commands::fusion_source::fusion_source_refresh,

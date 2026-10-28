@@ -18,11 +18,13 @@ import { displayProductText } from '../../lib/brandText.ts';
 import { PLATFORM_LABELS } from '../../types/platform.ts';
 import type { GameLibraryItem, LibraryFilter, LibrarySort } from '../../lib/libraryStatus.ts';
 import type { CatalogGame } from '../../types/repository.ts';
+import { buildUnifiedLibraryItems, countUnifiedLibraryItems, libraryPlatformLabel, type LibraryCollectionCounts } from '../../lib/unifiedLibrary.ts';
 
 export interface CollectionTarget {
   filter: LibraryFilter;
   query: string;
   sort: LibrarySort;
+  platform?: string | null;
 }
 
 interface HeroPanelProps {
@@ -176,35 +178,33 @@ export function HomeRailsPanel({
 }
 
 export function CollectionsPanel({
-  items,
+  items = [],
+  counts,
   activeCollectionId = 'all',
   onOpenCollection,
   onFocus
 }: {
-  items: GameLibraryItem[];
+  items?: GameLibraryItem[];
+  counts?: LibraryCollectionCounts;
   activeCollectionId?: string | null;
   onOpenCollection: (target: CollectionTarget) => void;
   onFocus: (focusId: string) => void;
 }) {
   const { t } = useI18n();
-  const byPlatform = new Map<string, number>();
-  items.forEach((item) => byPlatform.set(item.game.platform, (byPlatform.get(item.game.platform) ?? 0) + 1));
-  const readyCount = items.filter((item) => item.readyToPlay).length;
-  const downloadCount = items.filter((item) => item.isDownloading || item.isPaused || item.hasError).length;
-  const missingCount = items.filter((item) => item.missingRequirements.length > 0).length;
+  const summary = counts ?? countUnifiedLibraryItems(buildUnifiedLibraryItems(items, []));
   const collectionCards: Array<{
     id: string;
     label: string;
     count: number;
     icon: LucideIcon;
   }> = [
-    { id: 'all', label: t.shell.collections.all, count: items.length, icon: FolderHeart },
-    { id: 'ready', label: t.shell.collections.ready, count: readyCount, icon: Play },
-    { id: 'downloads', label: t.shell.collections.downloads, count: downloadCount, icon: Download },
-    { id: 'missing', label: t.shell.collections.missing, count: missingCount, icon: RotateCw },
-    ...Array.from(byPlatform.entries()).slice(0, 6).map(([platform, count]) => ({
+    { id: 'all', label: t.shell.collections.all, count: summary.all, icon: FolderHeart },
+    { id: 'ready', label: t.shell.collections.ready, count: summary.ready, icon: Play },
+    { id: 'downloads', label: t.shell.collections.downloads, count: summary.downloading, icon: Download },
+    { id: 'missing', label: t.shell.collections.missing, count: summary.missing, icon: RotateCw },
+    ...summary.platforms.map(({ platform, count }) => ({
       id: `platform:${platform}`,
-      label: PLATFORM_LABELS[platform as keyof typeof PLATFORM_LABELS] ?? platform,
+      label: libraryPlatformLabel(platform),
       count,
       icon: Gamepad2
     }))
@@ -214,7 +214,7 @@ export function CollectionsPanel({
     <section className="rh-collections-panel" data-testid="collections-panel">
       <PanelTitle icon={FolderHeart} title={t.shell.collections.title} />
       <div className="rh-collections-grid">
-        {collectionCards.slice(0, 8).map((card) => {
+        {collectionCards.map((card) => {
           const Icon = card.icon;
           const focusId = `collection:${card.id}`;
           const active = activeCollectionId?.toLowerCase() === card.id.toLowerCase();
@@ -222,10 +222,12 @@ export function CollectionsPanel({
             <button
               key={card.label}
               data-testid="collection-card"
+              data-collection-id={card.id}
               data-focus-id={focusId}
               data-focus-zone="collections"
               onFocus={() => onFocus(focusId)}
               onClick={() => onOpenCollection(collectionTargetForId(card.id))}
+              aria-pressed={active}
               className={`rh-collection-card rh-focusable ${active ? 'rh-collection-card-active' : ''}`}
             >
               <Icon className="h-4 w-4" />
@@ -241,21 +243,20 @@ export function CollectionsPanel({
 
 export function collectionTargetForId(id: string): CollectionTarget {
   if (id.startsWith('platform:')) {
-    return { filter: 'all', query: id.slice('platform:'.length), sort: 'title' };
+    return { filter: 'all', query: '', sort: 'title', platform: id.slice('platform:'.length) };
   }
-  if (id === 'ready') return { filter: 'all', query: 'ready to play', sort: 'status' };
+  if (id === 'ready') return { filter: 'ready', query: '', sort: 'status' };
   if (id === 'downloads') return { filter: 'downloading', query: '', sort: 'status' };
   if (id === 'missing') return { filter: 'missing', query: '', sort: 'status' };
   return { filter: 'all', query: '', sort: 'title' };
 }
 
 export function collectionIdForTarget(target: CollectionTarget): string | null {
-  const query = target.query.trim().toLowerCase();
-  if (target.filter === 'all' && query === '' && target.sort === 'title') return 'all';
-  if (target.filter === 'all' && query === 'ready to play' && target.sort === 'status') return 'ready';
-  if (target.filter === 'downloading' && query === '' && target.sort === 'status') return 'downloads';
-  if (target.filter === 'missing' && query === '' && target.sort === 'status') return 'missing';
-  if (target.filter === 'all' && query && target.sort === 'title') return `platform:${query}`;
+  if (target.platform) return `platform:${target.platform}`;
+  if (target.filter === 'all') return 'all';
+  if (target.filter === 'ready') return 'ready';
+  if (target.filter === 'downloading') return 'downloads';
+  if (target.filter === 'missing') return 'missing';
   return null;
 }
 

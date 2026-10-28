@@ -3,7 +3,7 @@
 
 use super::adapters::{ArtifactTransport, Cancellation, TransferLimits, TransferReceipt};
 use super::canonical::QualifiedGameId;
-use super::dto::{InstallRequest, OperationProgress};
+use super::dto::{GameOptions, InstallRequest, OperationProgress};
 use super::errors::{ErrorCode, FusionError};
 use super::service::{FusionService, FusionStorage, ProgressSink, ServiceEnvironment};
 use super::telemetry::{CrashOutcome, CrashReportBuilder, TelemetrySanitizer};
@@ -50,7 +50,7 @@ async fn signed_sources_pin_first_use_and_reject_tampering_and_reconnect_downgra
         .unwrap()
         .unwrap();
     assert_eq!(pin.public_key, original.index.source_info.public_key);
-    for field in ["manifest_blake3", "manifest_url"] {
+    for field in ["manifest_blake3", "manifest_url", "cover_url", "platform"] {
         let mut changed: Value = serde_json::from_slice(&signed).unwrap();
         changed["games"][0][field] = json!("tampered");
         f.transport
@@ -324,6 +324,100 @@ fn active(fixture: &Fixture) -> WorkspaceSnapshot {
 }
 
 #[tokio::test]
+async fn catalog_batches_local_readiness_and_applied_options_without_fetching_manifests() {
+    let f = fixture();
+    let mut wire = document("1", RUNTIME_ONE);
+    wire["cover_url"] = json!("https://example.com/cover.webp");
+    wire["layers"][2]["title"] = json!("Кеш шейдеров");
+    wire["layers"][2]["description"] = json!("Уменьшает задержки при первом запуске.");
+    f.transport.set(INDEX, index(&wire));
+    f.transport
+        .set(MANIFEST, serde_json::to_vec(&wire).unwrap());
+    f.service.source_add(INDEX).await.unwrap();
+    assert!(!f.service.source_list_catalog().unwrap()[0].ready_to_play);
+    let first = f.service.game_get_state(&f.game).await.unwrap();
+    assert!(first.applied_options.is_none());
+    assert_eq!(
+        first.default_runtime_channel,
+        Some(super::schema::RuntimeChannel::Pinned)
+    );
+    assert_eq!(first.addons[0].title.as_deref(), Some("Кеш шейдеров"));
+    assert_eq!(
+        first.addons[0].description.as_deref(),
+        Some("Уменьшает задержки при первом запуске.")
+    );
+    f.service
+        .game_install(&f.game, f.request.clone())
+        .await
+        .unwrap();
+    let untrusted = f.service.source_list_catalog().unwrap();
+    assert!(untrusted[0].installed);
+    assert!(!untrusted[0].ready_to_play);
+    assert!(untrusted[0].active_snapshot_id.is_some());
+    assert_eq!(untrusted[0].platform.as_deref(), Some("pc"));
+    assert_eq!(
+        untrusted[0].cover_url.as_deref(),
+        Some("https://example.com/cover.webp")
+    );
+    f.storage
+        .trust_executable(&f.game, "wrong/main.exe", &hash(RUNTIME_ONE))
+        .unwrap();
+    assert!(!f.service.source_list_catalog().unwrap()[0].ready_to_play);
+    f.service
+        .game_trust_executable(&f.game, "runtime/main.exe", &hash(RUNTIME_ONE))
+        .await
+        .unwrap();
+    let calls = f.transport.calls.lock().unwrap().len();
+    assert!(f.service.source_list_catalog().unwrap()[0].ready_to_play);
+    assert_eq!(f.transport.calls.lock().unwrap().len(), calls);
+    let changed = f
+        .service
+        .game_set_options(
+            &f.game,
+            GameOptions {
+                enabled_addons: Some(["shader".into()].into_iter().collect()),
+                runtime_channel: None,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(changed.options.enabled_addons.as_ref().unwrap().len(), 1);
+    assert!(changed
+        .applied_options
+        .as_ref()
+        .unwrap()
+        .enabled_addons
+        .as_ref()
+        .unwrap()
+        .is_empty());
+    assert!(changed.external_workspace_root.is_none());
+    // Desired settings and an unsupported current source do not disable the active snapshot.
+    let mut newer = document("2", RUNTIME_TWO);
+    newer["capabilities"] = json!({"required":["future.runtime.v99"]});
+    f.transport.set(INDEX, index(&newer));
+    f.transport
+        .set(MANIFEST, serde_json::to_vec(&newer).unwrap());
+    f.service.source_refresh("fixture-source").await.unwrap();
+    f.service.game_get_state(&f.game).await.unwrap();
+    assert!(f.service.source_list_catalog().unwrap()[0].ready_to_play);
+    let operation = f.storage.begin_operation(&f.game, "update").unwrap();
+    assert!(!f.service.source_list_catalog().unwrap()[0].ready_to_play);
+    f.storage
+        .finish_operation(&operation.id, "completed")
+        .unwrap();
+    assert!(f.service.source_list_catalog().unwrap()[0].ready_to_play);
+    let conn = rusqlite::Connection::open(f._temporary.path().join("test.db")).unwrap();
+    conn.execute(
+        "UPDATE fusion_workspace_snapshots SET snapshot_json=snapshot_json || ' '",
+        [],
+    )
+    .unwrap();
+    let damaged = f.service.source_list_catalog().unwrap();
+    assert!(damaged[0].installed);
+    assert!(!damaged[0].ready_to_play);
+}
+
+#[tokio::test]
 async fn adding_source_only_fetches_compact_index_and_manifest_cache_is_hash_bound() {
     let f = fixture();
     let preview = f.service.source_preview(INDEX).await.unwrap();
@@ -558,6 +652,15 @@ async fn crash_preview_and_export_only_use_locally_sanitized_report() {
     .unwrap()
     .unwrap();
     let stored = f.storage.put_crash(&report).unwrap();
+    let state = f.service.game_get_state(&f.game).await.unwrap();
+    assert_eq!(state.crash_report_ids, vec![stored.id.clone()]);
+    assert_eq!(state.crash_reports[0].report_id, stored.id);
+    assert_eq!(state.crash_reports[0].created_at, stored.created_at);
+    assert_eq!(state.crash_reports[0].exit_code, Some(17));
+    assert_eq!(
+        state.crash_reports[0].crash_signature_hash.as_deref(),
+        stored.report["crashSignatureHash"].as_str()
+    );
     let preview = f.service.crash_preview(&stored.id).unwrap();
     assert!(preview.can_send);
     let export = f.service.crash_send_target(&stored.id).unwrap();

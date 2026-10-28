@@ -25,6 +25,15 @@ describe('Fusion IPC contracts and source routing', () => {
     assert.deepEqual(calls[0].args, { url: 'https://example.test/index.json' });
   });
 
+  it('passes explicit folder authority and expected identity through dedicated local IPC', async () => {
+    await api.fusionSourcePreviewLocal('F:/Sources/release-one');
+    await api.fusionSourceAddLocal('F:/Sources/release-two', 'owned', true);
+    assert.deepEqual(calls, [
+      { command: 'fusion_source_preview_local', args: { directory: 'F:/Sources/release-one' } },
+      { command: 'fusion_source_add_local', args: { directory: 'F:/Sources/release-two', expectedSourceId: 'owned', prepareEden: true } }
+    ]);
+  });
+
   it('falls back to legacy only on an explicitly unsupported source schema', async () => {
     response = (command) => {
       if (command === 'fusion_source_preview') throw { code: 'unsupported_schema', message: 'Legacy source', details: {} };
@@ -80,7 +89,7 @@ describe('Fusion browser preview', () => {
     assert.equal(after.installed, false);
     assert.equal(after.operation, null);
     assert.deepEqual(after, before);
-    assert.equal((await fusionPreviewApi.catalog()).length, 3);
+    assert.equal((await fusionPreviewApi.catalog()).length, 4);
     assert.equal((await fusionPreviewApi.state('fusion-preview', 'overlay-demo')).blockers[0].code, 'missing_capability');
   });
   it('requires exact hash approval and provides only an already cleaned report to the UI', async () => {
@@ -94,13 +103,13 @@ describe('Fusion browser preview', () => {
 });
 
 describe('Fusion compact catalog selection', () => {
-  const game = (gameId: string, title: string, installed: boolean): FusionCatalogEntry => ({ kind: 'fusion_source', sourceId: 'source', sourceName: 'Source', gameId, title, installed, version: '1.0.0', activeVersion: installed ? '1.0.0' : null, updateAvailable: false });
+  const game = (gameId: string, title: string, installed: boolean): FusionCatalogEntry => ({ kind: 'fusion_source', sourceId: 'source', sourceName: 'Source', gameId, title, installed, version: '1.0.0', activeVersion: installed ? '1.0.0' : null, updateAvailable: false, platform: 'pc', coverUrl: null, activeSnapshotId: installed ? 'snapshot' : null, readyToPlay: installed });
   const entries = [game('a', 'Zebra', false), game('b', 'Orbit', true)];
   const operations = { 'source::a': { operationId: 'op', sourceId: 'source', gameId: 'a', layerId: 'base', phase: 'fetch', status: 'running', sequence: 1, error: null } satisfies FusionOperationProgress };
   it('filters Fusion games by search, install state and their own operation stream', () => {
     assert.deepEqual(selectFusionCatalog(entries, 'all', 'orbit', 'title', operations).map((entry) => entry.gameId), ['b']);
     assert.deepEqual(selectFusionCatalog(entries, 'installed', '', 'title', operations).map((entry) => entry.gameId), ['b']);
     assert.deepEqual(selectFusionCatalog(entries, 'downloading', '', 'title', operations).map((entry) => entry.gameId), ['a']);
-    assert.deepEqual(selectFusionCatalog(entries, 'missing', '', 'title', operations).map((entry) => entry.gameId), ['a']);
+    assert.deepEqual(selectFusionCatalog(entries, 'missing', '', 'title', operations).map((entry) => entry.gameId), []);
   });
 });

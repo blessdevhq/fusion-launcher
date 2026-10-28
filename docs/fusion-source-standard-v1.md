@@ -19,6 +19,25 @@ it into the upcaster; this stage validates digest syntax, not file contents.
 containers; omission defaults to `"raw"`. Imports and downloads use the same
 read-only extraction contract.
 
+Optional presentation metadata stays within schema version `1.0`: a game
+manifest and compact source-index game entry may contain an HTTPS `cover_url`,
+and an index entry may include `platform`. Layers may include plain-text
+`title` (input alias `name`) and `description`; the UI formats the layer ID when
+no title is provided. The packer preserves these fields. They remain part of the
+original signed index or raw manifest bytes; they never authorize executable
+trust. New optional canonical fields are omitted when absent, preserving the
+serialized manifest hashes of existing workspace snapshots.
+
+Catalog readiness is enriched in batched local metadata reads: persisted
+snapshot/checksum/identity checks, installed-snapshot capability support, exact
+critical-file trust records, and absence of an active operation. Cached current
+manifest metadata can fill missing platform/cover fields without resolving or
+fetching a manifest for every card. This is a display hint: the launch guard
+still verifies current critical bytes and holds its file locks before execution.
+The state DTO separately exposes applied snapshot options, the manifest runtime
+default, recorded workspace placement, and sanitized crash summaries. Existing
+option, crash-preview and exact-digest trust commands retain their contracts.
+
 The canonical manifest is the only input to negotiation and planning. The v1.0
 upcaster normalizes values and resolves `extends` against caller-provided
 manifests. Unqualified references resolve within the current source;

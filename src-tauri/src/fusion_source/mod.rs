@@ -20,6 +20,7 @@ pub mod fs_safety;
 pub mod host_tools;
 pub mod integrity;
 pub mod layers;
+pub mod offline;
 pub mod packer;
 pub mod persistence;
 pub mod plan;

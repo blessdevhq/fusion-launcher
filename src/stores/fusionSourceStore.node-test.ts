@@ -2,12 +2,12 @@ import assert from 'node:assert/strict';
 import { beforeEach, describe, it } from 'node:test';
 import { useFusionSourceStore } from './fusionSourceStore.ts';
 import { useLauncherStore } from './launcherStore.ts';
-import type { FusionOperationProgress } from '../types/fusionSource.ts';
+import type { FusionCatalogEntry, FusionGameState, FusionOperationProgress } from '../types/fusionSource.ts';
 
 const event: FusionOperationProgress = { operationId: 'one', sourceId: 'source', gameId: 'game', layerId: 'runtime', phase: 'fetch', status: 'running', sequence: 1, error: null };
 describe('Fusion operation identity and catalog isolation', () => {
   beforeEach(() => {
-    useFusionSourceStore.setState({ operations: {}, retiredOperationIds: [] });
+    useFusionSourceStore.setState({ operations: {}, retiredOperationIds: [], readinessBlockers: {}, catalog: [], sources: [] });
     useLauncherStore.setState({ catalog: [], fusionCatalog: [], catalogEntries: [], downloads: [] });
   });
   it('rejects stale sequence events and never revives a completed operation', () => {
@@ -41,12 +41,37 @@ describe('Fusion operation identity and catalog isolation', () => {
     assert.deepEqual(useLauncherStore.getState().downloads, []);
   });
   it('represents a native Fusion title without adding a fabricated platform or download URL', () => {
-    const game = { kind: 'fusion_source' as const, sourceId: 'source', sourceName: 'Source', gameId: 'game', title: 'Native Game', version: '1', installed: false, activeVersion: null, updateAvailable: false };
+    const game = { kind: 'fusion_source' as const, sourceId: 'source', sourceName: 'Source', gameId: 'game', title: 'Native Game', version: '1', installed: false, activeVersion: null, updateAvailable: false, platform: null, coverUrl: null, activeSnapshotId: null, readyToPlay: false };
     useLauncherStore.getState().setFusionCatalog([game]);
     const entry = useLauncherStore.getState().catalogEntries[0];
     assert.equal(entry.kind, 'fusion_source');
-    assert.equal('platform' in entry.game, false);
+    assert.equal(entry.game.platform, null);
     assert.equal('downloads' in entry.game, false);
     assert.deepEqual(useLauncherStore.getState().catalog, []);
+  });
+  it('keeps known integrity failures scoped to the exact installed snapshot', () => {
+    const catalog: FusionCatalogEntry = { kind: 'fusion_source', sourceId: 'source', sourceName: 'Source', gameId: 'game', title: 'Game', version: '1', installed: true, activeVersion: '1', updateAvailable: false, platform: 'pc', coverUrl: null, activeSnapshotId: 'snapshot-a', readyToPlay: true };
+    const store = useFusionSourceStore.getState();
+    store.setSourcesAndCatalog([], [catalog]);
+    store.recordIntegrityError(catalog, 'snapshot-a', { code: 'corrupted_critical_binary' });
+    assert.deepEqual(useFusionSourceStore.getState().readinessBlockers, { 'source::game': { activeSnapshotId: 'snapshot-a' } });
+    store.setSourcesAndCatalog([], [catalog]);
+    assert.equal(Object.keys(useFusionSourceStore.getState().readinessBlockers).length, 1);
+    store.setSourcesAndCatalog([], [{ ...catalog, activeSnapshotId: 'snapshot-b' }]);
+    assert.deepEqual(useFusionSourceStore.getState().readinessBlockers, {});
+    store.recordIntegrityError(catalog, null, { code: 'corrupted_critical_binary' });
+    store.recordIntegrityError(catalog, 'snapshot-b', { code: 'network' });
+    assert.deepEqual(useFusionSourceStore.getState().readinessBlockers, {});
+  });
+  it('clears an integrity overlay only after a successful full state check or removal', () => {
+    const store = useFusionSourceStore.getState();
+    const game = { sourceId: 'source', gameId: 'game', installed: true, activeSnapshotId: 'snapshot-a', blockers: [{ code: 'missing_injector_dll', message: 'Missing', details: {} }] } as FusionGameState;
+    store.recordGameState(game);
+    assert.ok(useFusionSourceStore.getState().readinessBlockers['source::game']);
+    store.recordGameState({ ...game, blockers: [] });
+    assert.deepEqual(useFusionSourceStore.getState().readinessBlockers, {});
+    store.recordGameState(game);
+    store.setSourcesAndCatalog([], []);
+    assert.deepEqual(useFusionSourceStore.getState().readinessBlockers, {});
   });
 });

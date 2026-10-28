@@ -205,6 +205,44 @@ fn index_is_compact_and_upcasts_without_fetching_game_manifests() {
 }
 
 #[test]
+fn presentation_metadata_round_trips_and_preserves_absent_canonical_bytes() {
+    // Serialized before Stage 6. Snapshot identities hash these exact bytes.
+    const LEGACY: &str = r#"{"schemaVersion":"1.0","sourceId":"fusion-examples","id":"minimal","title":"Minimal","version":"1","platform":null,"extends":null,"capabilities":{"required":[],"optional":[]},"fallback":[],"layers":{"base":{"id":"base","kind":"base","content":"generic","dependsOn":[],"source":{"kind":"user_provided","instructions":null,"archive":"raw"},"transportDigest":null,"sizeBytes":null,"mountPath":"","optional":false,"defaultEnabled":false,"writableCopyPaths":[],"criticalFiles":[{"path":"main.exe","blake3":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","role":"main_executable"}],"dynamicProvider":null,"patch":null,"casAccess":"read_only"}},"layerOrder":["base"],"runtime":null,"launch":{"id":"main","executable":"main.exe","args":[],"env":{},"depends_on":[],"role":"primary"},"orchestrator":null,"persistence":{"saves_paths":[]},"configTemplates":[],"postSetupSteps":[],"localPlacement":"require_same_volume"}"#;
+    let old: CanonicalGameManifest = serde_json::from_str(LEGACY).unwrap();
+    SchemaUpcaster::validate_canonical(&old).unwrap();
+    assert_eq!(serde_json::to_string(&old).unwrap(), LEGACY);
+    let mut wire = value(SWITCH);
+    wire["cover_url"] = json!("https://images.example.org/zelda.webp");
+    wire["layers"][4]["name"] = json!("Плавность 60 FPS");
+    wire["layers"][4]["description"] = json!("Повышает частоту кадров.");
+    let manifest = canonical_json(&wire).unwrap();
+    assert_eq!(
+        manifest.cover_url.as_deref(),
+        Some("https://images.example.org/zelda.webp")
+    );
+    let layer = &manifest.layers[wire["layers"][4]["id"].as_str().unwrap()];
+    assert_eq!(layer.title.as_deref(), Some("Плавность 60 FPS"));
+    assert_eq!(
+        layer.description.as_deref(),
+        Some("Повышает частоту кадров.")
+    );
+    let layer_wire = serde_json::to_value(super::schema::LayerSpec::from(layer.clone())).unwrap();
+    assert_eq!(layer_wire["title"], "Плавность 60 FPS");
+    assert!(layer_wire.get("name").is_none());
+    wire["cover_url"] = json!("file:///C:/private/cover.png");
+    assert!(canonical_json(&wire).is_err());
+    let mut index = value(INDEX);
+    index["games"][0]["platform"] = json!("pc");
+    index["games"][0]["cover_url"] = json!("https://images.example.org/cover.webp");
+    let parsed = SchemaUpcaster::upcast_source_index(&index.to_string()).unwrap();
+    assert_eq!(parsed.games[0].platform.as_deref(), Some("pc"));
+    assert_eq!(
+        parsed.games[0].cover_url.as_deref(),
+        Some("https://images.example.org/cover.webp")
+    );
+}
+
+#[test]
 fn canonical_cas_is_read_only_and_preserves_explicit_writable_paths() {
     let manifest = canonical(SWITCH);
     assert!(manifest

@@ -51,6 +51,7 @@ pub trait FusionStorage: Send + Sync {
     fn list_sources(&self) -> Result<Vec<FusionSourceRecord>, FusionError>;
     fn remove_source(&self, source_id: &str) -> Result<(), FusionError>;
     fn list_catalog(&self) -> Result<Vec<FusionCatalogRecord>, FusionError>;
+    fn catalog_local_state(&self) -> Result<CatalogLocalState, FusionError>;
     fn put_manifest(&self, record: &FusionManifestRecord) -> Result<(), FusionError>;
     fn get_manifest(
         &self,
@@ -119,6 +120,12 @@ impl ProgressSink for NoProgress {
     fn emit(&self, _: &OperationProgress) {}
 }
 
+/// Trusted host setup runs under the launch operation and workspace lease.
+/// It can prepare mutable profiles; publisher JSON cannot register this hook.
+pub trait LaunchPreparation: Send + Sync {
+    fn prepare(&self, workspace: &super::workspace::AssembledWorkspace) -> Result<(), FusionError>;
+}
+
 struct OperationTransferSink {
     service: FusionService,
     game: QualifiedGameId,
@@ -183,6 +190,7 @@ pub struct FusionService {
 /// cannot install bridges or grant patch-tool execution authority.
 #[derive(Clone, Default)]
 pub struct FusionHostAdapters {
+    pub launch_preparation: Option<Arc<dyn LaunchPreparation>>,
     pub storefront: Option<Arc<dyn StorefrontInventory>>,
     pub torrent: Option<Arc<dyn TorrentAdapter>>,
     pub cloud: Vec<Arc<dyn CloudUriResolver>>,
@@ -403,7 +411,10 @@ impl FusionService {
         self.inner.storage.remove_source(source_id)
     }
 
-    async fn resolved_index(&self, url: &str) -> Result<CanonicalSourceIndex, FusionError> {
+    pub(crate) async fn resolved_index(
+        &self,
+        url: &str,
+    ) -> Result<CanonicalSourceIndex, FusionError> {
         let mut index = self
             .fetcher()?
             .fetch_index(url, &Cancellation::default())
@@ -439,13 +450,16 @@ impl FusionService {
     }
 
     pub fn source_list_catalog(&self) -> Result<Vec<FusionCatalogEntry>, FusionError> {
-        let installed = self
+        let local = self.inner.storage.catalog_local_state()?;
+        let operations: BTreeSet<_> = self
             .inner
-            .storage
-            .list_installations()?
-            .into_iter()
-            .map(|record| (record.game.clone(), record))
-            .collect::<BTreeMap<_, _>>();
+            .operations
+            .lock()
+            .map_err(|_| internal_error())?
+            .keys()
+            .cloned()
+            .collect();
+        let registry = self.registry();
         self.inner
             .storage
             .list_catalog()?
@@ -455,16 +469,46 @@ impl FusionService {
                     source_id: row.source_id.clone(),
                     game_id: row.entry.id.clone(),
                 };
-                let active = installed
+                let active = local
+                    .installations
                     .get(&game)
                     .filter(|record| record.active_snapshot_id.is_some());
                 let active_version = active.and_then(|record| record.active_version.clone());
+                let snapshot = local.snapshots.get(&game).filter(|snapshot| {
+                    active.and_then(|record| record.active_snapshot_id.as_ref())
+                        == Some(&snapshot.id)
+                });
+                let manifest = local
+                    .manifests
+                    .get(&game)
+                    .or_else(|| snapshot.map(|snapshot| &snapshot.manifest));
+                let ready_to_play = snapshot.is_some_and(|snapshot| {
+                    snapshot.verify_directory_identity().is_ok()
+                        && !operations.contains(&game)
+                        && !local.active_operations.contains(&game)
+                        && CapabilityNegotiator::negotiate(&snapshot.manifest, &registry)
+                            .blockers
+                            .is_empty()
+                        && critical_inventory(snapshot).iter().all(|(path, file)| {
+                            local.trusted_executables.get(&game).is_some_and(|trusted| {
+                                trusted.contains(&(path.clone(), file.blake3.clone()))
+                            })
+                        })
+                });
                 Ok(FusionCatalogEntry {
                     kind: "fusion_source",
                     source_id: row.source_id,
                     source_name: row.source_name,
                     game_id: row.entry.id,
                     title: row.entry.title,
+                    platform: row
+                        .entry
+                        .platform
+                        .or_else(|| manifest.and_then(|manifest| manifest.platform.clone())),
+                    cover_url: row
+                        .entry
+                        .cover_url
+                        .or_else(|| manifest.and_then(|manifest| manifest.cover_url.clone())),
                     update_available: active.is_some_and(|record| {
                         record
                             .active_manifest_blake3
@@ -476,6 +520,8 @@ impl FusionService {
                     version: row.entry.version,
                     installed: active.is_some(),
                     active_version,
+                    active_snapshot_id: active.and_then(|record| record.active_snapshot_id.clone()),
+                    ready_to_play,
                 })
             })
             .collect()
@@ -958,6 +1004,8 @@ impl FusionService {
             .filter(|layer| layer.optional)
             .map(|layer| AddonState {
                 id: layer.id.clone(),
+                title: layer.title.clone(),
+                description: layer.description.clone(),
                 kind: enum_string(&layer.kind),
                 enabled: selected.contains(&layer.id),
             })
@@ -1023,14 +1071,59 @@ impl FusionService {
                             .collect()
                 })
         });
-        let crash_report_ids = self
+        let crash_reports: Vec<_> = self
             .inner
             .storage
             .list_crashes(game)?
             .into_iter()
             .filter(|report| report.status == "pending")
-            .map(|report| report.id)
+            .map(|report| CrashSummary {
+                report_id: report.id,
+                created_at: report.created_at,
+                exit_code: report
+                    .report
+                    .get("exitCode")
+                    .and_then(serde_json::Value::as_i64),
+                crash_signature_hash: report
+                    .report
+                    .get("crashSignatureHash")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_owned),
+            })
             .collect();
+        let crash_report_ids = crash_reports
+            .iter()
+            .map(|report| report.report_id.clone())
+            .collect();
+        let applied_options = active.as_ref().map(|snapshot| GameOptions {
+            enabled_addons: Some(
+                snapshot
+                    .plan
+                    .selected_layers
+                    .iter()
+                    .filter(|id| {
+                        snapshot.manifest.layers.get(*id).is_some_and(|layer| {
+                            layer.optional
+                                && matches!(
+                                    layer.kind,
+                                    LayerKind::Addon | LayerKind::Mod | LayerKind::ShaderCache
+                                )
+                        })
+                    })
+                    .cloned()
+                    .collect(),
+            ),
+            runtime_channel: snapshot.plan.runtime_channel,
+        });
+        let default_runtime_channel = manifest
+            .runtime
+            .as_ref()
+            .map(|runtime| runtime.default_channel);
+        let external_workspace_root = self
+            .inner
+            .storage
+            .get_installation(game)?
+            .and_then(|record| record.external_workspace_root);
         warnings.extend(report.warnings.into_iter().map(|warning| warning.message));
         Ok(FusionGameState {
             source_id: game.source_id.clone(),
@@ -1045,6 +1138,9 @@ impl FusionService {
             update_available,
             ready: installed && blockers.is_empty() && operation.is_none(),
             options,
+            applied_options,
+            default_runtime_channel,
+            external_workspace_root,
             addons,
             runtime_channels,
             user_layers,
@@ -1053,6 +1149,7 @@ impl FusionService {
             blockers,
             operation,
             crash_report_ids,
+            crash_reports,
         })
     }
 
@@ -1093,7 +1190,7 @@ fn enum_string<T: serde::Serialize>(value: &T) -> String {
         .unwrap_or_default()
 }
 
-fn critical_inventory(
+pub(crate) fn critical_inventory(
     snapshot: &WorkspaceSnapshot,
 ) -> Vec<(String, super::schema::CriticalFileSpec)> {
     let mut files = BTreeMap::new();
@@ -1798,6 +1895,16 @@ impl FusionService {
                     "Install the game before launching it.",
                 )
             })?;
+        let lease = if let Some(preparation) = self.inner.adapters.launch_preparation.clone() {
+            tokio::task::spawn_blocking(move || {
+                preparation.prepare(&lease)?;
+                Ok::<_, FusionError>(lease)
+            })
+            .await
+            .map_err(|_| internal_error())??
+        } else {
+            lease
+        };
         self.inner.storage.activate_snapshot(
             &lease.snapshot,
             &self.inner.library_root,
@@ -1854,8 +1961,28 @@ impl FusionService {
         path: &str,
         blake3: &str,
     ) -> Result<(), FusionError> {
-        super::fs_safety::validate_relative_path(path)?;
-        super::cas::validate_hash(blake3)?;
+        self.game_trust_executables(game, vec![(path.to_owned(), blake3.to_owned())])
+            .await
+    }
+
+    /// Approve an explicit host-provided list under one verified workspace lease.
+    /// Validate every requested digest before persisting any approval; this avoids
+    /// rehashing a multi-gigabyte local base once per runtime/key file.
+    pub async fn game_trust_executables(
+        &self,
+        game: &QualifiedGameId,
+        files: Vec<(String, String)>,
+    ) -> Result<(), FusionError> {
+        if files.is_empty() || files.len() > 64 {
+            return Err(FusionError::new(
+                ErrorCode::UntrustedExecutable,
+                "Trust requires 1–64 explicit path/digest pairs.",
+            ));
+        }
+        for (path, digest) in &files {
+            super::fs_safety::validate_relative_path(path)?;
+            super::cas::validate_hash(digest)?;
+        }
         if self
             .inner
             .operations
@@ -1875,8 +2002,6 @@ impl FusionService {
             .and_then(|record| record.external_workspace_root);
         let assembler = self.assembler(game, external.as_deref())?;
         let game = game.clone();
-        let path = path.to_owned();
-        let hash = blake3.to_ascii_lowercase();
         let storage = self.inner.storage.clone();
         tokio::task::spawn_blocking(move || {
             let lease = assembler.active()?.ok_or_else(|| {
@@ -1886,23 +2011,29 @@ impl FusionService {
                 )
             })?;
             let inventory = critical_inventory(&lease.snapshot);
-            let approved = inventory.iter().find(|(candidate, file)| {
-                candidate.eq_ignore_ascii_case(&path) && file.blake3.eq_ignore_ascii_case(&hash)
-            });
-            if approved.is_none() {
-                return Err(FusionError::new(
-                    ErrorCode::UntrustedExecutable,
-                    "The requested digest is not a current selected critical file.",
-                ));
+            let mut approved_files = Vec::new();
+            for (path, hash) in &files {
+                let approved = inventory
+                    .iter()
+                    .find(|(candidate, file)| {
+                        candidate.eq_ignore_ascii_case(path)
+                            && file.blake3.eq_ignore_ascii_case(hash)
+                    })
+                    .ok_or_else(|| {
+                        FusionError::new(
+                            ErrorCode::UntrustedExecutable,
+                            "The requested digest is not a current selected critical file.",
+                        )
+                    })?;
+                approved_files.push((approved.0.clone(), hash.to_ascii_lowercase()));
             }
             // The exclusive lease remains live while rehashing and recording the
             // exact user-approved digest, including local-locator projections.
             PreLaunchIntegrityGuard::verify_integrity(&lease.snapshot)?;
-            storage.trust_executable(
-                &game,
-                &approved.expect("checked current inventory").0,
-                &hash,
-            )
+            for (path, hash) in approved_files {
+                storage.trust_executable(&game, &path, &hash)?;
+            }
+            Ok(())
         })
         .await
         .map_err(|_| internal_error())?

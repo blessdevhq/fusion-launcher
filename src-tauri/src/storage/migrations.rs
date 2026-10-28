@@ -277,6 +277,24 @@ impl RepositoryStore {
             self.migrate_v3_to_v4_inner()?;
         }
 
+        if user_version < 5 {
+            self.conn.execute_batch("BEGIN IMMEDIATE")?;
+            let result = self.conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS fusion_local_sources (
+                    source_id TEXT PRIMARY KEY REFERENCES fusion_sources(id),
+                    directory TEXT NOT NULL,
+                    prepare_eden INTEGER NOT NULL DEFAULT 0 CHECK (prepare_eden IN (0, 1))
+                 ); PRAGMA user_version = 5;",
+            );
+            match result {
+                Ok(()) => self.conn.execute_batch("COMMIT")?,
+                Err(error) => {
+                    let _ = self.conn.execute_batch("ROLLBACK");
+                    return Err(error);
+                }
+            }
+        }
+
         Ok(())
     }
 

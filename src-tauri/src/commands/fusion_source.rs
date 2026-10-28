@@ -9,12 +9,16 @@ use std::time::Duration;
 use tauri::{AppHandle, Emitter, State};
 
 use crate::fusion_source::adapters::torrent::LibtorrentSidecarAdapter;
-use crate::fusion_source::adapters::{PixeldrainUriResolver, SecureHttpsTransport};
+use crate::fusion_source::adapters::PixeldrainUriResolver;
 use crate::fusion_source::canonical::QualifiedGameId;
 use crate::fusion_source::dto::*;
 use crate::fusion_source::errors::{ErrorCode, FusionError};
 use crate::fusion_source::service::{
     FusionHostAdapters, FusionService, FusionStorage, ProgressSink, ServiceEnvironment,
+};
+use crate::local_sources::{
+    DesktopSourceSummary, DesktopSourceTransport, LocalProfilePreparation, LocalSourceCandidate,
+    LocalSourcePreview,
 };
 use crate::storage::fusion_source::SqliteFusionStorage;
 use crate::AppState;
@@ -43,6 +47,7 @@ struct BridgeInner {
     environment: ServiceEnvironment,
     services: Mutex<BTreeMap<PathBuf, FusionService>>,
     service_creation: tokio::sync::Mutex<()>,
+    local_source_access: tokio::sync::RwLock<()>,
     host_tools: tokio::sync::OnceCell<crate::fusion_source::transforms::PatchToolRegistry>,
 }
 
@@ -117,6 +122,7 @@ impl FusionBridge {
             environment,
             services: Mutex::new(BTreeMap::new()),
             service_creation: tokio::sync::Mutex::new(()),
+            local_source_access: tokio::sync::RwLock::new(()),
             host_tools: tokio::sync::OnceCell::new(),
         }));
         let initialize = bridge.clone();
@@ -200,6 +206,7 @@ impl FusionBridge {
             return Ok(service.clone());
         }
         let mut adapters = FusionHostAdapters {
+            launch_preparation: Some(Arc::new(LocalProfilePreparation(self.0.storage.clone()))),
             cloud: vec![Arc::new(PixeldrainUriResolver)],
             patch_tools: self.host_tools(&state.data_dir).await,
             ..FusionHostAdapters::default()
@@ -225,8 +232,8 @@ impl FusionBridge {
         let service = blocking(move || {
             FusionService::open(
                 &library,
-                storage,
-                Arc::new(SecureHttpsTransport),
+                storage.clone(),
+                Arc::new(DesktopSourceTransport::new(storage.clone())),
                 progress,
                 environment,
             )?
@@ -280,11 +287,71 @@ async fn blocking<T: Send + 'static>(
 }
 
 #[tauri::command]
+pub async fn fusion_source_preview_local(
+    directory: String,
+    state: State<'_, AppState>,
+    bridge: State<'_, FusionBridge>,
+) -> Result<LocalSourcePreview, FusionError> {
+    let _access = bridge.0.local_source_access.read().await;
+    let root = super::library_root_for_app_state(&state);
+    let storage = bridge.0.storage.clone();
+    let environment = bridge.0.environment.clone();
+    let candidate = blocking(move || {
+        LocalSourceCandidate::open(
+            std::path::Path::new(&directory),
+            &root,
+            storage,
+            environment,
+        )
+    })
+    .await?;
+    candidate.preview().await
+}
+
+#[tauri::command]
+pub async fn fusion_source_add_local(
+    directory: String,
+    expected_source_id: String,
+    prepare_eden: bool,
+    state: State<'_, AppState>,
+    bridge: State<'_, FusionBridge>,
+) -> Result<DesktopSourceSummary, FusionError> {
+    let _access = bridge.0.local_source_access.try_write().map_err(|_| {
+        FusionError::new(
+            ErrorCode::OperationInProgress,
+            "Wait for the active source operation before connecting or replacing a local source.",
+        )
+    })?;
+    if bridge.has_active_operations() {
+        return Err(FusionError::new(
+            ErrorCode::OperationInProgress,
+            "Wait for the active operation before replacing a local source.",
+        ));
+    }
+    let root = super::library_root_for_app_state(&state);
+    let storage = bridge.0.storage.clone();
+    let environment = bridge.0.environment.clone();
+    let candidate = blocking(move || {
+        LocalSourceCandidate::open(
+            std::path::Path::new(&directory),
+            &root,
+            storage,
+            environment,
+        )
+    })
+    .await?;
+    candidate
+        .connect(&bridge.0.storage, &expected_source_id, prepare_eden)
+        .await
+}
+
+#[tauri::command]
 pub async fn fusion_source_preview(
     url: String,
     state: State<'_, AppState>,
     bridge: State<'_, FusionBridge>,
 ) -> Result<SourcePreview, FusionError> {
+    let _access = bridge.0.local_source_access.read().await;
     bridge
         .service(&state, None)
         .await?
@@ -296,28 +363,40 @@ pub async fn fusion_source_add(
     url: String,
     state: State<'_, AppState>,
     bridge: State<'_, FusionBridge>,
-) -> Result<SourceSummary, FusionError> {
-    bridge.service(&state, None).await?.source_add(&url).await
+) -> Result<DesktopSourceSummary, FusionError> {
+    let _access = bridge.0.local_source_access.read().await;
+    let source = bridge.service(&state, None).await?.source_add(&url).await?;
+    DesktopSourceSummary::new(source, &bridge.0.storage)
 }
 #[tauri::command]
 pub async fn fusion_source_list(
     state: State<'_, AppState>,
     bridge: State<'_, FusionBridge>,
-) -> Result<Vec<SourceSummary>, FusionError> {
+) -> Result<Vec<DesktopSourceSummary>, FusionError> {
     let service = bridge.service(&state, None).await?;
-    blocking(move || service.source_list()).await
+    let storage = bridge.0.storage.clone();
+    blocking(move || {
+        service
+            .source_list()?
+            .into_iter()
+            .map(|s| DesktopSourceSummary::new(s, &storage))
+            .collect()
+    })
+    .await
 }
 #[tauri::command]
 pub async fn fusion_source_refresh(
     source_id: String,
     state: State<'_, AppState>,
     bridge: State<'_, FusionBridge>,
-) -> Result<SourceSummary, FusionError> {
-    bridge
+) -> Result<DesktopSourceSummary, FusionError> {
+    let _access = bridge.0.local_source_access.read().await;
+    let source = bridge
         .service(&state, None)
         .await?
         .source_refresh(&source_id)
-        .await
+        .await?;
+    DesktopSourceSummary::new(source, &bridge.0.storage)
 }
 #[tauri::command]
 pub async fn fusion_source_remove(
@@ -325,6 +404,7 @@ pub async fn fusion_source_remove(
     state: State<'_, AppState>,
     bridge: State<'_, FusionBridge>,
 ) -> Result<(), FusionError> {
+    let _access = bridge.0.local_source_access.read().await;
     let service = bridge.service(&state, None).await?;
     blocking(move || service.source_remove(&source_id)).await
 }
@@ -342,6 +422,7 @@ pub async fn fusion_game_get_state(
     state: State<'_, AppState>,
     bridge: State<'_, FusionBridge>,
 ) -> Result<FusionGameState, FusionError> {
+    let _access = bridge.0.local_source_access.read().await;
     bridge
         .service(&state, Some(&game))
         .await?
@@ -355,6 +436,7 @@ pub async fn fusion_game_set_options(
     state: State<'_, AppState>,
     bridge: State<'_, FusionBridge>,
 ) -> Result<FusionGameState, FusionError> {
+    let _access = bridge.0.local_source_access.read().await;
     bridge
         .service(&state, Some(&game))
         .await?
@@ -368,6 +450,7 @@ pub async fn fusion_game_install(
     state: State<'_, AppState>,
     bridge: State<'_, FusionBridge>,
 ) -> Result<OperationProgress, FusionError> {
+    let _access = bridge.0.local_source_access.read().await;
     bridge
         .service(&state, Some(&game))
         .await?
@@ -381,6 +464,7 @@ pub async fn fusion_game_update(
     state: State<'_, AppState>,
     bridge: State<'_, FusionBridge>,
 ) -> Result<OperationProgress, FusionError> {
+    let _access = bridge.0.local_source_access.read().await;
     bridge
         .service(&state, Some(&game))
         .await?
@@ -400,6 +484,7 @@ pub async fn fusion_game_rollback(
     state: State<'_, AppState>,
     bridge: State<'_, FusionBridge>,
 ) -> Result<OperationProgress, FusionError> {
+    let _access = bridge.0.local_source_access.read().await;
     bridge
         .service(&state, Some(&game))
         .await?
@@ -412,6 +497,7 @@ pub async fn fusion_game_launch(
     state: State<'_, AppState>,
     bridge: State<'_, FusionBridge>,
 ) -> Result<OperationProgress, FusionError> {
+    let _access = bridge.0.local_source_access.read().await;
     bridge
         .service(&state, Some(&game))
         .await?
@@ -424,6 +510,7 @@ pub async fn fusion_game_remove(
     state: State<'_, AppState>,
     bridge: State<'_, FusionBridge>,
 ) -> Result<OperationProgress, FusionError> {
+    let _access = bridge.0.local_source_access.read().await;
     bridge
         .service(&state, Some(&game))
         .await?

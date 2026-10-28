@@ -156,6 +156,33 @@ fn unsigned_output_omits_signature_and_keyed_recipe_requires_matching_key() {
     );
 }
 
+#[tokio::test]
+async fn packer_preserves_cover_platform_and_human_readable_layer_metadata() {
+    let mut fixture = Fixture::new(false);
+    fixture.recipe["games"][0]["cover_url"] = json!("https://author.example/cover.webp");
+    fixture.recipe["games"][0]["layers"][2]["name"] = json!("Кооперативный режим");
+    fixture.recipe["games"][0]["layers"][2]["description"] =
+        json!("Дополнительный мод для совместной игры.");
+    fixture.build().unwrap();
+    let index = fixture.index();
+    assert_eq!(index.games[0].platform.as_deref(), Some("pc"));
+    assert_eq!(
+        index.games[0].cover_url.as_deref(),
+        Some("https://author.example/cover.webp")
+    );
+    let manifest = fixture.fetch().await.canonical;
+    assert_eq!(manifest.cover_url, index.games[0].cover_url);
+    assert_eq!(
+        manifest.layers["injector"].title.as_deref(),
+        Some("Кооперативный режим")
+    );
+    assert_eq!(
+        manifest.layers["injector"].description.as_deref(),
+        Some("Дополнительный мод для совместной игры.")
+    );
+    PackerEngine::new().verify(&fixture.dist).unwrap();
+}
+
 /// Use a real test executable without introducing a compiler or shell dependency.
 /// The child is selected by its exact test name, so it cannot recursively run the suite.
 #[test]

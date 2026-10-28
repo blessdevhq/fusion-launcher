@@ -72,6 +72,7 @@ export const en = {
   },
   statusLabels: {
     'Ready to Play': 'Ready to play',
+    'Update Available': 'Update available',
     'Game File Issue': 'Game file issue',
     'Missing Requirements': 'Missing requirements',
     'Download Error': 'Download error',
@@ -319,6 +320,7 @@ export const en = {
     },
     filters: {
       all: 'All games',
+      ready: 'Ready to play',
       installed: 'Installed',
       downloading: 'Downloading',
       missing: 'Needs setup'
@@ -448,7 +450,7 @@ export const en = {
       ready: 'Ready to play',
       downloads: 'Downloads',
       missing: 'Needs setup',
-      count: (count: number) => `${count} games`
+      count: (count: number) => `${count} ${count === 1 ? 'game' : 'games'}`
     }
   },
   onboarding: {
@@ -911,6 +913,7 @@ export const ru: UiText = {
   },
   statusLabels: {
     'Ready to Play': 'Готово к запуску',
+    'Update Available': 'Доступно обновление',
     'Game File Issue': 'Проблема с файлом',
     'Missing Requirements': 'Нужна настройка',
     'Download Error': 'Ошибка загрузки',
@@ -1158,6 +1161,7 @@ export const ru: UiText = {
     },
     filters: {
       all: 'Все игры',
+      ready: 'Готово к запуску',
       installed: 'Установленные',
       downloading: 'Загружаются',
       missing: 'Нужна настройка'
@@ -1287,7 +1291,7 @@ export const ru: UiText = {
       ready: 'Готово к запуску',
       downloads: 'Загрузки',
       missing: 'Нужна настройка',
-      count: (count: number) => `${count} игр`
+      count: (count: number) => `${count} ${count % 10 === 1 && count % 100 !== 11 ? 'игра' : count % 10 >= 2 && count % 10 <= 4 && (count % 100 < 12 || count % 100 > 14) ? 'игры' : 'игр'}`
     }
   },
   onboarding: {

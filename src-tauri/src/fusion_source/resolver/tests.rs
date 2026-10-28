@@ -644,6 +644,8 @@ fn entry(bytes: &[u8]) -> SourceGameEntry {
         id: "game".into(),
         title: "Fixture".into(),
         version: "1".into(),
+        platform: None,
+        cover_url: None,
         manifest_url: "https://source.example/manifests/game.json".into(),
         manifest_blake3: digest(bytes).value,
     }

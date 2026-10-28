@@ -8,7 +8,7 @@ import type {
   TorrentDownloadStatus
 } from '../types/repository.ts';
 
-export type LibraryFilter = 'all' | 'installed' | 'downloading' | 'missing';
+export type LibraryFilter = 'all' | 'ready' | 'installed' | 'downloading' | 'missing';
 export type LibrarySort = 'title' | 'platform' | 'status' | 'repository';
 export type PrimaryGameAction = 'play' | 'download' | 'import' | 'resume' | 'retry' | 'details';
 export type StatusTone = 'ready' | 'active' | 'paused' | 'error' | 'missing' | 'idle';
@@ -116,6 +116,8 @@ export function buildGameLibraryItem(
 
 export function filterLibraryItems(items: GameLibraryItem[], filter: LibraryFilter): GameLibraryItem[] {
   switch (filter) {
+    case 'ready':
+      return items.filter((item) => item.readyToPlay);
     case 'installed':
       return items.filter((item) => item.installed);
     case 'downloading':

@@ -85,7 +85,8 @@ async function main() {
     node.click();
   });
   await expectVisible(page.getByTestId('library-screen'), 'library screen after collection');
-  assert.equal(await page.getByTestId('library-search').inputValue(), 'ready to play');
+  assert.equal(await page.getByTestId('library-search').inputValue(), '', 'collections use explicit filters without replacing search');
+  assert.equal(await page.locator('[data-collection-id="ready"]').getAttribute('aria-pressed'), 'true');
 
   await clickNav(page, 'downloads');
   await page.waitForTimeout(250);

@@ -8,6 +8,8 @@ export interface FusionError {
 }
 
 export interface FusionSourcePreview {
+  /** Host-owned location, supplied only by the local-directory IPC flow. */
+  localDirectory?: string | null;
   sourceId: string;
   name: string;
   url: string;
@@ -17,6 +19,7 @@ export interface FusionSourcePreview {
 }
 
 export interface FusionSourceSummary extends Omit<FusionSourcePreview, 'signatureVerified'> {
+  prepareEden?: boolean;
   refreshedAt: string;
 }
 
@@ -30,6 +33,11 @@ export interface FusionCatalogEntry {
   installed: boolean;
   activeVersion: string | null;
   updateAvailable: boolean;
+  platform: string | null;
+  coverUrl: string | null;
+  activeSnapshotId: string | null;
+  /** Configuration/trust readiness; launching still performs the full integrity guard. */
+  readyToPlay: boolean;
 }
 
 export type CatalogEntry =
@@ -51,6 +59,8 @@ export interface FusionGameOptions {
 
 export interface FusionAddon {
   id: string;
+  title: string | null;
+  description: string | null;
   kind: string;
   enabled: boolean;
 }
@@ -82,6 +92,9 @@ export interface FusionGameState {
   activeSnapshotId: string | null;
   rollbackAvailable: boolean;
   options: FusionGameOptions;
+  appliedOptions: FusionGameOptions | null;
+  defaultRuntimeChannel: FusionRuntimeChannel | null;
+  externalWorkspaceRoot: string | null;
   addons: FusionAddon[];
   runtimeChannels: FusionRuntimeChannel[];
   userLayers: FusionUserLayer[];
@@ -90,6 +103,14 @@ export interface FusionGameState {
   warnings: string[];
   operation: FusionOperationProgress | null;
   crashReportIds: string[];
+  crashReports: FusionCrashSummary[];
+}
+
+export interface FusionCrashSummary {
+  reportId: string;
+  createdAt: string;
+  exitCode: number | null;
+  crashSignatureHash: string | null;
 }
 
 export interface FusionOperationProgress {

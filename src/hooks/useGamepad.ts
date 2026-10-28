@@ -33,6 +33,8 @@ export function useGamepad({
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       const target = event.target;
+      // Native selects own arrows, activation and Escape; do not route them to the shell.
+      if (target instanceof HTMLElement && target.tagName === 'SELECT') return;
       const isEditable = target instanceof HTMLElement && (
         target.tagName === 'INPUT' ||
         target.tagName === 'TEXTAREA' ||

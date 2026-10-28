@@ -26,6 +26,10 @@ name = "fusion-packer"
 path = "src/bin/fusion_packer.rs"
 
 [[bin]]
+name = "fusion-local"
+path = "src/bin/fusion_local.rs"
+
+[[bin]]
 name = "fusion-torrent"
 path = "src/sidecar_fallback.rs"
 required-features = ["rqbit-fallback"]

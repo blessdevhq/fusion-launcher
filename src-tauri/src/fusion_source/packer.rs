@@ -55,6 +55,8 @@ pub struct PackerGameRecipe {
     pub version: String,
     #[serde(default)]
     pub platform: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cover_url: Option<String>,
     #[serde(default)]
     pub extends: Option<String>,
     #[serde(default)]
@@ -83,6 +85,10 @@ pub struct PackerGameRecipe {
 #[serde(deny_unknown_fields)]
 pub struct PackerLayerRecipe {
     pub id: String,
+    #[serde(default, alias = "name", skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
     pub kind: LayerKind,
     #[serde(default)]
     pub content: LayerContent,
@@ -792,6 +798,8 @@ impl PackerEngine {
                         id: manifest.id.clone(),
                         title: manifest.title,
                         version: manifest.version,
+                        platform: manifest.platform,
+                        cover_url: manifest.cover_url,
                         manifest_url: publication_url(recipe.base_url.as_deref(), &relative)?,
                         manifest_blake3: digest,
                     };
@@ -1026,6 +1034,8 @@ enum PendingFile {
 fn layer_spec(recipe: &PackerLayerRecipe) -> LayerSpec {
     LayerSpec {
         id: recipe.id.clone(),
+        title: recipe.title.clone(),
+        description: recipe.description.clone(),
         kind: recipe.kind,
         content: recipe.content,
         depends_on: recipe.depends_on.clone(),
@@ -1052,6 +1062,7 @@ fn game_manifest(game: &PackerGameRecipe, layers: Vec<LayerSpec>) -> GameManifes
         title: game.title.clone(),
         version: game.version.clone(),
         platform: game.platform.clone(),
+        cover_url: game.cover_url.clone(),
         extends: game.extends.clone(),
         capabilities: game.capabilities.clone(),
         fallback: game.fallback.clone(),
@@ -1204,6 +1215,8 @@ fn inspect_with_cache(
     }
     let spec = LayerSpec {
         id: "inspection".into(),
+        title: None,
+        description: None,
         kind,
         content: LayerContent::Generic,
         depends_on: Vec::new(),
@@ -1491,6 +1504,8 @@ fn validate_recipe_names(recipe: &PackerRecipe) -> Result<(), FusionError> {
                 id: game.id.clone(),
                 title: game.title.clone(),
                 version: game.version.clone(),
+                platform: game.platform.clone(),
+                cover_url: game.cover_url.clone(),
                 manifest_url: "manifest.json".into(),
                 manifest_blake3: "0".repeat(64),
             })
@@ -1514,6 +1529,8 @@ fn validate_recipe_names(recipe: &PackerRecipe) -> Result<(), FusionError> {
                     id: layer.id.clone(),
                     title: "Layer".into(),
                     version: "1".into(),
+                    platform: None,
+                    cover_url: None,
                     manifest_url: "manifest.json".into(),
                     manifest_blake3: "0".repeat(64),
                 }],
