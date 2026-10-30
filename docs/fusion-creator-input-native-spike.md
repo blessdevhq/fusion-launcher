@@ -1,6 +1,6 @@
 # Поток E: SDL внутри приложения — отчёт интегратору
 
-Статус: **повторный CI с закреплённым Rust 1.95.0 выполняется; готовность спайка пока не объявлена**. Локальный модуль/fixtures/release probe и полный QA Rust 1.95.0 с четырьмя test threads проходят. Предыдущий Windows CI прошёл все тесты и остановился на clippy Rust 1.99.1 вне E; история ниже сохранена. В новом E workflow toolchain совпадает с локальным; lint не отключён.
+Статус: **E-SPIKE ЗАВЕРШЁН**. Windows CI **41141531082 — SUCCESS** на Rust **1.95.0**: полный QA, native virtual fixtures, release-сборка приложения и запуск app probe прошли; artifact скачан и его JSON проверен. Это приёмка feasibility spike, **не** полного production input service или Creator v1. История неудачных прогонов и ограничения ниже сохранены; lint не отключён.
 
 ## Область изменений
 
@@ -18,7 +18,7 @@
 - Добавлен явный диагностический CLI-флаг Windows-приложения `--input-spike-probe`. Успех означает только перечисление/teardown в этом процессе, не physical input, Eden launch или Creator verification report.
 - Замороженные `fusion_input_*` IPC, `fusion-input:state`, sessionId/sequence, Creator DTO, GameManifest, SQLite и i18n **не изменены**. Production IPC остаётся `action_unavailable` до полной реализации E.
 - Общие файлы для интегратора: одна добавленная Windows-зависимость Cargo.toml, её additive lock closure, регистрация модуля и ранняя diagnostic ветка в lib.rs. Existing CI/release workflows не перезаписаны; новый workflow принадлежит этому спайку.
-- Историческая база `b08bc35` нужна только если принимающая ветка ещё не содержит frozen wave-zero patch. E-code commit — `79d2714`; CI environment fixes — `2719cef`, `d173e7b`. Не cherry-pick-ать повторно уже принятые prerequisite изменения. В main ничего не слито.
+- Историческая база `b08bc35` нужна только если принимающая ветка ещё не содержит frozen wave-zero patch. E-code commit — `79d2714`; CI environment fixes — `2719cef`, `d173e7b`, `5c39dcc`, `3971de1`. Не cherry-pick-ать повторно уже принятые prerequisite изменения. В main ничего не слито.
 
 ## Реальный worker и API спайка
 
@@ -69,6 +69,12 @@ CI использует закреплённый **windows-2022** runner, MSVC t
 
 После сообщения об этом блокере и дальнейшего указания пользователя «продолжай» выбран минимальный вариант: только E-spike workflow закрепляет Rust **1.95.0**, как в локальном QA. Это не доказывает совместимость остальной базы с clippy 1.99.1: 18 предупреждений остаются задачей владельцев модулей при обновлении toolchain. `-D warnings`, все тесты и source-код сохранены; allow/ослабление lint и правки чужих модулей не применяются. Предыдущий doc-only handoff commit использовал skip-ci и не менял красный результат run 40981975222. Новый CI проверяется отдельно, до его завершения зелёный статус не заявляется.
 
+Финальный run **[41141531082](https://github.com/blessdevhq/fusion-launcher/actions/runs/41141531082)** проверил commit **3971de1184d993010fe617b87ec7577efbe91fda**. API подтвердил **completed / success** и success каждого шага, включая post-cache. Полный `npm run qa` прошёл на Rust **1.95.0**: **142 Node tests**, **547 library Rust tests + 3 Packer CLI tests**, typecheck, static-check, frontend build, fmt, all-targets clippy **-D warnings**. **4 исходных теста ignored**, не засчитаны как PASS. На CI обычная параллельность не переопределена. Отдельный `cargo test --manifest-path src-tauri/Cargo.toml --locked --lib input::tests -- --nocapture` — **3 passed / 0 failed / 0 ignored**; это повтор тех же SDL-тестов, уже входящих в общую suite.
+
+CI release `cargo build --manifest-path src-tauri/Cargo.toml --locked --release --bin fusion-launcher --timings` — **PASS**, executable **36 035 584 bytes**, время **452,569 с** (контекст кешей отличается от локального A/B, не считать стоимостью только SDL). `Start-Process` реального `.exe --input-spike-probe` — **exit 0**; скачанный JSON подтверждает SDL **2.26.4**, devices **[]**, handles_closed **true**, flags **0**; stderr **0 bytes**. Probe на CI теперь **TESTED**, в отличие от пропущенных шагов старого run 40981975222.
+
+Artifact **[native-input-windows-evidence / 13019582745](https://github.com/blessdevhq/fusion-launcher/actions/runs/41141531082/artifacts/13019582745)** получен через `gh run download`, проверен по конкретному run/commit. Он содержит оба JSON, stderr и два timing HTML. `.tmp/input-ci-verified.json` хранит проверенный статус/commit/значения и SHA-256 полученных JSON; `.tmp/input-ci-success.log` — полный CI log. Выгрузка явно разрешает hidden `.tmp` только для трёх названных файлов, плюс timing HTML; произвольные скрытые файлы workspace не собираются. Промежуточный run `41141280067` superseded правкой выгрузки и не считается отдельным доказательством приёмки. Финальный doc-only handoff не меняет проверенный Rust-код/workflow и не запускает дублирующий CI.
+
 ## Измерения
 
 Сравнение release app до/после использует одну рабочую директорию, один профиль/target/toolchain и один неизменный `out/`, без подмены на standalone harness. SHA-256 comparison всех **39** embedded frontend файлов подтвердил одинаковые байты до/после. Время baseline не является временем добавления SDL: в baseline были пересобраны существующие release-зависимости.
@@ -84,7 +90,7 @@ CI использует закреплённый **windows-2022** runner, MSVC t
 Пустой список устройств честно отражает этот запуск: probe не доказывает hardware input и не auto-open-ит устройство. Read/open доказаны virtual fixtures внутри launcher library. Размер включает worker, диагностическую CLI-проводку и статически достижимый SDL, а не абстрактную стоимость только Rust wrapper. Чистое время всего приложения с нулевым Cargo cache локально не измерено. Чистый packaging/NSIS size delta также не измерен.
 
 Baseline без SDL: `.tmp/input-baseline-size.json` и `.tmp/input-baseline-build.log`.
-Сравнение: `.tmp/input-size-result.json`, `.tmp/input-size-comparison-context.json`; сборка/запуск: `.tmp/input-sdl-release.log`, `.tmp/input-sdl-release-size.json`, `.tmp/input-app-probe.json`, `.tmp/input-pe-imports.log`. Native timing HTML записан Cargo в shared target `cargo-timings/cargo-timing-20261030T003752987Z-987742b7e7b7cb8e.html`. CI artifact `native-input-windows-evidence` предназначен для JSON результатов и cargo timing HTML; его фактическая доступность проверяется после успешного run.
+Сравнение: `.tmp/input-size-result.json`, `.tmp/input-size-comparison-context.json`; сборка/запуск: `.tmp/input-sdl-release.log`, `.tmp/input-sdl-release-size.json`, `.tmp/input-app-probe.json`, `.tmp/input-pe-imports.log`. Native timing HTML записан Cargo в shared target `cargo-timings/cargo-timing-20261030T003752987Z-987742b7e7b7cb8e.html`. Доступность и содержимое CI artifact `native-input-windows-evidence` проверены скачиванием, не только successful upload step.
 
 ## Риски и NOT TESTED
 
@@ -117,4 +123,5 @@ Baseline без SDL: `.tmp/input-baseline-size.json` и `.tmp/input-baseline-bui
 - F должен использовать capture/focus ownership до подключения input к shell; E не изменяет чужие frontend модули.
 - Без production IPC/state store спайк не является готовым E-сервисом v1. Calibration, сохранение bindings и ParamPackage намеренно отсутствуют.
 - Frontend/i18n/CSS не менялись; `mvp:visual` не заменяет аппаратную проверку и не запускается для этого backend-only delta.
+- Полный обычный GUI startup и NSIS/package acceptance для этого delta: **NOT TESTED**. Headless probe в настоящем release exe не заменяет эти проверки.
 - Общий локальный node_modules переиспользован через junction; чистый npm install проверяется отдельным CI runner, а не заявляется локально.
