@@ -33,6 +33,9 @@ jobs:
           cache: npm
       - uses: dtolnay/rust-toolchain@stable
         with:
+          # Match the locally verified spike. Rust 1.99's new diagnostics in
+          # existing async_trait modules are outside E; retain -D warnings.
+          toolchain: 1.95.0
           targets: x86_64-pc-windows-msvc
           components: rustfmt, clippy
       # Bundled SDL 2.26.4 declares CMake 3.0 compatibility, removed by CMake 4.
