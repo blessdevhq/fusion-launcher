@@ -1,6 +1,6 @@
 # Поток E: SDL внутри приложения — отчёт интегратору
 
-Статус: **проверки выполняются; готовность пока не объявлена**.
+Статус: **BLOCKED на общем CI clippy Rust 1.99.1; готовность спайка пока не объявлена**. Локальный модуль/fixtures/release probe и полный QA Rust 1.95.0 с четырьмя test threads проходят. На Windows CI все тесты проходят, но общий lint gate красный. Требуется решение интегратора о toolchain pin либо исправление чужих async_trait-модулей их владельцами; lint не отключён.
 
 ## Область изменений
 
@@ -11,6 +11,14 @@
 - Общий `lib.rs` изменён только добавлением Windows-модуля и явно запрашиваемого headless probe. Обычный запуск не стартует SDL и не открывает контроллер.
 - Новый `.github/workflows/input-spike-windows.yml`. Существующие CI/release workflows не изменены.
 - Нет UI, калибровки, Eden ParamPackage, новых production IPC или замены DTO замороженного Creator/input контракта.
+
+## Контракты и интеграция
+
+- Добавлен экспериментальный Rust API `input::InputWorker`, `DeviceInfo`, `ControllerState`, `RawState`, `ReleaseProof`, `ProbeReport` и `probe()`. Это локальная граница feasibility spike, не новые wire/portable DTO.
+- Добавлен явный диагностический CLI-флаг Windows-приложения `--input-spike-probe`. Успех означает только перечисление/teardown в этом процессе, не physical input, Eden launch или Creator verification report.
+- Замороженные `fusion_input_*` IPC, `fusion-input:state`, sessionId/sequence, Creator DTO, GameManifest, SQLite и i18n **не изменены**. Production IPC остаётся `action_unavailable` до полной реализации E.
+- Общие файлы для интегратора: одна добавленная Windows-зависимость Cargo.toml, её additive lock closure, регистрация модуля и ранняя diagnostic ветка в lib.rs. Existing CI/release workflows не перезаписаны; новый workflow принадлежит этому спайку.
+- Историческая база `b08bc35` нужна только если принимающая ветка ещё не содержит frozen wave-zero patch. E-code commit — `79d2714`; CI environment fixes — `2719cef`, `d173e7b`. Не cherry-pick-ать повторно уже принятые prerequisite изменения. В main ничего не слито.
 
 ## Реальный worker и API спайка
 
@@ -57,6 +65,10 @@ CI использует закреплённый **windows-2022** runner, MSVC t
 
 Второй CI run `40980838685` на windows-2022 собрал SDL и прошёл все 3 input fixtures, но общий QA дал **543 passed / 4 failed / 4 ignored**: существующий patch helper выбрал `C:/hostedtoolcache/windows/Python/3.12.10/x64/python3.exe`, и hash_file отклонил reparse-point alias с InvalidPath. Исправляется только среда нового workflow: физический `os.path.realpath(sys.executable)` задаётся через уже существующий `FUSION_TEST_PYTHON` (`transforms.rs:1076-1093`). Workflow проверяет отсутствие reparse points у самого exe и всех предков. Защита путей/production-код/test helper не ослаблены.
 
+Третий run: **[40981975222](https://github.com/blessdevhq/fusion-launcher/actions/runs/40981975222)**, source/workflow commit **d173e7b2de910f6566b7539bebdbb0b79701983c**, overall **FAILURE**. Windows-2022/CMake/physical-Python setup проходят. Typecheck, **142 Node tests**, static-check, build, **547 library Rust tests + 3 CLI tests**, fmt проходят; test suite использует обычную параллельность CI. Далее clippy под автоматически обновившимся **Rust 1.99.1** отклоняет **18** macro-generated `double_must_use` в существующих async_trait-модулях (adapters, integrity, resolver, torrent_engine), не в E input. Локальный Rust **1.95.0** с `-D warnings` проходит на том же исходном коде. Explicit fixture/release/probe steps этого CI пропущены из-за предыдущего неуспеха; release app probe **на CI ещё NOT TESTED**, несмотря на локальный PASS и фактически выполненные input-тесты в общей suite.
+
+Предложено закрепить в E-spike workflow Rust **1.95.0**, как в локальном QA; это не докажет совместимость остальной базы с clippy 1.99.1. Альтернатива — владельцы устраняют 18 предупреждений на новом toolchain. Вопрос об этом задан пользователю; подтверждение не получено (clarify timeout). Ни pin на старую версию, ни allow/ослабление lint, ни правки чужих модулей не применены. Общий CI нельзя называть зелёным. Дальнейшие CI-попытки до решения не запускаются; doc-only handoff commit использует skip-ci, не меняя проверявшийся Rust-код или красный результат последнего code run.
+
 ## Измерения
 
 Сравнение release app до/после использует одну рабочую директорию, один профиль/target/toolchain и один неизменный `out/`, без подмены на standalone harness. SHA-256 comparison всех **39** embedded frontend файлов подтвердил одинаковые байты до/после. Время baseline не является временем добавления SDL: в baseline были пересобраны существующие release-зависимости.
@@ -95,6 +107,8 @@ Baseline без SDL: `.tmp/input-baseline-size.json` и `.tmp/input-baseline-bui
 ### Ошибки проверок, которые не скрыты
 
 Первый локальный `npm run qa` дал **545 passed / 2 failed / 4 ignored** в Rust: `cancelling_job_waits_for_actual_descendants_and_drops_all_base_locks` и `dropping_caller_future_cancels_tree_without_dropping_lease_early` остановились на `supervisor_tests.rs:500`, `descendant failed to publish pid` (20-секундное ожидание). Оба точных теста затем отдельно прошли (4,32 с и 2,91 с). Повторный полный прогон дал **546 passed / 1 failed / 4 ignored** на первом из них. Все 3 SDL-теста прошли в обоих полных прогонах. Причина различия isolated/parallel **UNCONFIRMED**; supervisor не изменён, timeout не увеличен, тесты не отключены. Его fixture копирует и запускает собственный test exe (`supervisor_tests.rs:238-255`), поэтому длительность дочернего старта зависит и от среды. Это наблюдение, не доказательство конкретной причины. Логи `.tmp/input-qa.log`, `.tmp/input-qa-retry1.log`, `.tmp/input-supervisor-repro1.log`, `.tmp/input-supervisor-repro2.log`.
+
+Дополнительное сравнение двух уже собранных test exe с обычной параллельностью: baseline **544 passed / 0 failed / 4 ignored**, SDL-вариант **546 passed / 1 failed / 4 ignored** — на существующей проверке очистки `.fusion-patch-*` (`transforms.rs:1173`). Набор test names отличается только тремя input-тестами. Один такой differential run не устанавливает причину; cleanup-flake уже наблюдался до E в wave-zero handoff. Исходники transforms/supervisor в E не изменены. Evidence `.tmp/input-differential.json`, `.tmp/input-differential-baseline.log`, `.tmp/input-differential-sdl.log`. Первая попытка захвата этого диагностического вывода потеряла результат из-за не-UTF8 Windows stderr и не считается проверкой; повтор сохраняет исходные bytes.
 
 Независимый read-only review E: **PASS**, security_concerns и logic_errors пусты. До production нужны fault-injection проверки init failure/timeout/panic, политика hung worker и API deselection/reselection. Для single-selection спайка это отмечено как неблокирующие ограничения; общие IPC всё ещё action_unavailable.
 
