@@ -51,7 +51,9 @@ cargo build --manifest-path src-tauri/Cargo.toml --locked --release --bin fusion
 
 Headless diagnostic в **настоящем** `.exe`: `fusion-launcher.exe --input-spike-probe`. Он перечисляет устройства без auto-open и возвращает JSON с native SDL version и release proof, либо exit 1. Это намеренно достижимый application path, чтобы линкер не отбросил весь SDL как неиспользуемый модуль. Он не запускает GUI, не сохраняет файлы/привязки и не сообщает об успешном чтении неоткрытого устройства.
 
-CI использует Windows runner, MSVC target, frontend export перед компиляцией Tauri, полный `npm run qa`, явные fixtures, release build и запуск `.exe` probe. CMake закреплён на 3.31.6: включённый SDL объявляет CMake 3.0 compatibility, которую CMake 4 больше не принимает без policy override. Системные SDL DLL и отдельная установка SDL не требуются; импорт-таблица итогового PE будет проверена отдельно.
+CI использует закреплённый **windows-2022** runner, MSVC target, frontend export перед компиляцией Tauri, полный `npm run qa`, явные fixtures, release build и запуск `.exe` probe. CMake закреплён на 3.31.6: включённый SDL объявляет CMake 3.0 compatibility, которую CMake 4 больше не принимает без policy override. Системные SDL DLL и отдельная установка SDL не требуются; импорт-таблица итогового PE будет проверена отдельно.
+
+Первый CI run `40980035691` на `windows-latest` **FAILED** до fixtures: cmake-rs выбрал установленный `Visual Studio 18 2026`, generator которого отсутствует в CMake 3.31.6. Подтверждённая ошибка: `Could not create named generator Visual Studio 18 2026`. Исправлена пара runner/toolchain: windows-2022 + CMake 3.31.6; зависимость SDL и её исходники не подменены.
 
 ## Измерения
 
