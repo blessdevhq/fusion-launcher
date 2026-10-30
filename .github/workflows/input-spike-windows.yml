@@ -97,6 +97,11 @@ jobs:
         with:
           name: native-input-windows-evidence
           if-no-files-found: warn
+          # JSON evidence is in an ignored/hidden scratch directory. Include
+          # only these named outputs, never arbitrary workspace hidden files.
+          include-hidden-files: true
           path: |
-            .tmp/input-ci-*
+            .tmp/input-ci-build.json
+            .tmp/input-ci-probe.json
+            .tmp/input-ci-probe.stderr
             src-tauri/target/cargo-timings/*.html
