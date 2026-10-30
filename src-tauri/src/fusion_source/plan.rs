@@ -24,6 +24,10 @@ use super::schema::{
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PlanOptions {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub build_profile_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub controls_profile_id: Option<String>,
     /// None uses defaults. Some is the exact set of optional addon/mod/cache
     /// layers requested by the user; dependencies never silently enable one.
     pub enabled_addons: Option<BTreeSet<String>>,
@@ -36,6 +40,10 @@ pub struct PlanOptions {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExecutionPlan {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub build_profile_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub controls_profile_id: Option<String>,
     pub game: QualifiedGameId,
     pub manifest_version: String,
     pub selected_layers: Vec<String>,
@@ -234,6 +242,15 @@ impl PlanBuilder {
         // Public canonical values can be constructed or deserialized by callers.
         // Their type alone is not a substitute for path and graph validation.
         SchemaUpcaster::validate_canonical(manifest)?;
+        if manifest.schema_version == "1.1"
+            || options.build_profile_id.is_some()
+            || options.controls_profile_id.is_some()
+        {
+            return Err(FusionError::new(
+                ErrorCode::ActionUnavailable,
+                "Creator 1.1 installation and profile selection are unavailable in wave zero.",
+            ));
+        }
         let negotiation = CapabilityNegotiator::negotiate(manifest, registry);
         if let Some(blocker) = negotiation.blockers.first() {
             return Err(blocker.clone());
@@ -536,6 +553,8 @@ impl PlanBuilder {
         }
 
         Ok(ExecutionPlan {
+            build_profile_id: options.build_profile_id.clone(),
+            controls_profile_id: options.controls_profile_id.clone(),
             game,
             manifest_version: manifest.version.clone(),
             selected_layers,

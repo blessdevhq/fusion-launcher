@@ -377,6 +377,7 @@ async fn catalog_batches_local_readiness_and_applied_options_without_fetching_ma
             GameOptions {
                 enabled_addons: Some(["shader".into()].into_iter().collect()),
                 runtime_channel: None,
+                ..GameOptions::default()
             },
         )
         .await

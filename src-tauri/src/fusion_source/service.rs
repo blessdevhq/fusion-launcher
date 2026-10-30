@@ -774,6 +774,8 @@ impl FusionService {
     }
     fn plan_options(options: &GameOptions) -> PlanOptions {
         PlanOptions {
+            build_profile_id: options.build_profile_id.clone(),
+            controls_profile_id: options.controls_profile_id.clone(),
             enabled_addons: options.enabled_addons.clone(),
             runtime_channel: options.runtime_channel,
             ..PlanOptions::default()
@@ -1114,6 +1116,8 @@ impl FusionService {
                     .collect(),
             ),
             runtime_channel: snapshot.plan.runtime_channel,
+            build_profile_id: snapshot.plan.build_profile_id.clone(),
+            controls_profile_id: snapshot.plan.controls_profile_id.clone(),
         });
         let default_runtime_channel = manifest
             .runtime

@@ -1,0 +1,248 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:fusion:creator-contracts:1.0",
+  "title": "Fusion Creator contracts",
+  "description": "Portable CreatorProject 1.0 and camelCase job/input events. CreatorManifest is only the creator extension of GameManifest 1.1, available through its definition; this is not a complete GameManifest schema.",
+  "oneOf": [
+    { "$ref": "#/$defs/CreatorProject" },
+    { "$ref": "#/$defs/CreatorJobProgress" },
+    { "$ref": "#/$defs/InputState" }
+  ],
+  "$defs": {
+    "Identifier": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "Blake3": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "Revision": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+    "Sequence": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+    "HttpsUrl": {
+      "type": "string",
+      "format": "uri",
+      "pattern": "^[hH][tT][tT][pP][sS]://[^/?#@\\s]+(?:[/?#][^\\s]*)?$",
+      "description": "Absolute HTTPS URL without userinfo. Enable URI format assertion in the validator; application URL parsing remains authoritative."
+    },
+    "AxisDirection": { "enum": ["positive", "negative"] },
+    "AdapterReference": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "version"],
+      "properties": { "id": { "$ref": "#/$defs/Identifier" }, "version": { "$ref": "#/$defs/Identifier" } }
+    },
+    "ComponentOrigin": {
+      "oneOf": [
+        {
+          "type": "object", "additionalProperties": false,
+          "required": ["kind", "artifact_ref", "redistribution_allowed"],
+          "properties": {
+            "kind": { "const": "managed" }, "artifact_ref": { "$ref": "#/$defs/Identifier" },
+            "redistribution_allowed": { "type": "boolean" }
+          }
+        },
+        {
+          "type": "object", "additionalProperties": false,
+          "required": ["kind", "url", "transport_blake3", "inventory_blake3"],
+          "properties": {
+            "kind": { "const": "external" }, "url": { "$ref": "#/$defs/HttpsUrl" },
+            "transport_blake3": { "$ref": "#/$defs/Blake3" }, "inventory_blake3": { "$ref": "#/$defs/Blake3" }
+          }
+        },
+        {
+          "type": "object", "additionalProperties": false,
+          "required": ["kind", "requirement_id", "inventory_blake3", "instructions"],
+          "properties": {
+            "kind": { "const": "user_provided" }, "requirement_id": { "$ref": "#/$defs/Identifier" },
+            "inventory_blake3": { "$ref": "#/$defs/Blake3" }, "instructions": { "type": "string" }
+          }
+        }
+      ]
+    },
+    "LogicalBinding": {
+      "oneOf": [
+        {
+          "type": "object", "additionalProperties": false, "required": ["kind", "code"],
+          "properties": { "kind": { "const": "keyboard" }, "code": { "$ref": "#/$defs/Identifier" } }
+        },
+        {
+          "type": "object", "additionalProperties": false, "required": ["kind", "button"],
+          "properties": { "kind": { "const": "mouse_button" }, "button": { "type": "integer", "minimum": 0 } }
+        },
+        {
+          "type": "object", "additionalProperties": false, "required": ["kind", "axis", "direction"],
+          "properties": { "kind": { "const": "mouse_axis" }, "axis": { "enum": ["x", "y"] }, "direction": { "$ref": "#/$defs/AxisDirection" } }
+        },
+        {
+          "type": "object", "additionalProperties": false, "required": ["kind", "button"],
+          "properties": { "kind": { "const": "controller_button" }, "button": { "$ref": "#/$defs/Identifier" } }
+        },
+        {
+          "type": "object", "additionalProperties": false, "required": ["kind", "axis", "direction"],
+          "properties": { "kind": { "const": "controller_axis" }, "axis": { "$ref": "#/$defs/Identifier" }, "direction": { "$ref": "#/$defs/AxisDirection" } }
+        }
+      ]
+    },
+    "BuildProfile": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "title", "layer_ids", "controls_profile_ids"],
+      "properties": {
+        "id": { "$ref": "#/$defs/Identifier" }, "title": { "type": "string" },
+        "layer_ids": { "type": "array", "items": { "$ref": "#/$defs/Identifier" } },
+        "controls_profile_ids": { "type": "array", "items": { "$ref": "#/$defs/Identifier" } }
+      }
+    },
+    "ControlsProfile": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "title", "device", "bindings"],
+      "properties": {
+        "id": { "$ref": "#/$defs/Identifier" }, "title": { "type": "string" },
+        "device": { "enum": ["keyboard_mouse", "sdl_gamecontroller"] },
+        "bindings": { "type": "object", "additionalProperties": { "$ref": "#/$defs/LogicalBinding" } }
+      }
+    },
+    "ProjectionRule": {
+      "type": "object", "additionalProperties": false, "required": ["path", "winning_layer"],
+      "properties": { "path": { "type": "string", "minLength": 1 }, "winning_layer": { "$ref": "#/$defs/Identifier" } }
+    },
+    "CreatorComponent": {
+      "type": "object", "additionalProperties": false, "required": ["id", "layer_id", "origin"],
+      "properties": { "id": { "$ref": "#/$defs/Identifier" }, "layer_id": { "$ref": "#/$defs/Identifier" }, "origin": { "$ref": "#/$defs/ComponentOrigin" } }
+    },
+    "ManifestComponent": {
+      "type": "object", "additionalProperties": false, "required": ["layer_id", "origin"],
+      "properties": { "layer_id": { "$ref": "#/$defs/Identifier" }, "origin": { "$ref": "#/$defs/ComponentOrigin" } }
+    },
+    "CreatorManifest": {
+      "type": "object", "additionalProperties": false,
+      "required": ["adapter", "components", "build_profiles", "controls_profiles", "projection_rules"],
+      "properties": {
+        "adapter": { "$ref": "#/$defs/AdapterReference" },
+        "components": { "type": "array", "items": { "$ref": "#/$defs/ManifestComponent" } },
+        "build_profiles": { "type": "array", "items": { "$ref": "#/$defs/BuildProfile" } },
+        "controls_profiles": { "type": "array", "items": { "$ref": "#/$defs/ControlsProfile" } },
+        "projection_rules": { "type": "array", "items": { "$ref": "#/$defs/ProjectionRule" } }
+      }
+    },
+    "CreatorProject": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schema_version", "project_id", "revision", "title", "source_id", "game_id", "game_version", "adapter", "components", "build_profiles", "controls_profiles", "projection_rules"],
+      "properties": {
+        "schema_version": { "const": "1.0" }, "project_id": { "$ref": "#/$defs/Identifier" },
+        "revision": { "$ref": "#/$defs/Revision" }, "title": { "type": "string" },
+        "source_id": { "$ref": "#/$defs/Identifier" }, "game_id": { "$ref": "#/$defs/Identifier" }, "game_version": { "$ref": "#/$defs/Identifier" },
+        "adapter": { "$ref": "#/$defs/AdapterReference" },
+        "components": { "type": "array", "items": { "$ref": "#/$defs/CreatorComponent" } },
+        "build_profiles": { "type": "array", "items": { "$ref": "#/$defs/BuildProfile" } },
+        "controls_profiles": { "type": "array", "items": { "$ref": "#/$defs/ControlsProfile" } },
+        "projection_rules": { "type": "array", "items": { "$ref": "#/$defs/ProjectionRule" } }
+      }
+    },
+    "FusionError": {
+      "type": "object", "additionalProperties": false, "required": ["code", "message", "details"],
+      "properties": { "code": { "type": "string" }, "message": { "type": "string" }, "details": { "type": "object", "additionalProperties": true } }
+    },
+    "CreatorJobProgress": {
+      "type": "object", "additionalProperties": false,
+      "required": ["jobId", "projectId", "projectRevision", "sequence", "kind", "status", "phase", "completedUnits", "totalUnits", "checkpointId", "releaseId", "error"],
+      "properties": {
+        "jobId": { "$ref": "#/$defs/Identifier" }, "projectId": { "$ref": "#/$defs/Identifier" },
+        "projectRevision": { "$ref": "#/$defs/Revision" }, "sequence": { "$ref": "#/$defs/Sequence" },
+        "kind": { "enum": ["scan", "classify", "build", "verify", "export", "verify_https"] },
+        "status": { "enum": ["queued", "running", "cancelling", "cancelled", "interrupted", "completed", "failed"] },
+        "phase": { "type": "string" }, "completedUnits": { "$ref": "#/$defs/Revision" },
+        "totalUnits": { "anyOf": [{ "$ref": "#/$defs/Revision" }, { "type": "null" }] },
+        "checkpointId": { "anyOf": [{ "$ref": "#/$defs/Identifier" }, { "type": "null" }] },
+        "releaseId": { "anyOf": [{ "$ref": "#/$defs/Identifier" }, { "type": "null" }] },
+        "error": { "anyOf": [{ "$ref": "#/$defs/FusionError" }, { "type": "null" }] }
+      }
+    },
+    "InputState": {
+      "type": "object", "additionalProperties": false,
+      "required": ["sessionId", "sequence", "deviceId", "status", "buttons", "axes", "error"],
+      "properties": {
+        "sessionId": { "$ref": "#/$defs/Identifier" }, "sequence": { "$ref": "#/$defs/Sequence" },
+        "deviceId": { "anyOf": [{ "$ref": "#/$defs/Identifier" }, { "type": "null" }] },
+        "status": { "enum": ["active", "disconnected", "stopping", "stopped", "failed"] },
+        "buttons": { "type": "object", "additionalProperties": { "type": "boolean" } },
+        "axes": { "type": "object", "additionalProperties": { "type": "number", "minimum": -1, "maximum": 1 } },
+        "error": { "anyOf": [{ "$ref": "#/$defs/FusionError" }, { "type": "null" }] }
+      }
+    },
+    "CreatorJobReceipt": {
+      "type": "object", "additionalProperties": false, "required": ["jobId", "projectId", "projectRevision"],
+      "properties": { "jobId": { "$ref": "#/$defs/Identifier" }, "projectId": { "$ref": "#/$defs/Identifier" }, "projectRevision": { "$ref": "#/$defs/Revision" } }
+    },
+    "CreatorResumeStamp": {
+      "type": "object", "additionalProperties": false, "required": ["projectRevision", "inputHashes", "adapter"],
+      "properties": {
+        "projectRevision": { "$ref": "#/$defs/Revision" }, "inputHashes": { "type": "object", "additionalProperties": { "$ref": "#/$defs/Blake3" } },
+        "adapter": { "$ref": "#/$defs/AdapterReference" }
+      }
+    },
+    "CreatorCheckpoint": {
+      "type": "object", "additionalProperties": false,
+      "required": ["checkpointId", "jobId", "boundary", "stamp", "resultBlake3", "artifactId"],
+      "properties": {
+        "checkpointId": { "$ref": "#/$defs/Identifier" }, "jobId": { "$ref": "#/$defs/Identifier" },
+        "boundary": { "enum": ["scan_classification_saved", "artifact_committed", "release_built", "verification_completed", "export_completed"] },
+        "stamp": { "$ref": "#/$defs/CreatorResumeStamp" }, "resultBlake3": { "$ref": "#/$defs/Blake3" },
+        "artifactId": { "anyOf": [{ "$ref": "#/$defs/Identifier" }, { "type": "null" }] }
+      }
+    },
+    "CreatorJob": {
+      "type": "object", "additionalProperties": false, "required": ["progress", "checkpoints", "reportIds"],
+      "properties": {
+        "progress": { "$ref": "#/$defs/CreatorJobProgress" },
+        "checkpoints": { "type": "array", "items": { "$ref": "#/$defs/CreatorCheckpoint" } },
+        "reportIds": { "type": "array", "items": { "$ref": "#/$defs/Identifier" } }
+      }
+    },
+    "CreatorReport": {
+      "type": "object", "additionalProperties": false,
+      "required": ["reportId", "releaseId", "releaseBlake3", "projectRevision", "kind", "status", "adapter", "buildProfileId", "controlsProfileId", "environment", "diagnostics"],
+      "properties": {
+        "reportId": { "$ref": "#/$defs/Identifier" }, "releaseId": { "$ref": "#/$defs/Identifier" }, "releaseBlake3": { "$ref": "#/$defs/Blake3" },
+        "projectRevision": { "$ref": "#/$defs/Revision" },
+        "kind": { "enum": ["structure_integrity", "clean_install", "observed_launch", "manual_scenario", "https_acquisition"] },
+        "status": { "enum": ["passed", "failed", "not_tested"] }, "adapter": { "$ref": "#/$defs/AdapterReference" },
+        "buildProfileId": { "$ref": "#/$defs/Identifier" }, "controlsProfileId": { "$ref": "#/$defs/Identifier" },
+        "environment": { "type": "object", "additionalProperties": { "type": "string" } },
+        "diagnostics": { "type": "array", "items": { "$ref": "#/$defs/FusionError" } }
+      }
+    },
+    "CreatorRelease": {
+      "type": "object", "additionalProperties": false,
+      "required": ["releaseId", "projectId", "projectRevision", "manifestBlake3", "artifactHashes", "reportIds"],
+      "properties": {
+        "releaseId": { "$ref": "#/$defs/Identifier" }, "projectId": { "$ref": "#/$defs/Identifier" }, "projectRevision": { "$ref": "#/$defs/Revision" },
+        "manifestBlake3": { "$ref": "#/$defs/Blake3" }, "artifactHashes": { "type": "object", "additionalProperties": { "$ref": "#/$defs/Blake3" } },
+        "reportIds": { "type": "array", "items": { "$ref": "#/$defs/Identifier" } }
+      }
+    },
+    "RawInputBinding": {
+      "oneOf": [
+        {
+          "type": "object", "additionalProperties": false, "required": ["kind", "index"],
+          "properties": { "kind": { "const": "button" }, "index": { "type": "integer", "minimum": 0, "maximum": 4294967295 } }
+        },
+        {
+          "type": "object", "additionalProperties": false, "required": ["kind", "index", "mask"],
+          "properties": { "kind": { "const": "hat" }, "index": { "type": "integer", "minimum": 0, "maximum": 4294967295 }, "mask": { "type": "integer", "minimum": 0, "maximum": 255 } }
+        },
+        {
+          "type": "object", "additionalProperties": false, "required": ["kind", "index", "direction"],
+          "properties": { "kind": { "const": "axis" }, "index": { "type": "integer", "minimum": 0, "maximum": 4294967295 }, "direction": { "$ref": "#/$defs/AxisDirection" } }
+        }
+      ]
+    },
+    "InputBindingsSaveRequest": {
+      "type": "object", "additionalProperties": false,
+      "required": ["sessionId", "controlsProfileId", "bindings", "deadzones", "rawBindings"],
+      "properties": {
+        "sessionId": { "$ref": "#/$defs/Identifier" }, "controlsProfileId": { "$ref": "#/$defs/Identifier" },
+        "bindings": { "type": "object", "additionalProperties": { "$ref": "#/$defs/LogicalBinding" } },
+        "deadzones": { "type": "object", "additionalProperties": { "type": "number" } },
+        "rawBindings": { "type": "object", "additionalProperties": { "$ref": "#/$defs/RawInputBinding" } }
+      }
+    },
+    "InputBindingsReceipt": {
+      "type": "object", "additionalProperties": false, "required": ["sessionId", "controlsProfileId"],
+      "properties": { "sessionId": { "$ref": "#/$defs/Identifier" }, "controlsProfileId": { "$ref": "#/$defs/Identifier" } }
+    }
+  }
+}

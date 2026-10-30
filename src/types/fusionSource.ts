@@ -53,6 +53,9 @@ export type SourceSummary =
 
 export type FusionRuntimeChannel = 'pinned' | 'dynamic';
 export interface FusionGameOptions {
+  /** Wave-zero contract only: non-null selections are explicitly unavailable. */
+  buildProfileId?: string | null;
+  controlsProfileId?: string | null;
   enabledAddons: string[] | null;
   runtimeChannel: FusionRuntimeChannel | null;
 }

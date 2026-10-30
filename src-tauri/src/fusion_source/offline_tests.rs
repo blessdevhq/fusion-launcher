@@ -56,6 +56,7 @@ async fn offline_config_releases_and_addon_selection_preserve_saves_and_rollback
     let selection = super::super::dto::GameOptions {
         enabled_addons: Some(Default::default()),
         runtime_channel: None,
+        ..Default::default()
     };
     let staged = host.set_options(selection.clone()).await.unwrap();
     assert_eq!(staged.active_snapshot_id, initial.active_snapshot_id);

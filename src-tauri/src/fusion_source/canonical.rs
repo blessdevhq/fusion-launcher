@@ -39,6 +39,8 @@ pub struct CanonicalSourceIndex {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CanonicalGameManifest {
     pub schema_version: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub creator: Option<super::creator_schema::CreatorManifest>,
     pub source_id: String,
     pub id: String,
     pub title: String,

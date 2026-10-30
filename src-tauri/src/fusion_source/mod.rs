@@ -13,6 +13,7 @@ pub mod canonical;
 pub mod capabilities;
 pub mod cas;
 pub mod config_templates;
+pub mod creator_schema;
 pub mod dto;
 pub mod errors;
 pub mod evolution;
@@ -53,3 +54,6 @@ mod workspace_tests;
 
 #[cfg(test)]
 mod packer_tests;
+
+#[cfg(test)]
+pub(crate) mod creator_harness_tests;

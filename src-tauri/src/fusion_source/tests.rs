@@ -47,9 +47,105 @@ fn canonical_json(document: &Value) -> Result<CanonicalGameManifest, FusionError
     SchemaUpcaster::upcast_game_manifest(SOURCE, &document.to_string(), &BTreeMap::new())
 }
 
+#[test]
+fn creator_manifest_11_is_readable_but_index_stays_10() {
+    let fixture: serde_json::Value =
+        serde_json::from_str(include_str!("../../../fixtures/creator/contracts.json")).unwrap();
+    let wire = serde_json::to_string(&fixture["manifest"]).unwrap();
+    let manifest = SchemaUpcaster::parse_game_manifest(&wire).unwrap();
+    assert_eq!(manifest.schema_version, "1.1");
+    assert!(SchemaUpcaster::upcast_source_index(
+        r#"{"schema_version":"1.1","source_info":{"id":"source","name":"Fixture"},"games":[]}"#
+    )
+    .is_err());
+}
+
+#[test]
+fn creator_v11_planning_is_explicitly_unavailable_in_wave_zero() {
+    let mut manifest = coop();
+    manifest.schema_version = "1.1".into();
+    assert_eq!(
+        PlanBuilder::build(
+            &manifest,
+            &PlanOptions::default(),
+            &CapabilityRegistry::current_client()
+        )
+        .unwrap_err()
+        .code,
+        ErrorCode::ActionUnavailable
+    );
+}
+
 fn canonical(fixture: &str) -> CanonicalGameManifest {
     SchemaUpcaster::upcast_game_manifest(SOURCE, fixture, &BTreeMap::new())
         .expect("valid fixture manifest")
+}
+
+#[test]
+fn creator_manifest_inheritance_version_matrix_preserves_legacy_rules() {
+    for (child_version, parent_version, accepted) in [
+        ("1.0", "1.0", true),
+        ("1.1", "1.0", true),
+        ("1.1", "1.1", true),
+        ("1.0", "1.1", false),
+    ] {
+        let mut parent = value(LOCAL_BASE);
+        parent["schema_version"] = json!(parent_version);
+        let parent = SchemaUpcaster::parse_game_manifest(&parent.to_string()).unwrap();
+        let parents = BTreeMap::from([(
+            QualifiedGameId {
+                source_id: SOURCE.into(),
+                game_id: parent.id.clone(),
+            },
+            parent,
+        )]);
+        let mut child = value(COOP);
+        child["schema_version"] = json!(child_version);
+        let result = SchemaUpcaster::upcast_game_manifest(SOURCE, &child.to_string(), &parents);
+        assert_eq!(
+            result.is_ok(),
+            accepted,
+            "{child_version} extends {parent_version}: {result:?}"
+        );
+        if let Ok(manifest) = result {
+            assert_eq!(manifest.schema_version, child_version);
+            SchemaUpcaster::validate_canonical(&manifest).unwrap();
+        }
+    }
+}
+
+#[test]
+fn creator_profile_options_are_retained_but_not_silently_applied() {
+    let options: super::dto::GameOptions = serde_json::from_value(json!({
+        "enabledAddons": null, "runtimeChannel": null,
+        "buildProfileId": "default", "controlsProfileId": "keyboard"
+    }))
+    .unwrap();
+    let plan_options = PlanOptions {
+        build_profile_id: options.build_profile_id,
+        controls_profile_id: options.controls_profile_id,
+        ..PlanOptions::default()
+    };
+    assert_eq!(
+        PlanBuilder::build(
+            &coop(),
+            &plan_options,
+            &CapabilityRegistry::current_client()
+        )
+        .unwrap_err()
+        .code,
+        ErrorCode::ActionUnavailable
+    );
+    let legacy: super::dto::GameOptions = serde_json::from_value(json!({
+        "enabledAddons": null, "runtimeChannel": null
+    }))
+    .unwrap();
+    assert_eq!(
+        serde_json::to_value(legacy).unwrap(),
+        json!({
+            "enabledAddons": null, "runtimeChannel": null
+        })
+    );
 }
 
 fn coop() -> CanonicalGameManifest {
@@ -257,7 +353,7 @@ fn canonical_cas_is_read_only_and_preserves_explicit_writable_paths() {
 
 #[test]
 fn unsupported_game_schema_is_typed_instead_of_being_treated_as_legacy() {
-    for version in ["0.9", "1.1", "2.0", "v1.0"] {
+    for version in ["0.9", "1.2", "2.0", "v1.0"] {
         let mut document = value(SWITCH);
         document["schema_version"] = json!(version);
         assert_eq!(assert_invalid(&document).code, ErrorCode::UnsupportedSchema);

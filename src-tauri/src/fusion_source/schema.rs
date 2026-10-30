@@ -52,6 +52,9 @@ pub struct SourceGameEntry {
 #[serde(deny_unknown_fields)]
 pub struct GameManifest {
     pub schema_version: String,
+    /// Creator 1.1 extension. Absent in legacy documents; preserved while reading.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub creator: Option<super::creator_schema::CreatorManifest>,
     pub id: String,
     pub title: String,
     pub version: String,

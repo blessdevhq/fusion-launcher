@@ -15,6 +15,7 @@ mod downloads;
 mod emulator_profiles;
 pub(crate) mod exe_integrity;
 pub mod execution;
+pub mod fusion_creator;
 pub mod fusion_source;
 mod game_files;
 mod github_resolver;
@@ -185,6 +186,26 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            commands::fusion_creator::fusion_creator_project_list,
+            commands::fusion_creator::fusion_creator_project_open,
+            commands::fusion_creator::fusion_creator_project_save,
+            commands::fusion_creator::fusion_creator_scan,
+            commands::fusion_creator::fusion_creator_classify,
+            commands::fusion_creator::fusion_creator_build,
+            commands::fusion_creator::fusion_creator_verify,
+            commands::fusion_creator::fusion_creator_export,
+            commands::fusion_creator::fusion_creator_verify_https,
+            commands::fusion_creator::fusion_creator_job_get,
+            commands::fusion_creator::fusion_creator_job_cancel,
+            commands::fusion_creator::fusion_creator_job_resume,
+            commands::fusion_creator::fusion_creator_release_list,
+            commands::fusion_creator::fusion_creator_report_get,
+            commands::fusion_creator::fusion_input_devices,
+            commands::fusion_creator::fusion_input_session_start,
+            commands::fusion_creator::fusion_input_session_stop,
+            commands::fusion_creator::fusion_input_session_get,
+            commands::fusion_creator::fusion_input_bindings_save,
+            commands::fusion_creator::fusion_input_release_for_launch,
             commands::fusion_source::fusion_source_preview,
             commands::fusion_source::fusion_source_preview_local,
             commands::fusion_source::fusion_source_add_local,
