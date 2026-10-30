@@ -79,6 +79,7 @@ librqbit = { version = "9.0.1", optional = true }
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.55"
+sdl2 = { version = "=0.38.0", features = ["bundled", "static-link"] }
 
 [dev-dependencies]
 tempfile = "3"

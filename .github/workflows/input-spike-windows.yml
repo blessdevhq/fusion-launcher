@@ -1,0 +1,86 @@
+name: Native SDL input spike (Windows)
+
+on:
+  push:
+    branches: [creator/input-native]
+  pull_request:
+    paths:
+      - src-tauri/src/input/**
+      - src-tauri/src/lib.rs
+      - src-tauri/Cargo.toml
+      - src-tauri/Cargo.lock
+      - .github/workflows/input-spike-windows.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: input-spike-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native-input:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+          components: rustfmt, clippy
+      # Bundled SDL 2.26.4 declares CMake 3.0 compatibility, removed by CMake 4.
+      # Match the locally exercised CMake series instead of runner-image drift.
+      - name: Pin compatible CMake
+        shell: pwsh
+        run: |
+          python -m pip install --disable-pip-version-check cmake==3.31.6
+          if ($LASTEXITCODE -ne 0) { throw 'CMake installation failed' }
+          $cmakeBin = python -c "import cmake; print(cmake.CMAKE_BIN_DIR)"
+          $cmakeBin | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Toolchain requirements
+        shell: pwsh
+        run: |
+          cmake --version
+          rustc -Vv
+          & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - name: Install frontend dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Full launcher QA (includes native virtual fixtures)
+        run: npm run qa
+      - name: Explicit input fixture evidence
+        run: cargo test --manifest-path src-tauri/Cargo.toml --locked --lib input::tests -- --nocapture
+      - name: Build actual application and record elapsed time / size
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force .tmp | Out-Null
+          $timer = [Diagnostics.Stopwatch]::StartNew()
+          cargo build --manifest-path src-tauri/Cargo.toml --locked --release --bin fusion-launcher --timings
+          if ($LASTEXITCODE -ne 0) { throw "release build failed: $LASTEXITCODE" }
+          $timer.Stop()
+          $exe = Get-Item src-tauri/target/release/fusion-launcher.exe
+          @{ elapsedSeconds = $timer.Elapsed.TotalSeconds; exeBytes = $exe.Length; target = 'x86_64-pc-windows-msvc' } | ConvertTo-Json | Set-Content .tmp/input-ci-build.json
+          Get-Content .tmp/input-ci-build.json
+      - name: Execute input module in the application binary without a window
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath (Resolve-Path src-tauri/target/release/fusion-launcher.exe) -ArgumentList '--input-spike-probe' -Wait -PassThru -RedirectStandardOutput .tmp/input-ci-probe.json -RedirectStandardError .tmp/input-ci-probe.stderr
+          if ($p.ExitCode -ne 0) { throw "native app probe failed: $($p.ExitCode)" }
+          $report = Get-Content .tmp/input-ci-probe.json -Raw | ConvertFrom-Json
+          if ($report.release.handles_closed -ne $true -or $report.release.sdl_initialized_flags -ne 0) { throw 'SDL release not confirmed' }
+          Get-Content .tmp/input-ci-probe.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-input-windows-evidence
+          if-no-files-found: warn
+          path: |
+            .tmp/input-ci-*
+            src-tauri/target/cargo-timings/*.html

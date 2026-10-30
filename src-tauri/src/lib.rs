@@ -19,6 +19,8 @@ pub mod fusion_creator;
 pub mod fusion_source;
 mod game_files;
 mod github_resolver;
+#[cfg(windows)]
+pub mod input;
 mod install_ownership;
 mod launcher;
 mod libtorrent_engine;
@@ -74,6 +76,10 @@ impl AppState {
 }
 
 pub fn run() {
+    #[cfg(windows)]
+    if input::run_probe_if_requested() {
+        return;
+    }
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
