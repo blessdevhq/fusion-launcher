@@ -4,8 +4,10 @@
 Исходный DTO-only коммит `4cf8971` ветки `creator/contracts` от `creator-base`
 (`287dc370b891577c5c5ca27ac9126766daf89920`) имел только контрактный scope A–H.
 Утверждения о его узких границах ниже относятся к истории этого коммита, а не к текущему
-объединению `8fa5898` с `0165f71`, включающему SDL/H и native input worker.
-**Combined QA этого объединения ещё не выполнен; green/frozen readiness не заявляется.**
+объединённому baseline, включающему `creator/integrator`, native SDL и общий H helper.
+**Контракты зафиксированы для `creator-wave1-base`; полный объединённый QA с четырьмя test threads
+прошёл.** Точный состав/результаты/известная нестабильность — [отчёт базы](fusion-creator-wave1-base.md).
+Это готовность базы к работе слотов, не готовый Creator v1 или универсальное подключение программ.
 Исторические результаты и NOT TESTED scope сохранены отдельно в
 [fusion-creator-wave0-audit.md](fusion-creator-wave0-audit.md) и
 [fusion-creator-wave0-handoff.md](fusion-creator-wave0-handoff.md); они не заменяют QA объединения.
@@ -48,6 +50,13 @@ Manifest `1.0` не может содержать `creator` или наслед�
 - Переносимый `CreatorProject` имеет собственный `schema_version: "1.0"`, `project_id`, ревизию,
   title/source/game/version, pinned adapter, components, конечные build/control profiles и projection rules.
   Ключи переносимых документов — **snake_case**, оболочки IPC — **camelCase**.
+- `AdapterReference { id, version }` не ограничен `eden_portable`: новая обычная portable-программа
+  подключается данными/декларативным описанием, без нового Rust/TS module, IPC/program enum,
+  platform registry или пересборки Fusion под её имя. Eden 0.2.1 — первая проверка общей системы,
+  затем требуется независимая реальная вторая программа; synthetic H не заменяет эту приёмку.
+  Общий descriptor и безопасные declarative layout/config recipes реализуются по обновлённому плану,
+  не выдаются за уже работающую возможность этого baseline. Новые поля DTO — только через владельца
+  и интегратора; input/Eden ParamPackage не являются обязательными capabilities любой программы.
 - `BuildProfile { id, title, layer_ids, controls_profile_ids }` задаёт точный конечный набор слоёв
   и допустимые профили управления. Зависимости не устанавливают приоритет перезаписи файлов.
 - `ControlsProfile { id, title, device, bindings }`: keyboard/mouse либо один SDL GameController;
@@ -171,17 +180,18 @@ Workspace имеет одного writer. Cancel/error сохраняет пре
 | `src/lib/i18n.ts` | **F** — единственный редактор существующих en/ru словарей. Остальные передают ключи/текст; не заводят пустые параллельные locale-файлы. |
 | Wire/canonical/Packer и `fusion_source/creator_schema.rs` | **A**; изменения profiles/projection согласуются с B и интегратором. |
 | Plan/options/snapshots и `fusion_creator/projection.rs` | **B**, одна общая реализация resolver, вызываемая A/D/G. |
+| Общие декларативные program/layout/config recipes, первый Eden-профиль и ParamPackage | **D**, общий формат согласуется с A+B. Подключение новой программы не требует правки production-кода под её имя. |
 | `fusion_creator` project/jobs/reports, `commands/fusion_creator.rs`, migration | **C**. G подключает handlers к C runner/storage, не создаёт конкурирующую миграцию. |
 | `fusion_creator/input.rs`, native input service | **E**, SDL worker ownership; input wire-изменения согласуются с C/F/D и интегратором. |
 | `src/types/fusionCreator.ts`, JSON Schema и shared fixtures | Интегратор замораживает контракт; дальше **C + F**, с A/B/D/E по их DTO. Менять Rust/TS/schema/fixtures согласованно. |
-| Общий integration/native harness | **H/H2**; unit-тесты реализаций остаются у A–G. SDL/H foundation уже включён; общий QA объединения ещё предстоит. |
+| Общий integration/native harness | **H/H2**; unit-тесты реализаций остаются у A–G. SDL/H foundation включён и проверен общим QA; использовать один cfg(test) helper без копирования installer/transport. |
 
 | Поток | Namespace, которым владеет автор текста (вносит F) |
 | --- | --- |
 | A | `creator.source.*` |
 | B | `creator.install.*` |
 | C | `creator.project.*`, `creator.job.*` |
-| D | `creator.adapter.eden.*` |
+| D | `creator.adapter.common.*`, `creator.adapter.eden.*` |
 | E | `input.*` |
 | F | `creator.ui.*`, `creator.common.*` |
 | G | `creator.release.*`, `creator.verify.*` |
@@ -190,5 +200,5 @@ Workspace имеет одного writer. Cancel/error сохраняет пре
 Изменение frozen DTO проходит владельца и интегратора, обновляет Rust/TS/JSON Schema/fixtures
 и явно сообщается потребителям. Наличие DTO и компиляция не означают готовность реализации.
 Результаты проверок исходного DTO-only `4cf8971`: [отчёт](fusion-creator-contracts-verification.md).
-Это не свидетельство успешного QA текущего объединения; его проверки и повторные supervisor
-тесты должны выполняться отдельно до публикации общего baseline.
+Это не свидетельство успешного QA текущего объединения. Его отдельный полный QA, серии 10+10,
+native probe и условия опубликованного baseline — в [отчёте волны 1](fusion-creator-wave1-base.md).

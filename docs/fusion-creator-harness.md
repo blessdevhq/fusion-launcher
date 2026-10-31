@@ -1,5 +1,12 @@
 # Creator foundation H
 
+**Integrated wave-one status:** the shared H helper and its consumer are now in `creator/contracts`;
+the combined four-thread QA passed, including all six H scenarios and real native lifecycle.
+Use the immutable `creator-wave1-base` tag after remote verification; see
+[wave-one report](fusion-creator-wave1-base.md) for current results and exact-repeat evidence.
+Actual A–G adoption remains work for those owners; the H-owned consumer proves the import contract,
+not their completed implementation. Historical failures/readiness boundaries below are retained.
+
 Historical H handoff status (before the current wave-one integration): **H implementation verified; integration acceptance OPEN**. Worktree `F:/MVP/Fusion-Creator-Harness`, branch `creator/harness`, baseline `92127e6` (foundation on `creator-base`). The shared API, reproducibility and H scenarios pass; downstream A–G adoption is not asserted and full frozen+E replay QA still has failures outside H. No new commit/push is included in this H task.
 
 ## One shared test-only API
