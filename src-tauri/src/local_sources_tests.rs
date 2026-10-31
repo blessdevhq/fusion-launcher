@@ -160,6 +160,7 @@ async fn desktop_local_import_restart_launch_update_and_rollback() {
             GameOptions {
                 enabled_addons: Some(Default::default()),
                 runtime_channel: None,
+                ..GameOptions::default()
             },
         )
         .await

@@ -1058,6 +1058,7 @@ fn layer_spec(recipe: &PackerLayerRecipe) -> LayerSpec {
 fn game_manifest(game: &PackerGameRecipe, layers: Vec<LayerSpec>) -> GameManifest {
     GameManifest {
         schema_version: SCHEMA_VERSION.into(),
+        creator: None,
         id: game.id.clone(),
         title: game.title.clone(),
         version: game.version.clone(),

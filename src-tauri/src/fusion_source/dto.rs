@@ -12,6 +12,10 @@ use std::collections::{BTreeMap, BTreeSet};
 pub struct GameOptions {
     pub enabled_addons: Option<BTreeSet<String>>,
     pub runtime_channel: Option<RuntimeChannel>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub build_profile_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub controls_profile_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

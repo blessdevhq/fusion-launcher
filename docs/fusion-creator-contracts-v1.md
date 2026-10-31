@@ -1,7 +1,14 @@
 # Fusion Creator v1 — контрактный каркас волны 0
 
-Ветка: `creator/contracts`, непосредственно от `creator-base` (`287dc370b891577c5c5ca27ac9126766daf89920`).
-Это отдельный контрактный коммит для A–H, не реализация Creator v1 и не объединённая сборка SDL/H.
+Авторитетный контракт объединённого исходного baseline Creator; Creator v1 ещё не реализован.
+Исходный DTO-only коммит `4cf8971` ветки `creator/contracts` от `creator-base`
+(`287dc370b891577c5c5ca27ac9126766daf89920`) имел только контрактный scope A–H.
+Утверждения о его узких границах ниже относятся к истории этого коммита, а не к текущему
+объединению `8fa5898` с `0165f71`, включающему SDL/H и native input worker.
+**Combined QA этого объединения ещё не выполнен; green/frozen readiness не заявляется.**
+Исторические результаты и NOT TESTED scope сохранены отдельно в
+[fusion-creator-wave0-audit.md](fusion-creator-wave0-audit.md) и
+[fusion-creator-wave0-handoff.md](fusion-creator-wave0-handoff.md); они не заменяют QA объединения.
 Нормативная разбивка потоков: [план v1](fusion-creator-v1-plan.md).
 
 ## Объём и точки подключения
@@ -11,21 +18,30 @@
 | Профили, origin, portable projection rule, extension DTO | `src-tauri/src/fusion_source/creator_schema.rs` | `src/types/fusionCreator.ts` |
 | Проект, выбранная пара профилей, задания, checkpoints, releases, reports, requests | `src-tauri/src/fusion_creator/mod.rs` | `src/types/fusionCreator.ts` |
 | Чистая проекция и сигнатуры normalization/candidate | `src-tauri/src/fusion_creator/projection.rs` | Внутренний Rust API для A/B/D; не IPC |
-| Input DTO и `InputProvider` без реализации | `src-tauri/src/fusion_creator/input.rs` | `src/types/fusionCreator.ts` |
+| Input DTO и контракт `InputProvider` | `src-tauri/src/fusion_creator/input.rs` | `src/types/fusionCreator.ts` |
 | Tauri-команды, пока только ошибки недоступности | `src-tauri/src/commands/fusion_creator.rs` | `CreatorApi`, `FusionInputApi` — интерфейсы без bridge-реализации |
 | Общие wire-примеры | `fixtures/creator/contracts.json` | Те же fixtures для Node/Zod и Rust serde |
 | JSON Schema draft 2020-12 | `docs/schemas/fusion-creator-contracts.schema.json` | [Правила применения и ограничения](schemas/README.md) |
 
-Каркас не читает каталогов, не создаёт проект/задание/артефакт/выпуск, не выбирает победителя,
-не применяет профили и не сообщает об успешной проверке или освобождении устройства.
-Существующие Packer, installer, snapshots, transport, SQLite, подписи и TOFU не изменены.
-Нет новых зависимостей, миграций, UI, локализаций или успешных production-моков.
+Контрактный каркас `4cf8971` не читал каталогов, не создавал проект/задание/артефакт/выпуск,
+не выбирал победителя и не применял профили; Packer, installer, snapshots и зависимости
+не менялись именно в том DTO-only коммите. Объединённый исходный baseline уже включает
+reader/canonical/storage, profile-field plumbing, native SDL worker и его зависимости.
+Worker и SDL/H evidence не означают доступность production Creator/input IPC: перечисленные
+ниже команды всё ещё недоступны, не создают job и не подтверждают освобождение handles.
+Существующие transport, SQLite, Ed25519/TOFU остаются авторитетными; новые UI, локализации
+и успешные production-моки этим контрактом не вводятся.
 
-`CreatorManifest` — только тип будущего расширения `creator` для manifest 1.1.
-Он **не подключён** к существующему `GameManifest`/canonical/upcaster/Packer в этой узкой ветке.
-`SourceIndex` и legacy reader остаются без изменений; приём manifest 1.1 здесь не заявлен.
-Интеграция reader, canonical/storage и правил наследования принадлежит A; применение профилей — B.
-Это намеренная граница «типы и сигнатуры, без бизнес-логики», а не полный freeze поведения Source 1.1.
+`CreatorManifest` теперь подключён как типизированное расширение `GameManifest.creator`
+для manifest 1.1 и сохраняется в canonical/storage. DTO-only ограничение `4cf8971`
+«не подключён к legacy reader» историческое и больше не описывает объединённый baseline.
+`SourceIndex` wire schema остаётся `1.0`; metadata reader принимает GameManifest `1.0` и `1.1`.
+Manifest `1.0` не может содержать `creator` или наследовать от `1.1`; `1.1` может наследовать
+от `1.0`/`1.1`. Legacy Packer recipes по-прежнему выпускают `1.0`; отсутствующее расширение
+и profile IDs не сериализуются, сохраняя legacy hashes/форму.
+**Чтение не означает исполнение:** manifest `1.1` и non-null profile selection явно отклоняются
+как `action_unavailable` до candidate mutation. A/B снимают execution gates только вместе
+с полной реализацией и behavioral tests; resolution/build/export пока не реализованы.
 
 ## Формат данных и профили
 
@@ -41,9 +57,12 @@
   те же ID присутствуют в `CreatorReport` и параметрах `PrepareCandidateRequest`.
   Batch-job request содержит `buildProfileIds` и `controlsProfileIds`; runner обязан проверять
   только объявленные допустимые сочетания. Произвольное смешивание addons не разрешается.
-- В этой ветке поля не добавляются в legacy `GameOptions`/`PlanOptions`/snapshots: применение
-  пока невозможно. B интегрирует общий DTO с этими путями вместе с validation и execution tests,
-  не допускающими молчаливого игнорирования выбранных профилей.
+- В объединённом baseline `GameOptions`, `PlanOptions`, `ExecutionPlan` содержат optional
+  `buildProfileId` / `controlsProfileId`; snapshot хранит выбор в своём plan. Старые snapshots
+  читаются без этих полей, отсутствующие IDs не сериализуются. Это plumbing, не применение:
+  любой non-null выбранный ID вызывает `action_unavailable` до candidate mutation.
+  Исходный `4cf8971` этих legacy-полей не менял; это только историческая граница. B отвечает
+  за применение и execution tests без молчаливого игнорирования выбранных профилей.
 - Каждый project component имеет `id`, `layer_id`, `origin`. В published extension — `layer_id` и origin,
   без приватных путей автора.
 - Origins: `managed { artifact_ref, redistribution_allowed }`,
@@ -146,7 +165,7 @@ Workspace имеет одного writer. Cancel/error сохраняет пре
 
 | Общий файл | Единственный writer / порядок |
 | --- | --- |
-| `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock` (и root Cargo, если появится) | **Интегратор**. E/остальные присылают точные dependency additions; не перегенерируют lock параллельно. В этой ветке изменений нет. |
+| `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock` (и root Cargo, если появится) | **Интегратор**. E/остальные присылают точные dependency additions; не перегенерируют lock параллельно. В исходном `4cf8971` изменений не было; SDL additions входят в объединённый baseline. |
 | `package.json`, `package-lock.json` | **Интегратор**. Только согласованные additions, без конкурирующих install/перезаписи. Здесь без изменений. |
 | `src-tauri/src/commands/mod.rs`, `src-tauri/src/lib.rs` | **Интегратор**: additive module/IPC wiring. C владеет Creator handlers/DTO, E — реализацией input; новые имена проходят сверку общего списка. |
 | `src/lib/i18n.ts` | **F** — единственный редактор существующих en/ru словарей. Остальные передают ключи/текст; не заводят пустые параллельные locale-файлы. |
@@ -155,7 +174,7 @@ Workspace имеет одного writer. Cancel/error сохраняет пре
 | `fusion_creator` project/jobs/reports, `commands/fusion_creator.rs`, migration | **C**. G подключает handlers к C runner/storage, не создаёт конкурирующую миграцию. |
 | `fusion_creator/input.rs`, native input service | **E**, SDL worker ownership; input wire-изменения согласуются с C/F/D и интегратором. |
 | `src/types/fusionCreator.ts`, JSON Schema и shared fixtures | Интегратор замораживает контракт; дальше **C + F**, с A/B/D/E по их DTO. Менять Rust/TS/schema/fixtures согласованно. |
-| Общий integration/native harness | **H/H2**; unit-тесты реализаций остаются у A–G. SDL/H здесь не дублируются и не сливаются заново. |
+| Общий integration/native harness | **H/H2**; unit-тесты реализаций остаются у A–G. SDL/H foundation уже включён; общий QA объединения ещё предстоит. |
 
 | Поток | Namespace, которым владеет автор текста (вносит F) |
 | --- | --- |
@@ -170,4 +189,6 @@ Workspace имеет одного writer. Cancel/error сохраняет пре
 
 Изменение frozen DTO проходит владельца и интегратора, обновляет Rust/TS/JSON Schema/fixtures
 и явно сообщается потребителям. Наличие DTO и компиляция не означают готовность реализации.
-Результаты проверок именно этой ветки: [отчёт](fusion-creator-contracts-verification.md).
+Результаты проверок исходного DTO-only `4cf8971`: [отчёт](fusion-creator-contracts-verification.md).
+Это не свидетельство успешного QA текущего объединения; его проверки и повторные supervisor
+тесты должны выполняться отдельно до публикации общего baseline.

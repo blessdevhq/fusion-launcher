@@ -1343,6 +1343,8 @@ fn validate_plan_contract(
     let rebuilt = PlanBuilder::build(
         manifest,
         &PlanOptions {
+            build_profile_id: plan.build_profile_id.clone(),
+            controls_profile_id: plan.controls_profile_id.clone(),
             enabled_addons: Some(
                 plan.selected_layers
                     .iter()

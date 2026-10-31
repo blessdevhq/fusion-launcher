@@ -27,9 +27,15 @@ extension embedded in a GameManifest 1.1.** It does not validate the containing
 GameManifest, its version, layers, runtime, or any other base-manifest field.
 Neither a full GameManifest nor the bare extension is accepted by the document
 root. Select `#/$defs/CreatorManifest` explicitly to validate the extension, and
-use the Source validators for the containing manifest once owner A integrates 1.1.
-This contracts-only branch does not change the legacy reader: defining the
-extension DTO is not a claim that a full 1.1 manifest can be read or installed.
+use the existing Source validators for the containing manifest.
+The original `4cf8971` DTO-only release did not change the legacy reader; that is
+historical scope, not the unified source baseline. The unified source accepts
+GameManifest 1.0/1.1 and retains the typed 1.1 extension in canonical/storage forms.
+Optional `buildProfileId` / `controlsProfileId` are present in options/plans and
+snapshot plans; absent IDs preserve legacy serialization. Manifest 1.1 execution
+and non-null profile selections remain explicitly `action_unavailable` before
+candidate mutation. Schema validation does not enable installation or profile
+application; combined QA is pending.
 
 The schema identifier is `urn:fusion:creator-contracts:1.0`. Register the whole
 document with a draft-2020-12 validator before referencing, for example,

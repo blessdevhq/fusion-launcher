@@ -27,7 +27,7 @@ impl SchemaUpcaster {
     /// Recheck their paths, identities and graph ordering at the planning boundary.
     pub fn validate_canonical(manifest: &CanonicalGameManifest) -> Result<(), FusionError> {
         validate_id(&manifest.source_id, "source_id")?;
-        if manifest.schema_version != SCHEMA_VERSION {
+        if !matches!(manifest.schema_version.as_str(), "1.0" | "1.1") {
             return Err(FusionError::new(
                 ErrorCode::UnsupportedSchema,
                 "Unsupported canonical schema version.",
@@ -81,6 +81,7 @@ impl SchemaUpcaster {
         }
         let wire = GameManifest {
             schema_version: manifest.schema_version.clone(),
+            creator: manifest.creator.clone(),
             id: manifest.id.clone(),
             title: manifest.title.clone(),
             version: manifest.version.clone(),
@@ -110,7 +111,7 @@ impl SchemaUpcaster {
 
     /// Parses a wire manifest. Parent-dependent validation happens during upcast.
     pub fn parse_game_manifest(json: &str) -> Result<GameManifest, FusionError> {
-        parse_versioned_json(json)?;
+        parse_versioned_json(json, true)?;
         let manifest: GameManifest = serde_json::from_str(json)
             .map_err(|e| FusionError::new(ErrorCode::InvalidJson, e.to_string()))?;
         validate_game_shape(&manifest)?;
@@ -118,7 +119,7 @@ impl SchemaUpcaster {
     }
 
     pub fn upcast_source_index(json: &str) -> Result<CanonicalSourceIndex, FusionError> {
-        parse_versioned_json(json)?;
+        parse_versioned_json(json, false)?;
         let mut index: SourceIndex = serde_json::from_str(json)
             .map_err(|e| FusionError::new(ErrorCode::InvalidJson, e.to_string()))?;
         validate_id(&index.source_info.id, "source_info.id")?;
@@ -195,6 +196,7 @@ impl SchemaUpcaster {
             .collect();
         Ok(CanonicalGameManifest {
             schema_version: manifest.schema_version,
+            creator: manifest.creator,
             source_id: source_id.to_owned(),
             id: manifest.id,
             title: manifest.title,
@@ -217,7 +219,7 @@ impl SchemaUpcaster {
     }
 }
 
-fn parse_versioned_json(json: &str) -> Result<Value, FusionError> {
+fn parse_versioned_json(json: &str, is_manifest: bool) -> Result<Value, FusionError> {
     if json.len() > MAX_JSON_BYTES {
         return Err(FusionError::new(
             ErrorCode::InvalidJson,
@@ -227,9 +229,8 @@ fn parse_versioned_json(json: &str) -> Result<Value, FusionError> {
     let value: Value = serde_json::from_str(json)
         .map_err(|e| FusionError::new(ErrorCode::InvalidJson, e.to_string()))?;
     let version = value.get("schema_version").and_then(Value::as_str);
-    // v1.0 is the first wire version. The pure normalization pass below is its
-    // migration to the canonical model; future versions get explicit branches.
-    if version != Some("1.0") {
+    // Index stays 1.0. Reading a manifest 1.1 does not enable its execution.
+    if version != Some("1.0") && !(is_manifest && version == Some("1.1")) {
         return Err(FusionError::new(
             ErrorCode::UnsupportedSchema,
             "Unsupported Fusion schema version.",
@@ -267,7 +268,7 @@ fn resolve_inheritance(
         )
         .with_detail("game", key.to_string()));
     }
-    if manifest.schema_version != "1.0" {
+    if !matches!(manifest.schema_version.as_str(), "1.0" | "1.1") {
         return Err(FusionError::new(
             ErrorCode::UnsupportedSchema,
             "Unsupported parent schema version.",
@@ -294,6 +295,12 @@ fn resolve_inheritance(
             )
             .with_detail("parent", parent_key.to_string())
         })?;
+        if manifest.schema_version == "1.0" && parent.schema_version == "1.1" {
+            return Err(FusionError::new(
+                ErrorCode::UnsupportedSchema,
+                "A 1.0 manifest cannot extend a 1.1 manifest.",
+            ));
+        }
         let base = resolve_inheritance(&parent_key, parent, parents, stack)?;
         merge_manifest(base, manifest.clone())?
     } else {
@@ -356,6 +363,8 @@ fn merge_manifest(
     base.persistence.saves_paths.sort();
     base.persistence.saves_paths.dedup();
     base.schema_version = child.schema_version;
+    // A defines full profile inheritance in wave 1; never silently drop the extension.
+    base.creator = child.creator.or(base.creator);
     base.id = child.id;
     base.title = child.title;
     base.version = child.version;
@@ -392,6 +401,12 @@ fn normalize_manifest(manifest: &mut GameManifest) {
 }
 
 fn validate_game_shape(manifest: &GameManifest) -> Result<(), FusionError> {
+    if manifest.schema_version == "1.0" && manifest.creator.is_some() {
+        return Err(FusionError::new(
+            ErrorCode::UnsupportedSchema,
+            "Creator fields require GameManifest 1.1.",
+        ));
+    }
     validate_id(&manifest.id, "id")?;
     nonempty(&manifest.title, "title")?;
     nonempty(&manifest.version, "version")?;

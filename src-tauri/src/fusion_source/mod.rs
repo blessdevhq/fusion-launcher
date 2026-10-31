@@ -54,3 +54,6 @@ mod workspace_tests;
 
 #[cfg(test)]
 mod packer_tests;
+
+#[cfg(test)]
+pub(crate) mod creator_harness_tests;
