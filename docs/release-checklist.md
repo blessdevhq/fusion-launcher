@@ -1,12 +1,18 @@
 # Fusion Launcher Release Checklist
 
-Use this checklist for the `v0.1.0` Windows release candidate.
+Use this checklist for a Windows public MVP preview release tagged `vX.Y.Z`.
+Before tagging, confirm the tag version matches `package.json`,
+`src-tauri/tauri.conf.json`, and `src-tauri/Cargo.toml`. These files currently
+use `0.4.0`; update them together when preparing a different version.
 
 ## Local RC Gate
 
 Run these before tagging:
 
 ```powershell
+npm ci
+pip install -r sidecar/requirements.txt
+npx playwright install chromium
 npm run qa
 npm run mvp:smoke
 npm run mvp:visual
@@ -14,7 +20,10 @@ npm run mvp:release:windows
 git diff --check
 ```
 
-`npm run mvp:release:windows` builds a local NSIS smoke package. If
+Use Python 3.12 for the sidecar dependencies, as in the release workflow.
+`npm run mvp:release:windows` builds the torrent sidecar, fetches the VC++
+Redistributable, and builds a local NSIS smoke package with the sidecar
+configuration. If
 `TAURI_SIGNING_PRIVATE_KEY` is not set, it disables updater artifacts for the
 local smoke build only, then runs packaged smoke against clean `.tmp/package-smoke`
 data.
@@ -29,15 +38,19 @@ Before pushing a `vX.Y.Z` tag, configure these GitHub Actions secrets:
 The tagged Windows workflow must complete these gates before upload:
 
 - `npm ci`
+- Python 3.12 setup and `pip install -r sidecar/requirements.txt`
+- `npm run sidecar:build`
+- `npm run redist:fetch`
 - `npm run qa`
 - `npm run mvp:smoke`
 - `npx playwright install chromium`
 - `npm run mvp:visual`
 - updater signing secret validation
-- signed `tauri build --target x86_64-pc-windows-msvc`
+- `npm run tauri:build -- --target x86_64-pc-windows-msvc --config src-tauri/tauri.sidecar.conf.json` with updater signing enabled
 - `npm run mvp:package-smoke` with `FUSION_LAUNCHER_RELEASE_DIR=src-tauri/target/x86_64-pc-windows-msvc/release`
 
-The workflow publishes a draft GitHub Release with:
+The workflow creates a draft GitHub Release if one does not already exist for
+the tag, then uploads or replaces these assets on that release:
 
 - NSIS installer
 - updater NSIS zip
@@ -46,8 +59,8 @@ The workflow publishes a draft GitHub Release with:
 
 ## Manual Installer Smoke
 
-After the draft release is created, download the NSIS installer from the draft
-release and verify on a clean Windows profile:
+After the assets are uploaded, download the NSIS installer from the release
+and verify on a clean Windows profile before publishing a draft:
 
 - Install the NSIS package.
 - Launch Fusion Launcher from the installed shortcut/start menu entry.
@@ -62,4 +75,3 @@ release and verify on a clean Windows profile:
 - Updater signing is mandatory for tagged releases.
 - Windows Authenticode signing is not part of this RC gate.
 - Silent installer automation is not part of this RC gate.
-- Source-defined setup profiles are not part of this RC gate.
