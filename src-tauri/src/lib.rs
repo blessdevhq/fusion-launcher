@@ -43,6 +43,9 @@ mod torrent_engine;
 #[cfg(windows)]
 mod windows_sidecar;
 
+#[cfg(test)]
+mod creator_harness_consumer_tests;
+
 use storage::RepositoryStore;
 use torrent::TorrentManager;
 
