@@ -59,7 +59,6 @@ pub enum ErrorCode {
     ProcessSupervisionFailed,
     InvalidEnvironment,
     UnsupportedPlatform,
-    ActionUnavailable,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
