@@ -1,0 +1,33 @@
+{
+  "profileSelection": { "buildProfileId": "default", "controlsProfileId": "keyboard" },
+  "project": {
+    "schema_version": "1.0", "project_id": "fixture-project", "revision": 1,
+    "title": "Authored synthetic fixture", "source_id": "fixture-source", "game_id": "fixture-game", "game_version": "1",
+    "adapter": { "id": "eden_portable", "version": "0.2.1" },
+    "components": [{ "id": "runtime", "layer_id": "runtime", "origin": { "kind": "managed", "artifact_ref": "fixture-runtime", "redistribution_allowed": true } }],
+    "build_profiles": [{ "id": "default", "title": "Default", "layer_ids": ["runtime"], "controls_profile_ids": ["keyboard"] }],
+    "controls_profiles": [{ "id": "keyboard", "title": "Keyboard", "device": "keyboard_mouse", "bindings": { "a": { "kind": "keyboard", "code": "KeyX" } } }],
+    "projection_rules": [{ "path": "runtime/main.exe", "winning_layer": "runtime" }]
+  },
+  "manifest": {
+    "schema_version": "1.1", "id": "fixture-game", "title": "Authored fixture", "version": "1",
+    "layers": [{ "id": "runtime", "kind": "runtime", "source": { "kind": "user_provided" } }],
+    "runtime": { "layer_id": "runtime", "executable": "main.exe" },
+    "creator": {
+      "adapter": { "id": "eden_portable", "version": "0.2.1" },
+      "components": [{ "layer_id": "runtime", "origin": { "kind": "user_provided", "requirement_id": "own-runtime", "inventory_blake3": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "instructions": "Select your own runtime" } }],
+      "build_profiles": [{ "id": "default", "title": "Default", "layer_ids": ["runtime"], "controls_profile_ids": ["keyboard"] }],
+      "controls_profiles": [{ "id": "keyboard", "title": "Keyboard", "device": "keyboard_mouse", "bindings": {} }],
+      "projection_rules": []
+    }
+  },
+  "job": {
+    "jobId": "job-1", "projectId": "fixture-project", "projectRevision": 1, "sequence": 1,
+    "kind": "scan", "status": "running", "phase": "scan", "completedUnits": 0, "totalUnits": null,
+    "checkpointId": null, "releaseId": null, "error": null
+  },
+  "input": {
+    "sessionId": "session-1", "sequence": 1, "deviceId": "device-1", "status": "active",
+    "buttons": { "a": false }, "axes": { "left_x": 0, "trigger_left": 0 }, "error": null
+  }
+}

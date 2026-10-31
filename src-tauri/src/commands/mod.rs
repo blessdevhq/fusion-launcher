@@ -31,6 +31,7 @@ use crate::setup_profiles;
 use crate::storage::RepositoryStore;
 use crate::AppState;
 
+pub mod fusion_creator;
 pub mod fusion_source;
 
 #[derive(Debug, Clone, Serialize)]

@@ -37,6 +37,7 @@ pub enum ErrorCode {
     SnapshotNotFound,
     SnapshotConflict,
     OperationInProgress,
+    ActionUnavailable,
     InvalidTemplate,
     PersistenceConflict,
     ArchiveInvalid,

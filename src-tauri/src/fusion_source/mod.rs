@@ -13,6 +13,7 @@ pub mod canonical;
 pub mod capabilities;
 pub mod cas;
 pub mod config_templates;
+pub mod creator_schema;
 pub mod dto;
 pub mod errors;
 pub mod evolution;
