@@ -1,0 +1,42 @@
+{
+  "document_type": "program_descriptor", "schema_version": "1.0",
+  "identity": { "id": "eden", "title": "Eden", "version": "0.2.1", "os": "windows", "architecture": "x86_64" },
+  "executor": { "id": "fusion.declarative", "version": "1.0" },
+  "components": [{
+    "id": "eden-runtime", "layer_id": "eden-runtime",
+    "origin": { "kind": "managed", "artifact_ref": "schema-fixture-only-unresolved-eden-runtime", "redistribution_allowed": false },
+    "source_root": "", "mount_path": "eden"
+  }],
+  "required_files": [{ "path": "eden/eden.exe", "role": "main_executable" }],
+  "projection_rules": [],
+  "directories": ["eden/user", "eden/user/config"],
+  "entrypoint": { "executable": "eden/eden.exe", "working_directory": "eden", "arguments": [], "environment_paths": [] },
+  "configs": [{
+    "id": "eden-main", "path": "eden/user/config/qt-config.ini", "format": "ini",
+    "seed": { "kind": "empty_ini" }, "preserve_unmanaged": true,
+    "keys": [
+      { "id": "backend", "address": { "kind": "ini", "section": "Renderer", "key": "backend" }, "scalar_type": "integer", "allowed_values": [0, 1] },
+      { "id": "backend-default", "address": { "kind": "ini", "section": "Renderer", "key": "backend\\default" }, "scalar_type": "boolean", "allowed_values": [false] }
+    ]
+  }],
+  "build_profiles": [
+    { "id": "vulkan", "title": "Vulkan", "layer_ids": ["eden-runtime"], "controls_profile_ids": ["keyboard"], "settings": [
+      { "config_id": "eden-main", "key_id": "backend", "value": 1 },
+      { "config_id": "eden-main", "key_id": "backend-default", "value": false }
+    ] },
+    { "id": "opengl", "title": "OpenGL GLSL", "layer_ids": ["eden-runtime"], "controls_profile_ids": ["keyboard"], "settings": [
+      { "config_id": "eden-main", "key_id": "backend", "value": 0 },
+      { "config_id": "eden-main", "key_id": "backend-default", "value": false }
+    ] }
+  ],
+  "controls_profiles": [{
+    "id": "keyboard", "title": "Keyboard schema example (not a complete tested mapping)",
+    "kind": "eden_param_package_v1", "device": "keyboard_mouse",
+    "bindings": { "a": { "kind": "keyboard", "code": "KeyX" } }, "config_id": "eden-main"
+  }],
+  "persistence": [
+    { "path": "eden/user/config/qt-config.ini", "kind": "file", "policy": "preserve_latest", "export": "never" },
+    { "path": "eden/user/nand/user/save", "kind": "directory", "policy": "preserve_latest", "export": "never" },
+    { "path": "eden/user/sdmc", "kind": "directory", "policy": "preserve_latest", "export": "never" }
+  ]
+}

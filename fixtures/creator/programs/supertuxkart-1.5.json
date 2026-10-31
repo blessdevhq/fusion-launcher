@@ -1,0 +1,70 @@
+{
+  "document_type": "program_descriptor",
+  "schema_version": "1.0",
+  "identity": { "id": "supertuxkart", "title": "SuperTuxKart", "version": "1.5", "os": "windows", "architecture": "x86_64" },
+  "executor": { "id": "fusion.declarative", "version": "1.0" },
+  "components": [
+    {
+      "id": "stk-windows", "layer_id": "stk-runtime",
+      "origin": {
+        "kind": "external",
+        "url": "https://github.com/supertuxkart/stk-code/releases/download/1.5/SuperTuxKart-1.5-win.zip",
+        "transport_blake3": "ea5830dc60aad988fa045259220a88e71a121c7bb3359fbee00e59c413114ad6",
+        "inventory_blake3": "9f1b886deb979f6b6c2d59b4d6ae820faf5f900b5877066e8798300e57676bf9"
+      },
+      "source_root": "SuperTuxKart-1.5-win", "mount_path": "app"
+    }
+  ],
+  "required_files": [
+    { "path": "app/stk-code/build-x86_64/bin/supertuxkart.exe", "role": "main_executable" },
+    { "path": "app/stk-code/build-x86_64/bin/libcurl.dll", "role": "core_library" },
+    { "path": "app/stk-code/data/stk_config.xml", "role": "data" }
+  ],
+  "projection_rules": [],
+  "directories": ["userdata", "userdata/config-0.10", "userdata/addons"],
+  "entrypoint": {
+    "executable": "app/stk-code/build-x86_64/bin/supertuxkart.exe",
+    "working_directory": "app/stk-code/build-x86_64/bin",
+    "arguments": [],
+    "environment_paths": [
+      { "name": "SUPERTUXKART_SAVEDIR", "path": "userdata" },
+      { "name": "SUPERTUXKART_HIGHSCOREDIR", "path": "userdata/config-0.10" },
+      { "name": "SUPERTUXKART_DATADIR", "path": "app/stk-code" }
+    ]
+  },
+  "configs": [
+    {
+      "id": "stk-main", "path": "userdata/config-0.10/config.xml", "format": "xml_attributes",
+      "seed": { "kind": "xml_root", "root": "stkconfig", "attributes": [{ "name": "version", "value": "8" }] },
+      "preserve_unmanaged": true,
+      "keys": [
+        { "id": "fullscreen", "address": { "kind": "xml_attribute", "elements": ["Video"], "attribute": "fullscreen" }, "scalar_type": "boolean", "allowed_values": [false, true] },
+        { "id": "show-fps", "address": { "kind": "xml_attribute", "elements": ["Video"], "attribute": "show_fps" }, "scalar_type": "boolean", "allowed_values": [false, true] },
+        { "id": "music", "address": { "kind": "xml_attribute", "elements": ["Audio"], "attribute": "music_on" }, "scalar_type": "boolean", "allowed_values": [false, true] }
+      ]
+    }
+  ],
+  "build_profiles": [
+    { "id": "windowed", "title": "Windowed", "layer_ids": ["stk-runtime"], "controls_profile_ids": ["native"], "settings": [
+      { "config_id": "stk-main", "key_id": "fullscreen", "value": false },
+      { "config_id": "stk-main", "key_id": "show-fps", "value": false },
+      { "config_id": "stk-main", "key_id": "music", "value": true }
+    ] },
+    { "id": "fullscreen", "title": "Fullscreen + FPS", "layer_ids": ["stk-runtime"], "controls_profile_ids": ["native"], "settings": [
+      { "config_id": "stk-main", "key_id": "fullscreen", "value": true },
+      { "config_id": "stk-main", "key_id": "show-fps", "value": true },
+      { "config_id": "stk-main", "key_id": "music", "value": true }
+    ] }
+  ],
+  "controls_profiles": [{ "id": "native", "title": "Application defaults (no Fusion remapping)", "kind": "application_defaults" }],
+  "persistence": [
+    { "path": "userdata/config-0.10/config.xml", "kind": "file", "policy": "preserve_latest", "export": "never" },
+    { "path": "userdata/config-0.10/players.xml", "kind": "file", "policy": "preserve_latest", "export": "never" },
+    { "path": "userdata/config-0.10/input.xml", "kind": "file", "policy": "preserve_latest", "export": "never" },
+    { "path": "userdata/config-0.10/highscore.xml", "kind": "file", "policy": "preserve_latest", "export": "never" },
+    { "path": "userdata/config-0.10/grandprix", "kind": "directory", "policy": "preserve_latest", "export": "never" },
+    { "path": "userdata/config-0.10/replay", "kind": "directory", "policy": "preserve_latest", "export": "never" },
+    { "path": "userdata/config-0.10/screenshots", "kind": "directory", "policy": "preserve_latest", "export": "never" },
+    { "path": "userdata/addons", "kind": "directory", "policy": "preserve_latest", "export": "never" }
+  ]
+}

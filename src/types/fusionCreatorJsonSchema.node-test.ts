@@ -42,7 +42,7 @@ const supported = new Set([
   '$schema', '$id', '$defs', '$ref', 'title', 'description', '$comment',
   'oneOf', 'anyOf', 'type', 'const', 'enum', 'minimum', 'maximum',
   'minLength', 'maxLength', 'pattern', 'format', 'properties', 'required',
-  'additionalProperties', 'items'
+  'additionalProperties', 'items', 'minItems', 'maxItems', 'uniqueItems'
 ]);
 function audit(node: Schema): void {
   if (typeof node === 'boolean') return;
@@ -98,7 +98,12 @@ function matches(node: Schema, value: unknown): boolean {
       if (/\s/u.test(value)) return false;
     }
   }
-  if (Array.isArray(value) && node.items !== undefined && !value.every((entry) => matches(node.items!, entry))) return false;
+  if (Array.isArray(value)) {
+    if (typeof node.minItems === 'number' && value.length < node.minItems) return false;
+    if (typeof node.maxItems === 'number' && value.length > node.maxItems) return false;
+    if (node.uniqueItems === true && value.some((entry, i) => value.slice(0, i).some((other) => JSON.stringify(entry) === JSON.stringify(other)))) return false;
+    if (node.items !== undefined && !value.every((entry) => matches(node.items!, entry))) return false;
+  }
   if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
     const object = value as Record<string, unknown>;
     if (node.required?.some((key) => !Object.hasOwn(object, key))) return false;
@@ -113,12 +118,30 @@ function matches(node: Schema, value: unknown): boolean {
 const accepts = (name: string, value: unknown): boolean => matches(definition(name), value);
 audit(schema);
 
-test('Creator JSON Schema publishes draft 2020-12 and the three public wire roots', () => {
+test('program descriptor v1 is a separate versioned public contract, not an adapter name', () => {
+  const descriptor = definition('ProgramDescriptor') as SchemaObject;
+  assert.equal(descriptor.type, 'object');
+  assert.deepEqual(descriptor.properties?.document_type, { const: 'program_descriptor' });
+  assert.deepEqual(descriptor.properties?.schema_version, { const: '1.0' });
+  assert.ok(schema.oneOf?.some((root) => typeof root !== 'boolean' && root.$ref === '#/$defs/ProgramDescriptor'));
+});
+
+test('program authoring and signed manifest carriers are explicit, not extra legacy DTO fields', () => {
+  const project = definition('CreatorProgramProject') as SchemaObject;
+  assert.deepEqual(project.properties?.schema_version, { const: '1.1' });
+  assert.deepEqual(project.properties?.program_descriptor, { $ref: '#/$defs/ProgramDescriptor' });
+  const extension = definition('ProgramCreatorManifest') as SchemaObject;
+  assert.deepEqual(extension.required, ['program_descriptor']);
+});
+
+test('Creator JSON Schema publishes draft 2020-12 and the five public roots', () => {
   assert.equal(schema.$schema, 'https://json-schema.org/draft/2020-12/schema');
   assert.deepEqual(schema.oneOf, [
     { $ref: '#/$defs/CreatorProject' },
     { $ref: '#/$defs/CreatorJobProgress' },
-    { $ref: '#/$defs/InputState' }
+    { $ref: '#/$defs/InputState' },
+    { $ref: '#/$defs/ProgramDescriptor' },
+    { $ref: '#/$defs/CreatorProgramProject' }
   ]);
 });
 
@@ -319,4 +342,99 @@ test('raw input variants stay separate from portable logical bindings', () => {
   };
   assert.equal(accepts('InputBindingsSaveRequest', request), true);
   assert.equal(accepts('InputBindingsSaveRequest', { ...request, bindings: { a: raw[0] } }), false);
+});
+
+const programFixture = (name: string) => JSON.parse(readFileSync(new URL(`../../fixtures/creator/programs/${name}.json`, import.meta.url), 'utf8'));
+
+test('Eden and non-emulator SuperTuxKart descriptors validate without changing legacy DTOs', () => {
+  for (const name of ['eden-0.2.1', 'supertuxkart-1.5']) {
+    const program = programFixture(name);
+    assert.equal(accepts('ProgramDescriptor', program), true, name);
+    assert.equal(matches(schema, program), true);
+    assert.equal(accepts('CreatorProject', program), false);
+    const project = {
+      schema_version: '1.1', project_id: `program-${name}`, revision: 1,
+      title: program.identity.title, source_id: 'descriptor-schema-fixture',
+      game_id: program.identity.id, game_version: program.identity.version, program_descriptor: program
+    };
+    assert.equal(accepts('CreatorProgramProject', project), true);
+    assert.equal(matches(schema, project), true);
+    assert.equal(creatorProjectSchema.safeParse(project).success, false, 'legacy runtime is not wired to new format');
+    const extension = { program_descriptor: program };
+    assert.equal(accepts('ProgramCreatorManifest', extension), true);
+    assert.equal(matches(schema, extension), false, 'select extension, not a complete GameManifest');
+    assert.equal(creatorManifestSchema.safeParse(extension).success, false);
+    for (const key of Object.keys(program)) {
+      const missing = { ...program };
+      delete missing[key];
+      assert.equal(accepts('ProgramDescriptor', missing), false, `${name}: missing ${key}`);
+    }
+    for (const field of ['shell', 'script', 'command', 'post_setup_steps', 'wasm', 'plugin_url', 'local_path']) {
+      assert.equal(accepts('ProgramDescriptor', { ...program, [field]: 'untrusted' }), false, field);
+    }
+  }
+});
+
+test('program path schema blocks Windows lexical escapes but is not a filesystem authorization', () => {
+  for (const path of ['app/eden.exe', 'app/stk-code/data/stk_config.xml', 'userdata/config-0.10', 'app/игра.exe']) {
+    assert.equal(accepts('ProgramPath', path), true, path);
+  }
+  for (const path of ['', '.', '..', '../x', 'x/../y', 'x/./y', '/x', 'C:/x', 'C:x', '\\\\server\\x', 'x\\y',
+    'x:y', 'x//y', 'x/', 'con', 'x/CON.txt', 'nul', 'aux.exe', 'COM1', 'Lpt9.txt', 'x./y', 'x /y', 'x.',
+    'x ', 'x\n', 'x\u0085', 'x*', 'x?', 'x|y', 'x<y', 'x>y', 'x"y', 'a'.repeat(513)]) {
+    assert.equal(accepts('ProgramPath', path), false, JSON.stringify(path));
+  }
+  assert.equal(accepts('ProgramDirectory', ''), true);
+});
+
+test('program operations are bounded argv, workspace paths and scalar config selectors, not scripts', () => {
+  for (const arg of [
+    { kind: 'literal', value: '--windowed' },
+    { kind: 'workspace_path', path: 'userdata', prefix: '--data=' },
+    { kind: 'workspace_path', path: 'game/file.nsp', prefix: '' }
+  ]) assert.equal(accepts('ProgramArgument', arg), true);
+  for (const arg of [
+    { kind: 'shell', value: 'cmd /c something' },
+    { kind: 'workspace_path', path: '../private', prefix: '' },
+    { kind: 'workspace_path', path: 'userdata', prefix: 'cmd /c ' },
+    { kind: 'literal', value: 'bad\u0000argument' },
+    { kind: 'template', value: '{{WORKSPACE_DIR}}' }
+  ]) assert.equal(accepts('ProgramArgument', arg), false);
+  for (const name of ['SUPERTUXKART_SAVEDIR', 'SUPERTUXKART_DATADIR', 'SUPERTUXKART_HIGHSCOREDIR']) {
+    assert.equal(accepts('ProgramEnvironmentPath', { name, path: 'userdata' }), true);
+  }
+  for (const name of ['PATH', 'APPDATA', 'LOCALAPPDATA', 'COMSPEC', 'QT_PLUGIN_PATH', 'NODE_OPTIONS', 'PYTHONPATH', 'lowercase']) {
+    assert.equal(accepts('ProgramEnvironmentPath', { name, path: 'userdata' }), false, name);
+  }
+  assert.equal(accepts('ProgramConfigAddress', { kind: 'xpath', expression: '//Video[@foo]' }), false);
+  assert.equal(accepts('ProgramConfigSeed', { kind: 'xml_root', root: '!DOCTYPE', attributes: [] }), false);
+  assert.equal(accepts('ProgramPersistence', { path: 'userdata/players.xml', kind: 'file', policy: 'preserve_latest', export: 'always' }), false);
+});
+
+test('program finite profiles and operation budgets reject unbounded or duplicate selections', () => {
+  const program = programFixture('supertuxkart-1.5');
+  for (const field of ['components', 'required_files', 'build_profiles', 'controls_profiles']) {
+    assert.equal(accepts('ProgramDescriptor', { ...program, [field]: [] }), false, field);
+  }
+  const profile = program.build_profiles[0];
+  assert.equal(accepts('ProgramBuildProfile', { ...profile, layer_ids: ['stk-runtime', 'stk-runtime'] }), false);
+  assert.equal(accepts('ProgramBuildProfile', { ...profile, controls_profile_ids: [] }), false);
+  assert.equal(accepts('ProgramDescriptor', { ...program, directories: Array.from({ length: 65 }, (_, i) => `d${i}`) }), false);
+  assert.equal(accepts('ProgramEntrypoint', { ...program.entrypoint, arguments: Array.from({ length: 65 }, () => ({ kind: 'literal', value: 'x' })) }), false);
+  const key = program.configs[0].keys[0];
+  for (const allowed_values of [[], [true, true], Array.from({ length: 65 }, (_, i) => i)]) {
+    assert.equal(accepts('ProgramConfigKey', { ...key, allowed_values }), false);
+  }
+});
+
+test('native defaults are distinct from Eden writer capability and private bindings never become portable', () => {
+  const native = programFixture('supertuxkart-1.5').controls_profiles[0];
+  const eden = programFixture('eden-0.2.1').controls_profiles[0];
+  assert.equal(accepts('ProgramControlsProfile', native), true);
+  assert.equal(accepts('ProgramControlsProfile', { ...native, bindings: {} }), false);
+  assert.equal(accepts('ProgramControlsProfile', eden), true);
+  assert.equal(accepts('ProgramControlsProfile', { ...eden, kind: 'download_my_adapter' }), false);
+  assert.equal(accepts('ProgramControlsProfile', { ...eden, guid: 'private-guid' }), false);
+  assert.equal(accepts('ProgramControlsProfile', { ...eden, bindings: { a: { kind: 'button', index: 0 } } }), false);
+  assert.equal(accepts('ProgramDescriptor', { ...programFixture('eden-0.2.1'), executor: { id: 'eden', version: '0.2.1' } }), false);
 });

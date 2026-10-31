@@ -13,6 +13,11 @@
 [fusion-creator-wave0-handoff.md](fusion-creator-wave0-handoff.md); они не заменяют QA объединения.
 Нормативная разбивка потоков: [план v1](fusion-creator-v1-plan.md).
 
+**Дополнение `creator-wave1-descriptor`: формат ProgramDescriptor 1.0 заморожен ниже и в JSON Schema.**
+Это **JSON/document contract freeze**, не реализация новых Rust/TS DTO, reader или executor.
+`creator-wave1-base` не перемещается. Сверка двух программ, первоисточники, реальные pins,
+расхождения с кодом и границы проверки — [descriptor evidence](fusion-creator-descriptor-evidence.md).
+
 ## Объём и точки подключения
 
 | Контракт | Rust | TypeScript / схема |
@@ -86,6 +91,167 @@ Manifest `1.0` не может содержать `creator` или наслед�
 Zod/JSON Schema проверяют форму и границы wire-значений. Rust serde DTO задают форму,
 но не заменяют semantic validation у C/E/G: references, ranges, URL/path policy, hash/signature
 и монотонность sequence не считаются проверенными простой десериализацией.
+
+## ProgramDescriptor 1.0 — нормативная заморозка
+
+### Документы, версии и единственный источник истины
+
+- Самостоятельный snake_case документ: `$defs/ProgramDescriptor`,
+  `document_type: "program_descriptor"`, `schema_version: "1.0"`.
+  Не путать с GameManifest 1.1, SourceIndex 1.0 и версией самой программы.
+- `identity { id, title, version, os, architecture }`: точная версия программы, Windows и
+  одна из `x86_64|x86|aarch64|armv7`. Версии непрозрачные точные строки, не `latest`/диапазоны.
+  `executor { id: "fusion.declarative", version: "1.0" }` — версия общего host API,
+  **не** Eden `0.2.1`, SuperTuxKart `1.5` или версия игры.
+- Versioned authoring carrier — `$defs/CreatorProgramProject`, `schema_version: "1.1"`:
+  `project_id, revision, title, source_id, game_id, game_version, program_descriptor`.
+  Последние game-поля — metadata библиотечного выпуска, не compatibility requirements.
+  Descriptor единолично владеет components/profiles/rules: дубликатов `adapter`, `components`,
+  `build_profiles`, `controls_profiles`, `projection_rules` на уровне этого проекта нет.
+- Старые `$defs/CreatorProject` 1.0 и `$defs/CreatorManifest` **не изменены**. Новые поля нельзя
+  подмешивать в строгий legacy DTO или прятать в строку `adapter.id`. Миграция только явная.
+- Для публикации `$defs/ProgramCreatorManifest` — новая строгая альтернатива `GameManifest.creator`:
+  **ровно** `{ program_descriptor: ProgramDescriptor }`. Legacy CreatorManifest и эта альтернатива
+  взаимно исключаются. Внешний GameManifest остаётся 1.1, SourceIndex остаётся 1.0.
+  Descriptor встроен inline: canonical manifest hash и существующая Ed25519 signature покрывают
+  его содержимое. Никаких незакреплённых sidecar URL/дескрипторов, загружаемых после проверки подписи.
+- Это нормативная целевая форма: текущие Rust/TS project DTO и metadata reader новую альтернативу
+  ещё **не принимают**. A/C/D обязаны согласованно добавить типы, canonical/storage и потребителей;
+  нельзя включать execution до этого. Производные legacy runtime/launch/persistence поля, если
+  нужны transport/planner, генерирует общий compiler; расхождение с descriptor — ошибка, не выбор
+  «более удобной» копии. Старые 1.0 публикации не мигрируют неявно.
+- Release/report/resume привязаны к immutable release и выбранной паре профилей. C добавляет
+  canonical descriptor BLAKE3 в существующий `stamp.inputHashes.program_descriptor` **до reuse**,
+  наряду с project revision, component hashes и executor/capability implementation digests
+  (ABI version сам по себе не fingerprint кода). Приватный binding revision/hash также входит
+  в локальный stamp и не экспортируется. Изменение любого
+  из них инвалидирует зависимые результаты. Пять durable границ ниже не меняются.
+
+### Что описывается данными
+
+| Поле | Замороженная семантика |
+| --- | --- |
+| `components[]` | `id, layer_id, origin, source_root, mount_path`. Origins ровно прежние managed/external/user_provided; применяются независимо к каждому компоненту. |
+| `source_root` | Точный slash-путь **внутри выбранного input/archive root**; пустая строка означает этот root. Проверить весь архив перед доступом; выбрать этот каталог, нормализовать его файлы. Не auto-strip, поиск exe, glob или hook. |
+| `mount_path` | Путь в inactive workspace для полного проверенного нормализованного `CasFile` inventory; пустая строка — workspace root. Сам mount не меняет inventory identity. |
+| `required_files[]` | Обязательные projected paths и роли data/main_executable/core_library. Не полный inventory и не allowlist единственных проверяемых DLL: все исполняемые/loadable файлы проходят общую critical-file policy. Хеш/размер/provider берутся из проверенного inventory и общего resolver, не из имени. |
+| `projection_rules[]` | Точное `path → winning_layer`, одна семантика A/B/D/G. Different bytes без winner — конфликт; dependencies и порядок components не приоритет. |
+| `directories[]` | Конечные relative directories, которые host создаёт/проверяет внутри candidate, включая portable marker и приватные data dirs. Не reparse/junction, не создание файлов вместо каталогов. |
+| `entrypoint` | Один PE exe из verified projection, explicit working_directory, конечный argv и `environment_paths`. Запуск через общий supervisor, не через shell/wrapper. |
+| `arguments[]` | Либо literal argv atom, либо `{ kind: workspace_path, path, prefix }`: host разворачивает путь внутри workspace в **один** argv atom. Prefix пустой или `-option=`/`--option=`. Это не шаблонизатор. Авторизованные user files сначала становятся проверенными компонентами. |
+| `environment_paths[]` | Имя application data/config variable и workspace-relative directory. Host выставляет абсолютный путь только дочернему процессу. Никаких literal env values, изменения глобального environment или loader/search-path переменных. |
+| `configs[]` | Файл, codec, seed, `preserve_unmanaged: true`, конечный allowlist простых ключей. Только UTF-8 INI section/key или XML root/child-elements/attribute, без XPath/XSLT/DTD/includes. |
+| `build_profiles[]` | Конечные ID/title, точные layer IDs, допустимые controls profile IDs, полный конечный набор `settings {config_id,key_id,value}`. Каждое допустимое сочетание проверяется до сборки. |
+| `controls_profiles[]` | Либо явные `application_defaults` без Fusion remapping, либо известный host writer `eden_param_package_v1` с логическими bindings/device/config_id. Native defaults не притворяются SDL capture или сериализованным назначением. |
+| `persistence[]` | Точный file/directory path, `preserve_latest`, `export: never`. Отсутствующий **file** не превращать в каталог. Restore/update/rollback сохраняют актуальный progress, не заменяют его старым snapshot. |
+
+`configs.keys`: ID, typed address, scalar_type `boolean|integer|number|string`, непустой конечный
+`allowed_values`. Значения — literal scalars, без вычислений и интерполяции. Integer — safe JSON
+integer; number — конечный bounded JSON number. Host проверяет согласованность scalar_type/domain,
+принадлежность profile values этому domain и полное однократное назначение каждого объявленного
+ключа во всех build profiles. Объявления ключей/адресов уникальны; codec/seed/address совместимы.
+INI сохраняет точные section/key, включая literal `\default` у Eden. Boolean сериализуется
+как `true`/`false`, числа — locale-independent decimal, строки — escaped codec literals.
+XML address — последовательность
+прямых child names относительно root и один attribute; отсутствующие простые nodes создаются,
+неоднозначные duplicate nodes/attrs, DTD/entities/namespaces и неподдерживаемый формат — ошибка.
+Seed используется только при отсутствии приватной конфигурации: empty_ini или минимальный xml_root
+с конечными root attributes. Existing unrelated nodes/keys сохраняются, но **никогда не экспортируются**.
+
+### Что остаётся кодом за общим host interface
+
+Общий executor валидирует descriptor/references, нормализует input, вызывает единственный resolver,
+готовит writable candidate, применяет простые codecs, формирует argv/env и использует существующие
+supervisor, CAS, snapshots, trust и release pipeline. Имена программ не появляются в switch/enum
+IPC, platform registry или импортируемом production module для каждого нового portable приложения.
+
+Adapter API 1.0: host выбирает **уже зарегистрированную** capability по закрытому ID/version,
+передаёт descriptor digest, выбранную пару профилей, config ID, логические назначения и приватное
+read-only binding view; capability возвращает план config mutations либо typed unavailable/invalid
+diagnostic. Source не передаёт implementation, function name, URL или native module. Host повторно
+проверяет output paths/key ownership и атомарно применяет план **только в inactive candidate**.
+Это сигнатурный контракт следующей реализации D, не существующий Rust symbol/stub.
+
+Eden ParamPackage escaping, `[empty]`, вложенные stick packages, Qt/native keycodes, SDL mapping,
+локальные device identities/calibration и размещение конкретных `[Controls]` записей остаются
+host-owned кодом D/E. В v1 optional writer — `eden_param_package_v1`; его API version фиксирован
+именем capability. Больше никаких произвольных adapter actions. Shared INI/XML writers — общий
+код, а не адаптеры под каждую программу. Отсутствие capability не означает native/default fallback:
+недоступная выбранная операция возвращает `action_unavailable`, job не становится successful.
+
+### Проверки и безопасность (обязательны сверх JSON Schema)
+
+1. До parse — лимит descriptor 2 MiB и duplicate JSON object keys rejection. Схема закрывает
+   все object shapes и ограничивает списки; unknown versions/opcodes/properties — ошибка.
+2. Проверить уникальные component/layer/profile/config/key/env IDs, все references и выбранные
+   пары. Прогнать pure resolver для каждого build profile: required files, entrypoint и его
+   executable role должны реально существовать с правильным winning provider; cwd — каталог.
+3. Проверить все source/normalized/projected paths, parent/file и case collisions, Windows
+   device/reserved aliases, traversal/absolute/UNC/ADS/control chars. Reparse/symlink запрещены;
+   containment и TOCTOU проверяются при каждом IO. Schema pattern — лишь lexical prefilter.
+4. Только конечные host operations: select exact input root, normalize/verify, project, ensure-dir,
+   typed scalar assignment, approved capability config plan, persistence copy/commit и supervisor
+   spawn approved PE. Никаких Source shell scripts, `.bat/.cmd/.ps1` entrypoints, cmd/PowerShell/
+   script-host launchers, eval, WASM/native plugin или post-setup escape hatch. Наличие штатного
+   `.bat` в upstream ZIP не разрешает запускать его Fusion; descriptor указывает настоящий exe.
+5. Literal argv не исполняются shell. Не наследовать application-specific path overrides из
+   родителя; protected APPDATA/LOCALAPPDATA/TEMP и loader environment задаёт host, Source не меняет.
+   Env map ограничен workspace paths и generic protected/loader policy. Новые application data
+   variable names объявляются данными и проходят локальное approval, не требуют program-name
+   allowlist в Rust. Опасные/недекларированные overrides — отказ, regex не выдаёт permission.
+   Не передавать signing secrets и private binding storage.
+6. Внешняя загрузка streaming-to-disk, expected transport и normalized inventory BLAKE3 проверяются
+   отдельно. User-provided inputs требуют явного локального выбора, ожидаемого inventory и
+   проверки копии; public descriptor не содержит absolute author paths, ROM/BIOS/keys/firmware.
+7. Сохраняются Ed25519 verification, TOFU/explicit key-change approval и executable approval
+   actual winning exe/core-library bytes. Подпись не даёт license или executable approval;
+   HTTPS/upstream checksum не заменяют Source trust. `redistribution_allowed` не разрешение.
+8. Все mutable config/persistence paths получают private writable copies **до** редактирования
+   и запуска: не менять shared CAS hardlink/inode permissions. Persistence сначала rehydrate в
+   candidate, затем profile-managed keys; active config/shared saves до commit не трогать.
+   После остановки capture/atomic commit в приватный durable state. На rollback — latest state
+   плюс выбранный старый profile, не восстановление прогресса из старого release.
+9. File persistence может совпасть с exact config file: общий writer сохраняет unmanaged private
+   values, затем overrides managed keys. Остальные overlapping persistence roots, file/dir conflicts
+   и collisions configs/directories с immutable projected files — отказ, не last-writer-wins.
+   Отсутствующие config parent directories host создаёт безопасно; отсутствующее сохранение — no-op.
+10. Export собирается из allowlisted release artifacts/metadata, **не из запущенного workspace**.
+    Persistence, приватные config copies, tokens, GUID, caches/logs и пользовательские input paths
+    не экспортируются. `application_defaults` не отменяет закрытие прежней input session с worker ACK.
+11. Это защита операций Fusion и explicit approval, **не OS sandbox произвольного одобренного PE**.
+    Документированные savedir overrides и source inspection не доказывают отсутствие любых внешних
+    записей запущенного процесса. Для observed_launch/manual_scenario нужны реальные отчёты.
+
+### Две программы и цикл без app-specific production changes
+
+- Eden 0.2.1: точные portable directory/config/simple INI keys — данные; ParamPackage — optional
+  capability. [Eden fixture](../fixtures/creator/programs/eden-0.2.1.json) — **schema-only**, с
+  unresolved managed artifact и `redistribution_allowed: false`, не опубликованный runtime или
+  полный готовый mapping. Ни game payload, ни keys/firmware не добавлены.
+- [SuperTuxKart 1.5 fixture](../fixtures/creator/programs/supertuxkart-1.5.json) — не эмулятор:
+  реальные ZIP roots/pins, x64 exe/cwd, `SUPERTUXKART_SAVEDIR`, XML attrs и native-default controls.
+  В бинарном Source не нужны `supertuxkart` enum/adapter/IPC/registry branches.
+- Целевой полный цикл: C сохраняет scan/classification и descriptor pin → A/D получают проверенный
+  artifact/inventory → общий compiler и resolver собирают все объявленные profile pairs → B/D
+  готовят candidate, XML profile и приватное состояние → E освобождает handles → supervisor
+  запускает **exe** после trust/approval → G сохраняет отдельные structure/install/observed/manual
+  reports → export содержит signed descriptor/manifest и allowed metadata, external payload остаётся
+  pinned upstream dependency → update строит новый candidate → rollback выбирает прежний release
+  с latest persistence. Новый выпуск требует новых exact byte pins, не изменяемого `latest` URL.
+- **На текущем baseline этот цикл НЕ выполнен и без общей реализации executor не доступен.**
+  «Без правки production-кода» означает отсутствие изменений **под имя новой программы** после
+  реализации общего D/A/B/C/G pipeline, не утверждение, что схема уже включает исполнение.
+  Не считать schema validation, скачивание ZIP, synthetic H или showcase реальной приёмкой.
+
+### Forza Horizon 2 + Azimuth — только анализ выразимости
+
+Подтверждённые upstream требования/права и список пробелов вынесены в
+[evidence, бумажный кейс](fusion-creator-descriptor-evidence.md#forza-horizon-2--azimuth--только-на-бумаге).
+Программа/runtime version отделена от game metadata и executor/capability version. Origins и
+проверенные component inventories позволяют описать пользовательские файлы и уже готовые
+компоненты; они **не** выражают Xbox Title ID/update/content resolver, требуемый binary patch
+pipeline или неизвестный launch/config API. Эти пробелы **не расширяют объём v1**.
+`forza-horizon-2-showcase` остаётся synthetic fixture, не real compatibility/permission evidence.
 
 ## Pure resolver: единая сигнатура для Packer и installer (B)
 

@@ -2,13 +2,232 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:fusion:creator-contracts:1.0",
   "title": "Fusion Creator contracts",
-  "description": "Portable CreatorProject 1.0 and camelCase job/input events. CreatorManifest is only the creator extension of GameManifest 1.1, available through its definition; this is not a complete GameManifest schema.",
+  "description": "CreatorProject 1.0, standalone ProgramDescriptor 1.0, and camelCase job/input events. CreatorManifest is only the existing creator extension of GameManifest 1.1. ProgramDescriptor is a newly frozen authoring contract, not yet a Rust/TypeScript runtime DTO; adding it does not enable Creator execution.",
   "oneOf": [
     { "$ref": "#/$defs/CreatorProject" },
     { "$ref": "#/$defs/CreatorJobProgress" },
-    { "$ref": "#/$defs/InputState" }
+    { "$ref": "#/$defs/InputState" },
+    { "$ref": "#/$defs/ProgramDescriptor" },
+    { "$ref": "#/$defs/CreatorProgramProject" }
   ],
   "$defs": {
+    "ProgramPath": {
+      "type": "string", "minLength": 1, "maxLength": 512,
+      "pattern": "^(?!/)(?!.*[\\\\:\\u0000-\\u001f\\u007f-\\u009f<>\"|?*])(?!(?:[\\s\\S]*/)?\\.{1,2}(?:/|$))(?!(?:[\\s\\S]*/)?[^/]*[. ](?:/|$))(?!(?:[\\s\\S]*/)?(?:[cC][oO][nN]|[pP][rR][nN]|[aA][uU][xX]|[nN][uU][lL]|[cC][oO][mM][1-9]|[lL][pP][tT][1-9])(?:\\.[^/]*|)(?:/|$))[^/]+(?:/[^/]+)*(?![\\s\\S])",
+      "description": "Workspace-relative slash path. Lexical Windows guards only; host must also check Unicode/device aliases, case collisions, reparse points, containment and TOCTOU at every filesystem operation."
+    },
+    "ProgramDirectory": {
+      "oneOf": [{ "const": "" }, { "$ref": "#/$defs/ProgramPath" }],
+      "description": "Empty means the selected root itself, not current process directory."
+    },
+    "ProgramScalar": {
+      "oneOf": [
+        { "type": "boolean" },
+        { "type": "number", "minimum": -9007199254740991, "maximum": 9007199254740991 },
+        { "type": "string", "maxLength": 2048, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]*(?![\\s\\S])" }
+      ]
+    },
+    "ProgramIdentity": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "title", "version", "os", "architecture"],
+      "properties": {
+        "id": { "$ref": "#/$defs/Identifier" }, "title": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "version": { "$ref": "#/$defs/Identifier" }, "os": { "const": "windows" },
+        "architecture": { "enum": ["x86_64", "x86", "aarch64", "armv7"] }
+      }
+    },
+    "ProgramComponent": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "layer_id", "origin", "source_root", "mount_path"],
+      "properties": {
+        "id": { "$ref": "#/$defs/Identifier" }, "layer_id": { "$ref": "#/$defs/Identifier" },
+        "origin": { "$ref": "#/$defs/ComponentOrigin" },
+        "source_root": { "$ref": "#/$defs/ProgramDirectory" }, "mount_path": { "$ref": "#/$defs/ProgramDirectory" }
+      },
+      "description": "Exact normalization root inside the selected input/archive and workspace mount of its verified normalized CasFile inventory. No glob, stripping heuristic or executable normalization hook."
+    },
+    "ProgramFile": {
+      "type": "object", "additionalProperties": false, "required": ["path", "role"],
+      "properties": {
+        "path": { "$ref": "#/$defs/ProgramPath" },
+        "role": { "enum": ["data", "main_executable", "core_library"] }
+      },
+      "description": "Required projected file, not a replacement for complete verified CasFile inventories and critical-file hashes. Actual hash/provider comes from the one shared resolver."
+    },
+    "ProgramProjectionRule": {
+      "type": "object", "additionalProperties": false, "required": ["path", "winning_layer"],
+      "properties": { "path": { "$ref": "#/$defs/ProgramPath" }, "winning_layer": { "$ref": "#/$defs/Identifier" } }
+    },
+    "ProgramArgument": {
+      "oneOf": [
+        {
+          "type": "object", "additionalProperties": false, "required": ["kind", "value"],
+          "properties": { "kind": { "const": "literal" }, "value": { "type": "string", "maxLength": 2048, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]*(?![\\s\\S])" } }
+        },
+        {
+          "type": "object", "additionalProperties": false, "required": ["kind", "path", "prefix"],
+          "properties": {
+            "kind": { "const": "workspace_path" }, "path": { "$ref": "#/$defs/ProgramDirectory" },
+            "prefix": { "type": "string", "maxLength": 64, "pattern": "^(?:|--?[A-Za-z0-9_-]+=)(?![\\s\\S])" }
+          }
+        }
+      ],
+      "description": "One structured argv element. workspace_path expands a host-owned workspace path, optionally after a literal option= prefix; never a shell command or template. User files must first be authorized/verified components, not arbitrary private absolute argv paths."
+    },
+    "ProgramEnvironmentPath": {
+      "type": "object", "additionalProperties": false, "required": ["name", "path"],
+      "properties": {
+        "name": {
+          "type": "string", "minLength": 1, "maxLength": 64,
+          "pattern": "^(?!(?:PATH|PATHEXT|COMSPEC|SYSTEMROOT|WINDIR|APPDATA|LOCALAPPDATA|USERPROFILE|HOME|TEMP|TMP|QT_PLUGIN_PATH|QT_QPA_PLATFORM_PLUGIN_PATH|PYTHONPATH|PYTHONHOME|NODE_OPTIONS|RUSTC_WRAPPER)(?![\\s\\S]))[A-Z][A-Z0-9_]*(?![\\s\\S])"
+        },
+        "path": { "$ref": "#/$defs/ProgramDirectory" }
+      },
+      "description": "Application-specific data-directory variable set to an absolute workspace path. No arbitrary literal env, inherited application overrides, loader/search-path changes or exported host paths; supervisor supplies protected isolation variables."
+    },
+    "ProgramEntrypoint": {
+      "type": "object", "additionalProperties": false,
+      "required": ["executable", "working_directory", "arguments", "environment_paths"],
+      "properties": {
+        "executable": { "$ref": "#/$defs/ProgramPath" }, "working_directory": { "$ref": "#/$defs/ProgramDirectory" },
+        "arguments": { "type": "array", "maxItems": 64, "items": { "$ref": "#/$defs/ProgramArgument" } },
+        "environment_paths": { "type": "array", "maxItems": 32, "items": { "$ref": "#/$defs/ProgramEnvironmentPath" } }
+      }
+    },
+    "ProgramConfigAddress": {
+      "oneOf": [
+        {
+          "type": "object", "additionalProperties": false, "required": ["kind", "section", "key"],
+          "properties": {
+            "kind": { "const": "ini" },
+            "section": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9_. /-]+(?![\\s\\S])" },
+            "key": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9_. \\\\/-]+(?![\\s\\S])" }
+          }
+        },
+        {
+          "type": "object", "additionalProperties": false, "required": ["kind", "elements", "attribute"],
+          "properties": {
+            "kind": { "const": "xml_attribute" },
+            "elements": { "type": "array", "maxItems": 8, "items": { "$ref": "#/$defs/ProgramXmlName" } },
+            "attribute": { "$ref": "#/$defs/ProgramXmlName" }
+          }
+        }
+      ]
+    },
+    "ProgramXmlName": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z_][A-Za-z0-9_.-]*(?![\\s\\S])" },
+    "ProgramConfigKey": {
+      "type": "object", "additionalProperties": false, "required": ["id", "address", "scalar_type", "allowed_values"],
+      "properties": {
+        "id": { "$ref": "#/$defs/Identifier" }, "address": { "$ref": "#/$defs/ProgramConfigAddress" },
+        "scalar_type": { "enum": ["boolean", "integer", "number", "string"] },
+        "allowed_values": { "type": "array", "minItems": 1, "maxItems": 64, "uniqueItems": true, "items": { "$ref": "#/$defs/ProgramScalar" } }
+      }
+    },
+    "ProgramXmlAttribute": {
+      "type": "object", "additionalProperties": false, "required": ["name", "value"],
+      "properties": { "name": { "$ref": "#/$defs/ProgramXmlName" }, "value": { "$ref": "#/$defs/ProgramScalar" } }
+    },
+    "ProgramConfigSeed": {
+      "oneOf": [
+        {
+          "type": "object", "additionalProperties": false, "required": ["kind"],
+          "properties": { "kind": { "const": "empty_ini" } }
+        },
+        {
+          "type": "object", "additionalProperties": false, "required": ["kind", "root", "attributes"],
+          "properties": {
+            "kind": { "const": "xml_root" }, "root": { "$ref": "#/$defs/ProgramXmlName" },
+            "attributes": { "type": "array", "maxItems": 16, "items": { "$ref": "#/$defs/ProgramXmlAttribute" } }
+          }
+        }
+      ]
+    },
+    "ProgramConfig": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "path", "format", "seed", "preserve_unmanaged", "keys"],
+      "properties": {
+        "id": { "$ref": "#/$defs/Identifier" }, "path": { "$ref": "#/$defs/ProgramPath" },
+        "format": { "enum": ["ini", "xml_attributes"] }, "seed": { "$ref": "#/$defs/ProgramConfigSeed" },
+        "preserve_unmanaged": { "const": true },
+        "keys": { "type": "array", "maxItems": 128, "items": { "$ref": "#/$defs/ProgramConfigKey" } }
+      }
+    },
+    "ProgramSetting": {
+      "type": "object", "additionalProperties": false, "required": ["config_id", "key_id", "value"],
+      "properties": { "config_id": { "$ref": "#/$defs/Identifier" }, "key_id": { "$ref": "#/$defs/Identifier" }, "value": { "$ref": "#/$defs/ProgramScalar" } }
+    },
+    "ProgramBuildProfile": {
+      "type": "object", "additionalProperties": false, "required": ["id", "title", "layer_ids", "controls_profile_ids", "settings"],
+      "properties": {
+        "id": { "$ref": "#/$defs/Identifier" }, "title": { "type": "string", "maxLength": 256 },
+        "layer_ids": { "type": "array", "minItems": 1, "maxItems": 64, "uniqueItems": true, "items": { "$ref": "#/$defs/Identifier" } },
+        "controls_profile_ids": { "type": "array", "minItems": 1, "maxItems": 16, "uniqueItems": true, "items": { "$ref": "#/$defs/Identifier" } },
+        "settings": { "type": "array", "maxItems": 256, "items": { "$ref": "#/$defs/ProgramSetting" } }
+      }
+    },
+    "ProgramControlsProfile": {
+      "oneOf": [
+        {
+          "type": "object", "additionalProperties": false, "required": ["id", "title", "kind"],
+          "properties": { "id": { "$ref": "#/$defs/Identifier" }, "title": { "type": "string", "maxLength": 256 }, "kind": { "const": "application_defaults" } }
+        },
+        {
+          "type": "object", "additionalProperties": false, "required": ["id", "title", "kind", "device", "bindings", "config_id"],
+          "properties": {
+            "id": { "$ref": "#/$defs/Identifier" }, "title": { "type": "string", "maxLength": 256 },
+            "kind": { "const": "eden_param_package_v1" }, "device": { "enum": ["keyboard_mouse", "sdl_gamecontroller"] },
+            "bindings": { "type": "object", "additionalProperties": { "$ref": "#/$defs/LogicalBinding" } },
+            "config_id": { "$ref": "#/$defs/Identifier" }
+          }
+        }
+      ],
+      "description": "Finite selection of native application defaults OR one approved host writer. application_defaults is not proof of Fusion remapping, SDL capture or handles release. No source-supplied adapter code."
+    },
+    "ProgramPersistence": {
+      "type": "object", "additionalProperties": false, "required": ["path", "kind", "policy", "export"],
+      "properties": {
+        "path": { "$ref": "#/$defs/ProgramPath" }, "kind": { "enum": ["file", "directory"] },
+        "policy": { "const": "preserve_latest" }, "export": { "const": "never" }
+      }
+    },
+    "ProgramDescriptor": {
+      "type": "object", "additionalProperties": false,
+      "required": ["document_type", "schema_version", "identity", "executor", "components", "required_files", "projection_rules", "directories", "entrypoint", "configs", "build_profiles", "controls_profiles", "persistence"],
+      "properties": {
+        "document_type": { "const": "program_descriptor" }, "schema_version": { "const": "1.0" },
+        "identity": { "$ref": "#/$defs/ProgramIdentity" },
+        "executor": {
+          "type": "object", "additionalProperties": false, "required": ["id", "version"],
+          "properties": { "id": { "const": "fusion.declarative" }, "version": { "const": "1.0" } }
+        },
+        "components": { "type": "array", "minItems": 1, "maxItems": 64, "items": { "$ref": "#/$defs/ProgramComponent" } },
+        "required_files": { "type": "array", "minItems": 1, "maxItems": 256, "items": { "$ref": "#/$defs/ProgramFile" } },
+        "projection_rules": { "type": "array", "maxItems": 4096, "items": { "$ref": "#/$defs/ProgramProjectionRule" } },
+        "directories": { "type": "array", "maxItems": 64, "uniqueItems": true, "items": { "$ref": "#/$defs/ProgramPath" } },
+        "entrypoint": { "$ref": "#/$defs/ProgramEntrypoint" },
+        "configs": { "type": "array", "maxItems": 16, "items": { "$ref": "#/$defs/ProgramConfig" } },
+        "build_profiles": { "type": "array", "minItems": 1, "maxItems": 32, "items": { "$ref": "#/$defs/ProgramBuildProfile" } },
+        "controls_profiles": { "type": "array", "minItems": 1, "maxItems": 16, "items": { "$ref": "#/$defs/ProgramControlsProfile" } },
+        "persistence": { "type": "array", "maxItems": 64, "items": { "$ref": "#/$defs/ProgramPersistence" } }
+      },
+      "description": "Frozen creator-wave1-descriptor authoring contract. Normative cross-reference, format/type, profile completeness, writable isolation and trust rules are in docs/fusion-creator-contracts-v1.md. This schema is not an installer or a source of execution authority."
+    },
+    "CreatorProgramProject": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schema_version", "project_id", "revision", "title", "source_id", "game_id", "game_version", "program_descriptor"],
+      "properties": {
+        "schema_version": { "const": "1.1" }, "project_id": { "$ref": "#/$defs/Identifier" },
+        "revision": { "$ref": "#/$defs/Revision" }, "title": { "type": "string" },
+        "source_id": { "$ref": "#/$defs/Identifier" }, "game_id": { "$ref": "#/$defs/Identifier" },
+        "game_version": { "$ref": "#/$defs/Identifier" }, "program_descriptor": { "$ref": "#/$defs/ProgramDescriptor" }
+      },
+      "description": "Versioned authoring carrier, not the existing CreatorProject 1.0 DTO. Descriptor owns components/profiles; no conflicting legacy copies. game_version is library/release metadata, not a compatibility resolver. Consumer implementation is pending."
+    },
+    "ProgramCreatorManifest": {
+      "type": "object", "additionalProperties": false, "required": ["program_descriptor"],
+      "properties": { "program_descriptor": { "$ref": "#/$defs/ProgramDescriptor" } },
+      "description": "New strict alternative for GameManifest 1.1 creator, NOT the legacy CreatorManifest definition. Embed inline so the existing manifest canonical hash and Ed25519 signature cover descriptor bytes. Reader/canonical/runtime support is pending; unknown variants must fail closed."
+    },
     "Identifier": { "type": "string", "minLength": 1, "maxLength": 128 },
     "Blake3": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
     "Revision": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },

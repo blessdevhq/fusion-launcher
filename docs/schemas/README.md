@@ -3,7 +3,11 @@
 [`fusion-creator-contracts.schema.json`](./fusion-creator-contracts.schema.json) uses
 JSON Schema **draft 2020-12**. It mirrors the portable Creator and IPC contracts in
 `src/types/fusionCreator.ts`, `src-tauri/src/fusion_creator/`, and
-`src-tauri/src/fusion_source/creator_schema.rs`.
+`src-tauri/src/fusion_source/creator_schema.rs` for the legacy definitions.
+The additive `creator-wave1-descriptor` definitions freeze a **new document format only**:
+ProgramDescriptor 1.0, CreatorProgramProject 1.1, and ProgramCreatorManifest. They are not
+yet mirrored by Rust/TS runtime DTOs or wired to the reader/executor. The normative semantics,
+security checks and handoff gaps are in [`../fusion-creator-contracts-v1.md`](../fusion-creator-contracts-v1.md).
 
 ## Select the correct contract
 
@@ -14,6 +18,8 @@ The document root accepts exactly one of:
 | `CreatorProject` | Portable project, **snake_case**, `schema_version: "1.0"` |
 | `CreatorJobProgress` | Job progress event, **camelCase** |
 | `InputState` | Input session state event, **camelCase** |
+| `ProgramDescriptor` | Standalone program recipe, **snake_case**, document_type `program_descriptor`, schema_version `1.0` |
+| `CreatorProgramProject` | New authoring carrier, **snake_case**, schema_version `1.1`, inline program_descriptor; no duplicate legacy adapter/profiles |
 
 All definitions are available under `#/$defs/<Name>`. Additional definitions cover
 adapter references, all component-origin and logical-binding variants, profiles,
@@ -35,7 +41,15 @@ Optional `buildProfileId` / `controlsProfileId` are present in options/plans and
 snapshot plans; absent IDs preserve legacy serialization. Manifest 1.1 execution
 and non-null profile selections remain explicitly `action_unavailable` before
 candidate mutation. Schema validation does not enable installation or profile
-application; combined QA is pending.
+application; the combined base QA is recorded in `../fusion-creator-wave1-base.md`.
+Descriptor-format verification is recorded separately in `../fusion-creator-descriptor-evidence.md`.
+
+`ProgramCreatorManifest` is selected explicitly through `$defs`: it validates exactly
+`{ program_descriptor: ProgramDescriptor }`, the newly specified alternative for GameManifest
+1.1 `creator`. It is not a complete GameManifest, not a new SourceIndex version, and not the
+legacy `CreatorManifest`. Inline descriptor content must be covered by canonical manifest
+hash/signature. Current metadata consumers reject this new alternative until A adds typed
+reader/canonical/storage support; do not silently discard it or enable execution prematurely.
 
 The schema identifier is `urn:fusion:creator-contracts:1.0`. Register the whole
 document with a draft-2020-12 validator before referencing, for example,
@@ -70,6 +84,12 @@ produce a standalone schema.
   references, or physical device identities. `InputBindingsSaveRequest` is a
   local IPC DTO, **not** a portable project or export format. Private-storage
   identity/binding DTOs and the complete command-request surface are not covered.
+- Program paths have a lexical Windows prefilter, not filesystem authority. References,
+  unique IDs, profile completeness, scalar-type/domain consistency, codec/seed compatibility,
+  reparse/TOCTOU checks, environment policy, complete critical-file approval, private writable
+  copies and export allowlisting remain mandatory host validation. Simple XML attributes and
+  literal INI keys are not scripts, XPath or template expressions. Unknown capabilities fail
+  explicitly; native application defaults must not be reported as Fusion remapping.
 
 ## Tests (no new dependencies)
 
@@ -92,3 +112,9 @@ references so schema growth cannot silently skip constraints. It is not a
 production JSON Schema validator or a replacement for a conforming draft-2020-12
 implementation. Its URI check uses Node's URL parser rather than a complete
 RFC 3986 implementation.
+
+The same test validates `fixtures/creator/programs/{eden-0.2.1,supertuxkart-1.5}.json`, new
+carriers, unsafe paths, finite list budgets, operation/selector discriminators and forbidden
+portable private fields. Read the fixture README: Eden is intentionally schema-only and
+SuperTuxKart's byte inspection is not launch/lifecycle acceptance. New list assertions
+(`minItems`, `maxItems`, `uniqueItems`) are audited and exercised; no dependency was added.
