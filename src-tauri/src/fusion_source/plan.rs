@@ -242,6 +242,11 @@ impl PlanBuilder {
         // Public canonical values can be constructed or deserialized by callers.
         // Their type alone is not a substitute for path and graph validation.
         SchemaUpcaster::validate_canonical(manifest)?;
+        if crate::fusion_creator::declarative::runtime::descriptor(manifest).is_some() {
+            return crate::fusion_creator::declarative::runtime::build_program_plan(
+                manifest, options, registry,
+            );
+        }
         crate::fusion_creator::profiles::validate_profile_selection(manifest, options)?;
         if manifest.schema_version == "1.1"
             || options.build_profile_id.is_some()

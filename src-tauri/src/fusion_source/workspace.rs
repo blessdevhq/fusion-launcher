@@ -8,6 +8,9 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use crate::fusion_creator::declarative::{
+    candidate as program_candidate, runtime as program_runtime, state::ProgramPersistenceStore,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::fusion_creator::projection::{
@@ -48,6 +51,8 @@ pub struct WorkspaceSnapshot {
     pub plan: ExecutionPlan,
     pub persistence: PersistenceBindings,
     pub save_backup: Option<SaveSnapshot>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) program_environment_approval: Option<program_runtime::EnvironmentApproval>,
     pub patches: Vec<PatchReceipt>,
     pub delta: LayerDelta,
     container_identity: FileIdentity,
@@ -97,6 +102,10 @@ pub struct AssembledWorkspace {
 impl AssembledWorkspace {
     /// Call only once every process and descendant has stopped writing saves.
     pub fn reconcile_saves(&self) -> Result<(), FusionError> {
+        if let Some(program) = program_runtime::descriptor(&self.snapshot.manifest) {
+            return program_state(&self.library_root, &self.snapshot.game)?
+                .capture(&self.snapshot.workspace_root, &program.persistence);
+        }
         PersistenceManager::open(&self.library_root, &self.snapshot.game)?
             .reconcile_workspace(&self.snapshot.workspace_root, &self.snapshot.persistence)
     }
@@ -286,6 +295,7 @@ pub struct WorkspaceAssembler {
     external_root: Option<PathBuf>,
     cas: CasStore,
     patch_tools: PatchToolRegistry,
+    program_environment_approval: Option<program_runtime::EnvironmentApproval>,
 }
 
 impl WorkspaceAssembler {
@@ -312,6 +322,7 @@ impl WorkspaceAssembler {
             external_root: None,
             cas: CasStore::open(library_root)?,
             patch_tools: PatchToolRegistry::default(),
+            program_environment_approval: None,
         })
     }
 
@@ -330,6 +341,15 @@ impl WorkspaceAssembler {
 
     pub fn with_patch_tools(mut self, tools: PatchToolRegistry) -> Self {
         self.patch_tools = tools;
+        self
+    }
+
+    /// Explicit local decision, never populated from portable Source metadata.
+    pub fn with_program_environment_approval(
+        mut self,
+        approval: program_runtime::EnvironmentApproval,
+    ) -> Self {
+        self.program_environment_approval = Some(approval);
         self
     }
 
@@ -355,6 +375,12 @@ impl WorkspaceAssembler {
         }
         let operation_lock = self.lock()?;
         self.validate_request(manifest, plan, inputs)?;
+        if let Some(program) = program_runtime::descriptor(manifest) {
+            program_runtime::approved_environment(
+                program,
+                self.program_environment_approval.as_ref(),
+            )?;
+        }
         let projected_layers = self.project_layers(manifest, plan, inputs)?;
         let previous_state = self.state()?;
         let previous = previous_state
@@ -364,10 +390,15 @@ impl WorkspaceAssembler {
             .transpose()?;
         let persistence = PersistenceManager::open(&self.library_root, &self.game)?;
         if let Some(previous) = &previous {
-            persistence.reconcile_workspace(&previous.workspace_root, &previous.persistence)?;
+            if let Some(program) = program_runtime::descriptor(&previous.manifest) {
+                program_state(&self.library_root, &self.game)?
+                    .capture(&previous.workspace_root, &program.persistence)?;
+            } else {
+                persistence.reconcile_workspace(&previous.workspace_root, &previous.persistence)?;
+            }
         }
         // This completes before any changed layer or workspace file is written.
-        let save_backup = if previous.is_some() {
+        let save_backup = if previous.is_some() && program_runtime::descriptor(manifest).is_none() {
             Some(persistence.snapshot_before_update()?)
         } else {
             None
@@ -550,7 +581,19 @@ impl WorkspaceAssembler {
                 );
             }
         }
-        let bindings = persistence.prepare(&root, &manifest.persistence, persistence_roots)?;
+        let bindings = if let Some(program) = program_runtime::descriptor(manifest) {
+            program_candidate::prepare(
+                program,
+                plan.build_profile_id.as_deref().ok_or_else(|| {
+                    FusionError::new(ErrorCode::InvalidManifest, "Program profile is absent.")
+                })?,
+                &root,
+                &program_state(&self.library_root, &self.game)?,
+            )?;
+            PersistenceBindings::default()
+        } else {
+            persistence.prepare(&root, &manifest.persistence, persistence_roots)?
+        };
         let mut template_context = context.clone();
         template_context.workspace_dir = root.clone();
         template_context.enabled_addons = plan
@@ -620,11 +663,14 @@ impl WorkspaceAssembler {
                 .filter_map(|binding| binding.workspace_relative.as_ref())
                 .any(|path| path_is_inside(&file.workspace_path, path))
         });
-        let used_inputs = plan
-            .selected_layers
-            .iter()
-            .map(|id| (id.clone(), inputs[id].clone()))
-            .collect();
+        let used_inputs = if program_runtime::descriptor(manifest).is_some() {
+            inputs.clone()
+        } else {
+            plan.selected_layers
+                .iter()
+                .map(|id| (id.clone(), inputs[id].clone()))
+                .collect()
+        };
         let old_inputs = previous
             .as_ref()
             .map(|snapshot| &snapshot.inputs)
@@ -644,6 +690,7 @@ impl WorkspaceAssembler {
             plan: plan.clone(),
             persistence: bindings,
             save_backup,
+            program_environment_approval: self.program_environment_approval.clone(),
             patches,
             delta: LayerDelta::between(
                 &old_inputs,
@@ -861,7 +908,12 @@ impl WorkspaceAssembler {
         let persistence = PersistenceManager::open(&self.library_root, &self.game)?;
         if let Some(active) = &state.active {
             let current = self.read_snapshot(active)?;
-            persistence.reconcile_workspace(&current.workspace_root, &current.persistence)?;
+            if let Some(program) = program_runtime::descriptor(&current.manifest) {
+                program_state(&self.library_root, &self.game)?
+                    .capture(&current.workspace_root, &program.persistence)?;
+            } else {
+                persistence.reconcile_workspace(&current.workspace_root, &current.persistence)?;
+            }
         }
         let lease = self.open_lease(target, lock, false)?;
         fs_safety::atomic_write_json(
@@ -883,7 +935,20 @@ impl WorkspaceAssembler {
     ) -> Result<AssembledWorkspace, FusionError> {
         let snapshot = self.read_snapshot(reference)?;
         let persistence = PersistenceManager::open(&self.library_root, &self.game)?;
-        if reconcile {
+        if let Some(program) = program_runtime::descriptor(&snapshot.manifest) {
+            let state = program_state(&self.library_root, &self.game)?;
+            if reconcile {
+                state.capture(&snapshot.workspace_root, &program.persistence)?;
+            }
+            program_candidate::prepare(
+                program,
+                snapshot.plan.build_profile_id.as_deref().ok_or_else(|| {
+                    FusionError::new(ErrorCode::InvalidManifest, "Program profile is absent.")
+                })?,
+                &snapshot.workspace_root,
+                &state,
+            )?;
+        } else if reconcile {
             persistence.reconcile_workspace(&snapshot.workspace_root, &snapshot.persistence)?;
         }
         persistence.bind_workspace(&snapshot.workspace_root, &snapshot.persistence)?;
@@ -930,10 +995,11 @@ impl WorkspaceAssembler {
             .collect();
         if selected.len() != plan.selected_layers.len()
             || expected != plan.selected_layers
-            || manifest
-                .layers
-                .values()
-                .any(|layer| !layer.optional && !selected.contains(&layer.id))
+            || manifest.layers.values().any(|layer| {
+                program_runtime::descriptor(manifest).is_none()
+                    && !layer.optional
+                    && !selected.contains(&layer.id)
+            })
         {
             return Err(FusionError::new(
                 ErrorCode::InvalidManifest,
@@ -1008,6 +1074,32 @@ impl WorkspaceAssembler {
         plan: &ExecutionPlan,
         inputs: &BTreeMap<String, LayerInput>,
     ) -> Result<BTreeMap<String, BTreeSet<String>>, FusionError> {
+        if program_runtime::descriptor(manifest).is_some() {
+            let compiled = program_candidate::verify_inputs(manifest, inputs, &self.cas)?;
+            let projection = compiled
+                .projections
+                .get(plan.build_profile_id.as_deref().unwrap_or_default())
+                .ok_or_else(|| {
+                    FusionError::new(ErrorCode::InvalidManifest, "Program profile is absent.")
+                })?;
+            let mut projected: BTreeMap<String, BTreeSet<String>> = plan
+                .selected_layers
+                .iter()
+                .map(|id| (id.clone(), BTreeSet::new()))
+                .collect();
+            for file in projection.files.values() {
+                projected
+                    .get_mut(&file.winning_layer)
+                    .ok_or_else(|| {
+                        FusionError::new(
+                            ErrorCode::InvalidManifest,
+                            "Projection provider is not selected.",
+                        )
+                    })?
+                    .insert(file.source_relative_path.clone());
+            }
+            return Ok(projected);
+        }
         let mut projected: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
         let mut paths = BTreeSet::new();
         let mut layers = Vec::new();
@@ -1429,13 +1521,13 @@ fn validate_plan_contract(
         &PlanOptions {
             build_profile_id: plan.build_profile_id.clone(),
             controls_profile_id: plan.controls_profile_id.clone(),
-            enabled_addons: Some(
+            enabled_addons: program_runtime::descriptor(manifest).is_none().then(|| {
                 plan.selected_layers
                     .iter()
                     .filter(|id| manifest.layers[*id].optional)
                     .cloned()
-                    .collect(),
-            ),
+                    .collect()
+            }),
             runtime_channel: plan.runtime_channel,
             library_volume,
             local_base_volume,
@@ -1559,6 +1651,17 @@ fn check_cleanup_inventory(
         }
     }
     Ok(())
+}
+
+fn program_state(
+    library: &Path,
+    game: &QualifiedGameId,
+) -> Result<ProgramPersistenceStore, FusionError> {
+    ProgramPersistenceStore::open(
+        &PersistenceManager::open(library, game)?
+            .root()
+            .join("program"),
+    )
 }
 
 fn canonical_hash(manifest: &CanonicalGameManifest) -> Result<String, FusionError> {

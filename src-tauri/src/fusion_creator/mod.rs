@@ -1,4 +1,5 @@
 //! Wave-zero DTOs and signatures. No project writes, job runner, export or input backend.
+pub mod declarative;
 pub mod input;
 pub mod profiles;
 pub(crate) mod project_storage;
