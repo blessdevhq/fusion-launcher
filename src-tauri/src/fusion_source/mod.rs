@@ -25,6 +25,7 @@ pub mod offline;
 pub mod packer;
 pub mod persistence;
 pub mod plan;
+pub mod program_schema;
 pub mod resolver;
 pub mod schema;
 pub mod service;

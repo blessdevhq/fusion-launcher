@@ -121,3 +121,32 @@ pub struct CreatorManifest {
     pub controls_profiles: Vec<ControlsProfile>,
     pub projection_rules: Vec<ProjectionRule>,
 }
+
+/// Strict wire alternatives, not two independent publication formats.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum CreatorExtension {
+    Program(Box<super::program_schema::ProgramCreatorManifest>),
+    Legacy(CreatorManifest),
+}
+
+impl CreatorExtension {
+    pub fn as_legacy(&self) -> Option<&CreatorManifest> {
+        match self {
+            Self::Legacy(value) => Some(value),
+            Self::Program(_) => None,
+        }
+    }
+    pub fn as_legacy_mut(&mut self) -> Option<&mut CreatorManifest> {
+        match self {
+            Self::Legacy(value) => Some(value),
+            Self::Program(_) => None,
+        }
+    }
+    pub fn as_program(&self) -> Option<&super::program_schema::ProgramCreatorManifest> {
+        match self {
+            Self::Program(value) => Some(value),
+            Self::Legacy(_) => None,
+        }
+    }
+}

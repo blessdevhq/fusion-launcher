@@ -33,6 +33,12 @@ fn validate_metadata(manifest: &CanonicalGameManifest) -> Result<&CreatorManifes
         .creator
         .as_ref()
         .ok_or_else(|| invalid("Creator profiles are absent."))?;
+    let creator = creator.as_legacy().ok_or_else(|| {
+        FusionError::new(
+            ErrorCode::ActionUnavailable,
+            "Program profile compilation and execution are not registered.",
+        )
+    })?;
     if manifest.schema_version != "1.1"
         || creator.build_profiles.is_empty()
         || creator.controls_profiles.is_empty()

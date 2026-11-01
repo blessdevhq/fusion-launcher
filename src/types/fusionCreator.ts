@@ -1,5 +1,8 @@
 import { z } from 'zod';
 import type { FusionError } from './fusionSource.ts';
+import { preservingJsonRecord } from './fusionProgram.ts';
+export { programDescriptorSchema, creatorProgramProjectSchema, programCreatorManifestSchema } from './fusionProgram.ts';
+export type { ProgramDescriptor, CreatorProgramProject, ProgramCreatorManifest } from './fusionProgram.ts';
 
 /** Portable source/project data has snake_case keys; IPC envelopes use camelCase. */
 const id = z.string().min(1).max(128);
@@ -28,7 +31,7 @@ export const logicalBindingSchema = z.discriminatedUnion('kind', [
 ]);
 export const controlsProfileSchema = z.object({
   id, title: z.string(), device: z.enum(['keyboard_mouse', 'sdl_gamecontroller']),
-  bindings: z.record(logicalBindingSchema)
+  bindings: preservingJsonRecord(logicalBindingSchema)
 }).strict();
 /** One finite profile pair; applying it belongs to installer B, not this scaffold. */
 export const creatorProfileSelectionSchema = z.object({

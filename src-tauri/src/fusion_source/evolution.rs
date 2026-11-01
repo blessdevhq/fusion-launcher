@@ -226,8 +226,7 @@ fn parse_versioned_json(json: &str, is_manifest: bool) -> Result<Value, FusionEr
             "Manifest exceeds the metadata size limit.",
         ));
     }
-    let value: Value = serde_json::from_str(json)
-        .map_err(|e| FusionError::new(ErrorCode::InvalidJson, e.to_string()))?;
+    let value = super::program_schema::parse_unique_json(json, MAX_JSON_BYTES)?;
     let version = value.get("schema_version").and_then(Value::as_str);
     // Index stays 1.0. Reading a manifest 1.1 does not enable its execution.
     if version != Some("1.0") && !(is_manifest && version == Some("1.1")) {
@@ -406,6 +405,13 @@ fn validate_game_shape(manifest: &GameManifest) -> Result<(), FusionError> {
             ErrorCode::UnsupportedSchema,
             "Creator fields require GameManifest 1.1.",
         ));
+    }
+    if let Some(program) = manifest
+        .creator
+        .as_ref()
+        .and_then(|creator| creator.as_program())
+    {
+        program.program_descriptor.validate()?;
     }
     validate_id(&manifest.id, "id")?;
     nonempty(&manifest.title, "title")?;
@@ -690,7 +696,12 @@ fn validate_resolved_manifest(manifest: &GameManifest) -> Result<Vec<String>, Fu
     let execution_groups = usize::from(manifest.runtime.is_some())
         + usize::from(manifest.launch.is_some())
         + usize::from(manifest.orchestrator.is_some());
-    if execution_groups != 1 {
+    let program_authoring = manifest
+        .creator
+        .as_ref()
+        .and_then(|creator| creator.as_program())
+        .is_some();
+    if execution_groups != 1 && !(program_authoring && execution_groups == 0) {
         return Err(FusionError::new(
             ErrorCode::InvalidManifest,
             "Declare exactly one runtime, launch or orchestrator execution group.",

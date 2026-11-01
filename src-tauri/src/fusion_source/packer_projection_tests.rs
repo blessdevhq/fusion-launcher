@@ -2,6 +2,12 @@ use super::*;
 
 type Inventories = BTreeMap<(String, String), Vec<CasFile>>;
 
+fn legacy_creator(
+    manifest: &mut CanonicalGameManifest,
+) -> &mut crate::fusion_source::creator_schema::CreatorManifest {
+    manifest.creator.as_mut().unwrap().as_legacy_mut().unwrap()
+}
+
 fn fixture() -> (CanonicalGameManifest, Inventories) {
     let manifest = SchemaUpcaster::upcast_game_manifest(
         "projection-source",
@@ -219,31 +225,25 @@ fn finite_profile_selection_rejects_unknown_half_pairs_and_all_addon_overrides()
 fn finite_profile_metadata_and_inventory_cannot_be_silently_incomplete() {
     let (original, inventories) = compatible_creator_fixture();
     let mut manifest = original.clone();
-    let duplicate = manifest.creator.as_ref().unwrap().build_profiles[0].clone();
-    manifest
-        .creator
-        .as_mut()
-        .unwrap()
-        .build_profiles
-        .push(duplicate);
+    let duplicate = legacy_creator(&mut manifest).build_profiles[0].clone();
+    legacy_creator(&mut manifest).build_profiles.push(duplicate);
     assert!(validate_layer_inventory(&manifest, &inventories).is_err());
     let mut manifest = original.clone();
-    manifest.creator.as_mut().unwrap().build_profiles[0]
+    legacy_creator(&mut manifest).build_profiles[0]
         .layer_ids
         .push("base".into());
     assert!(validate_layer_inventory(&manifest, &inventories).is_err());
     let mut manifest = original.clone();
-    manifest.creator.as_mut().unwrap().build_profiles[0].controls_profile_ids =
-        vec!["unknown".into()];
+    legacy_creator(&mut manifest).build_profiles[0].controls_profile_ids = vec!["unknown".into()];
     assert!(validate_layer_inventory(&manifest, &inventories).is_err());
     let mut manifest = original.clone();
-    manifest.creator.as_mut().unwrap().build_profiles[0].layer_ids = vec!["addon".into()];
+    legacy_creator(&mut manifest).build_profiles[0].layer_ids = vec!["addon".into()];
     assert!(validate_layer_inventory(&manifest, &inventories).is_err());
     let mut missing = inventories.clone();
     missing.remove(&("game".into(), "addon".into()));
     assert!(validate_layer_inventory(&original, &missing).is_err());
     let mut manifest = original;
-    manifest.creator.as_mut().unwrap().projection_rules.push(
+    legacy_creator(&mut manifest).projection_rules.push(
         crate::fusion_source::creator_schema::ProjectionRule {
             path: "data.bin".into(),
             winning_layer: "addon".into(),
@@ -259,7 +259,7 @@ fn finite_profile_metadata_and_inventory_cannot_be_silently_incomplete() {
 fn profile_integrity_uses_the_winning_binary_provider_not_layer_order() {
     use crate::fusion_creator::profiles::resolve_declared_profiles;
     let (mut manifest, mut inventories) = compatible_creator_fixture();
-    manifest.creator.as_mut().unwrap().build_profiles.remove(0);
+    legacy_creator(&mut manifest).build_profiles.remove(0);
     let digest = blake3::hash(b"replacement binary").to_hex().to_string();
     inventories
         .get_mut(&("game".into(), "addon".into()))
@@ -279,7 +279,7 @@ fn profile_integrity_uses_the_winning_binary_provider_not_layer_order() {
             blake3: digest.clone(),
             role: CriticalFileRole::MainExecutable,
         });
-    manifest.creator.as_mut().unwrap().projection_rules.push(
+    legacy_creator(&mut manifest).projection_rules.push(
         crate::fusion_source::creator_schema::ProjectionRule {
             path: "app.exe".into(),
             winning_layer: "addon".into(),
