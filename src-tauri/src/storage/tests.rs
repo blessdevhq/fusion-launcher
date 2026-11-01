@@ -860,7 +860,10 @@ fn migration_from_v0_legacy_database_with_mixed_records() {
             .conn
             .query_row("PRAGMA user_version;", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(v, 5, "user_version must include local Source bindings");
+        assert_eq!(
+            v, 6,
+            "user_version must include local Source bindings and Creator storage"
+        );
 
         // Verify attacker repo was demoted, but builtin was kept official
         let attacker = store

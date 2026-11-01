@@ -66,4 +66,6 @@ mod repositories;
 mod rows;
 
 #[cfg(test)]
+mod creator_migration_tests;
+#[cfg(test)]
 mod tests;

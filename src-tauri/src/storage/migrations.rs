@@ -295,7 +295,41 @@ impl RepositoryStore {
             }
         }
 
+        if user_version < 6 {
+            self.migrate_v5_to_v6_inner()?;
+        }
+
         Ok(())
+    }
+
+    /// Creator has one authoritative SQLite document, not a file/DB dual write.
+    /// Re-read under the write lock so simultaneous openers cannot race DDL.
+    fn migrate_v5_to_v6_inner(&self) -> rusqlite::Result<()> {
+        let transaction = rusqlite::Transaction::new_unchecked(
+            &self.conn,
+            rusqlite::TransactionBehavior::Immediate,
+        )?;
+        let version: i64 = transaction.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+        if version < 6 {
+            transaction.execute_batch(
+                r#"
+                CREATE TABLE creator_program_projects (
+                    project_id TEXT PRIMARY KEY NOT NULL,
+                    revision INTEGER NOT NULL CHECK (revision BETWEEN 0 AND 9007199254740991),
+                    document BLOB NOT NULL CHECK (length(document) <= 2097152),
+                    document_blake3 TEXT NOT NULL CHECK (length(document_blake3) = 64)
+                );
+                CREATE TABLE creator_private_bindings (
+                    project_id TEXT PRIMARY KEY NOT NULL
+                        REFERENCES creator_program_projects(project_id) ON DELETE CASCADE,
+                    revision INTEGER NOT NULL CHECK (revision BETWEEN 0 AND 9007199254740991),
+                    bindings_json BLOB NOT NULL CHECK (length(bindings_json) <= 2097152)
+                );
+                PRAGMA user_version = 6;
+                "#,
+            )?;
+        }
+        transaction.commit()
     }
 
     fn migrate_v3_to_v4_inner(&self) -> rusqlite::Result<()> {

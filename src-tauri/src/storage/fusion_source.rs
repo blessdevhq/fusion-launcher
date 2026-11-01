@@ -1361,7 +1361,7 @@ mod tests {
         let store = RepositoryStore::open(path).unwrap();
         store.conn.execute("INSERT INTO trusted_executables(asset_id,local_path,sha256,trusted_at) VALUES ('legacy-emu','legacy.exe',?1,'old')",params!["c".repeat(64)]).unwrap();
         store.conn.execute("INSERT INTO app_config(key,value,updated_at) VALUES ('sentinel','preserved','old')",[]).unwrap();
-        store.conn.execute_batch("PRAGMA foreign_keys=OFF; DROP TABLE fusion_layer_refs; DROP TABLE fusion_workspace_snapshots; DROP TABLE fusion_installations; DROP TABLE fusion_cas_objects; DROP TABLE fusion_manifest_snapshots; DROP TABLE fusion_source_entries; DROP TABLE fusion_sources; DROP TABLE fusion_operations; DROP TABLE fusion_save_snapshots; DROP TABLE fusion_crash_reports; PRAGMA user_version=3;").unwrap();
+        store.conn.execute_batch("PRAGMA foreign_keys=OFF; DROP TABLE creator_private_bindings; DROP TABLE creator_program_projects; DROP TABLE fusion_local_sources; DROP TABLE fusion_layer_refs; DROP TABLE fusion_workspace_snapshots; DROP TABLE fusion_installations; DROP TABLE fusion_cas_objects; DROP TABLE fusion_manifest_snapshots; DROP TABLE fusion_source_entries; DROP TABLE fusion_sources; DROP TABLE fusion_operations; DROP TABLE fusion_save_snapshots; DROP TABLE fusion_crash_reports; PRAGMA user_version=3;").unwrap();
     }
 
     #[test]
@@ -1375,7 +1375,7 @@ mod tests {
                 .conn
                 .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
                 .unwrap(),
-            5
+            6
         );
         assert_eq!(
             store
@@ -1401,6 +1401,11 @@ mod tests {
         );
         assert!(store.fusion_list_sources().unwrap().is_empty());
         assert!(store.fusion_list_installations().unwrap().is_empty());
+        for table in ["creator_program_projects", "creator_private_bindings"] {
+            let query = format!("SELECT count(*) FROM {table}");
+            let count: i64 = store.conn.query_row(&query, [], |row| row.get(0)).unwrap();
+            assert_eq!(count, 0, "migration must not fabricate Creator records");
+        }
     }
 
     #[test]
