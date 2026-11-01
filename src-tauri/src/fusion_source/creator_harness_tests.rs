@@ -8,6 +8,26 @@ use super::test_support::{CreatorHarness, BASE, RUNTIME, SOURCE_ID, USER_DATA};
 use std::fs;
 
 #[tokio::test]
+async fn legacy_projection_shared_resolver_preserves_desktop_install() {
+    let fixture = CreatorHarness::synthetic().await;
+    let result = fixture
+        .service
+        .game_install(&fixture.game, fixture.request.clone())
+        .await
+        .unwrap();
+    assert_eq!(result.status, "completed");
+    let snapshot = fixture.snapshot();
+    assert_eq!(
+        fs::read(snapshot.workspace_root.join("runtime/main.exe")).unwrap(),
+        RUNTIME
+    );
+    assert_eq!(
+        fs::read(snapshot.workspace_root.join("base.bin")).unwrap(),
+        BASE
+    );
+}
+
+#[tokio::test]
 async fn fixture_source_rebuilds_with_identical_publication_hashes() {
     let fixture = CreatorHarness::synthetic().await;
     let proof = &fixture.reproducibility;

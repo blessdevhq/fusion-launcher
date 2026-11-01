@@ -10,6 +10,10 @@ use std::path::{Component, Path, PathBuf};
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 
+use crate::fusion_creator::projection::{
+    resolve_projection, ProjectionLayer, ProjectionRequest, ProjectionSemantics,
+};
+
 use super::canonical::{CanonicalGameManifest, CanonicalLayer, QualifiedGameId};
 use super::capabilities::{CapabilityNegotiator, CapabilityRegistry};
 use super::cas::{hash_file, CasFile, CasObject};
@@ -22,6 +26,10 @@ use super::plan::{PlanBuilder, PlanOptions};
 use super::resolver::DynamicAssetAttestation;
 use super::schema::*;
 use super::signatures;
+
+#[cfg(test)]
+#[path = "packer_projection_tests.rs"]
+mod projection_tests;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -1551,8 +1559,26 @@ fn validate_layer_inventory(
     manifest: &CanonicalGameManifest,
     inventories: &BTreeMap<(String, String), Vec<CasFile>>,
 ) -> Result<(), FusionError> {
+    if manifest.creator.is_some() {
+        let verified: Vec<ProjectionLayer> = manifest
+            .layers
+            .values()
+            .filter_map(|layer| {
+                inventories
+                    .get(&(manifest.id.clone(), layer.id.clone()))
+                    .map(|files| ProjectionLayer {
+                        layer_id: layer.id.clone(),
+                        mount_path: layer.mount_path.clone(),
+                        verified_inventory: files.clone(),
+                    })
+            })
+            .collect();
+        crate::fusion_creator::profiles::resolve_declared_profiles(manifest, &verified)?;
+        return Ok(());
+    }
     let mut mounted: BTreeMap<String, String> = BTreeMap::new();
     let mut critical: BTreeMap<String, String> = BTreeMap::new();
+    let mut inventory_segment = Vec::new();
     for id in &manifest.layer_order {
         let layer = &manifest.layers[id];
         let join = |path: &str| {
@@ -1563,6 +1589,10 @@ fn validate_layer_inventory(
             }
         };
         if let Some(patch) = &layer.patch {
+            // A patch consumes the projection at this exact barrier. Its payload
+            // is not a workspace inventory and its attested output has no known
+            // size here: never invent a verified CasFile for either of them.
+            flush_inventory_projection(&mut inventory_segment, &mut mounted)?;
             validate_patch_critical(layer, patch)?;
             let base = manifest.layers.get(&patch.base_layer).ok_or_else(|| {
                 FusionError::new(ErrorCode::MissingLayer, "Patch base layer is absent.")
@@ -1632,17 +1662,11 @@ fn validate_layer_inventory(
             // final output attested by the author-supplied reference file.
             mounted.insert(output, patch.output_digest.value.clone());
         } else if let Some(files) = inventories.get(&(manifest.id.clone(), id.clone())) {
-            for file in files {
-                let path = join(&file.path);
-                if has_tree_conflict(&mounted, &path) {
-                    return Err(FusionError::new(
-                        ErrorCode::InvalidManifest,
-                        "Layer projection contains a file/directory conflict.",
-                    )
-                    .with_detail("path", &path));
-                }
-                mounted.insert(path, file.blake3.clone());
-            }
+            inventory_segment.push(ProjectionLayer {
+                layer_id: id.clone(),
+                mount_path: layer.mount_path.clone(),
+                verified_inventory: files.clone(),
+            });
         }
         let locator_keys = match &layer.source {
             LayerSource::LocalLocator { locator } => locator.key_files.as_slice(),
@@ -1652,6 +1676,7 @@ fn validate_layer_inventory(
             critical.insert(join(&file.path), file.blake3.clone());
         }
     }
+    flush_inventory_projection(&mut inventory_segment, &mut mounted)?;
     for (path, digest) in critical {
         if mounted.get(&path).is_some_and(|actual| actual != &digest) {
             return Err(FusionError::new(
@@ -1680,6 +1705,33 @@ fn validate_layer_inventory(
         }
         mounted.insert(template.path.to_lowercase(), String::new());
     }
+    Ok(())
+}
+
+/// Resolve ordinary inventories through the same pure resolver as the installer.
+/// Patch outputs remain attested transitions between segments, not CAS providers.
+fn flush_inventory_projection(
+    selected_layers: &mut Vec<ProjectionLayer>,
+    mounted: &mut BTreeMap<String, String>,
+) -> Result<(), FusionError> {
+    let projection = resolve_projection(ProjectionRequest {
+        semantics: ProjectionSemantics::Legacy10,
+        selected_layers,
+        rules: &[],
+    })?;
+    for (path, file) in projection.files {
+        // The resolver checks the segment's tree. Retain the barrier guard for
+        // earlier patch outputs and inventories, which are not removed by patches.
+        if has_tree_conflict(mounted, &path) {
+            return Err(FusionError::new(
+                ErrorCode::InvalidManifest,
+                "Layer projection contains a file/directory conflict.",
+            )
+            .with_detail("path", &path));
+        }
+        mounted.insert(path, file.blake3);
+    }
+    selected_layers.clear();
     Ok(())
 }
 

@@ -10,6 +10,10 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
+use crate::fusion_creator::projection::{
+    resolve_projection, ProjectionLayer, ProjectionRequest, ProjectionSemantics,
+};
+
 use super::canonical::{CanonicalGameManifest, QualifiedGameId};
 use super::capabilities::{CapabilityRegistry, CapabilitySelection};
 use super::cas::{hash_file, CasStore};
@@ -351,6 +355,7 @@ impl WorkspaceAssembler {
         }
         let operation_lock = self.lock()?;
         self.validate_request(manifest, plan, inputs)?;
+        let projected_layers = self.project_layers(manifest, plan, inputs)?;
         let previous_state = self.state()?;
         let previous = previous_state
             .active
@@ -459,6 +464,9 @@ impl WorkspaceAssembler {
             };
             let _source_root = fs_safety::guard(&source_root)?;
             for relative in source_files {
+                if !projected_layers[id].contains(&relative) {
+                    continue;
+                }
                 if let Some(cancel) = &options.cancellation {
                     cancel.check()?;
                 }
@@ -990,6 +998,82 @@ impl WorkspaceAssembler {
         super::evolution::validate_selected_patch_integrity(manifest, &plan.selected_layers)?;
         validate_plan_contract(manifest, plan, inputs, &self.library_root)?;
         Ok(())
+    }
+
+    /// Resolve ordinary layer runs before candidate mutation. Patches are ordered
+    /// barriers: a patch must still see the preceding bytes, not a later overlay.
+    fn project_layers(
+        &self,
+        manifest: &CanonicalGameManifest,
+        plan: &ExecutionPlan,
+        inputs: &BTreeMap<String, LayerInput>,
+    ) -> Result<BTreeMap<String, BTreeSet<String>>, FusionError> {
+        let mut projected: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+        let mut paths = BTreeSet::new();
+        let mut layers = Vec::new();
+        let flush = |layers: &mut Vec<ProjectionLayer>,
+                     projected: &mut BTreeMap<String, BTreeSet<String>>,
+                     paths: &mut BTreeSet<String>|
+         -> Result<(), FusionError> {
+            let result = resolve_projection(ProjectionRequest {
+                semantics: ProjectionSemantics::Legacy10,
+                selected_layers: layers,
+                rules: &[],
+            })?;
+            for file in result.files.into_values() {
+                paths.insert(file.path);
+                projected
+                    .entry(file.winning_layer)
+                    .or_default()
+                    .insert(file.source_relative_path);
+            }
+            layers.clear();
+            Ok(())
+        };
+        for id in &plan.selected_layers {
+            let layer = &manifest.layers[id];
+            if let Some(patch) = &layer.patch {
+                flush(&mut layers, &mut projected, &mut paths)?;
+                paths.insert(patch.output_path.clone());
+                continue;
+            }
+            let verified_inventory = match &inputs[id] {
+                LayerInput::Cas { digest, .. } => self.cas.get(digest)?.files,
+                LayerInput::LocalDirectory { root } => {
+                    let _root = fs_safety::guard(root)?;
+                    verify_locator_keys(layer, root)?;
+                    fs_safety::list_plain_files(root)?
+                        .into_iter()
+                        .map(|(path, source)| {
+                            let file = fs_safety::open_read(&source)?;
+                            let size = file
+                                .metadata()
+                                .map_err(|error| {
+                                    fs_safety::io_error(
+                                        "Inspect local projection file",
+                                        &source,
+                                        error,
+                                    )
+                                })?
+                                .len();
+                            let blake3 = hash_file(&source, DigestAlgorithm::Blake3)?;
+                            Ok(super::cas::CasFile { path, blake3, size })
+                        })
+                        .collect::<Result<Vec<_>, FusionError>>()?
+                }
+            };
+            projected.entry(id.clone()).or_default();
+            layers.push(ProjectionLayer {
+                layer_id: id.clone(),
+                mount_path: layer.mount_path.clone(),
+                verified_inventory,
+            });
+        }
+        flush(&mut layers, &mut projected, &mut paths)?;
+        crate::fusion_creator::projection::validate_projection_paths(
+            paths.iter().map(String::as_str),
+        )?;
+        Ok(projected)
     }
 
     fn workspace_parent(

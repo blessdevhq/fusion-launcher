@@ -1,5 +1,6 @@
 //! Wave-zero DTOs and signatures. No project writes, job runner, export or input backend.
 pub mod input;
+pub mod profiles;
 pub mod projection;
 
 use std::collections::BTreeMap;

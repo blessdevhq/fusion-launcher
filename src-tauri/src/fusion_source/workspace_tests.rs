@@ -199,6 +199,65 @@ impl Fixture {
 }
 
 #[test]
+fn legacy_projection_later_overlay_wins_in_workspace() {
+    let f = fixture();
+    let source = f.temporary.path().join("overlay");
+    fs::create_dir_all(source.join("data")).unwrap();
+    fs::write(source.join("data/static.bin"), b"overlay wins").unwrap();
+    let object = f.cas.import_directory(&source).unwrap();
+    let mut doc = document(RUNTIME_ONE, "1");
+    doc["layers"].as_array_mut().unwrap().push(json!({
+        "id":"overlay", "kind":"mod", "depends_on":["base"],
+        "source":{"kind":"user_provided"}
+    }));
+    let mut inputs = f.inputs.clone();
+    inputs.insert(
+        "overlay".into(),
+        LayerInput::Cas {
+            digest: object.digest,
+            runtime_lock: None,
+        },
+    );
+    let assembled = f.assemble(&canonical(&doc), &inputs).unwrap();
+    assert_eq!(
+        fs::read(assembled.snapshot.workspace_root.join("data/static.bin")).unwrap(),
+        b"overlay wins"
+    );
+    assert_eq!(fs::read(f.base.root.join("data/static.bin")).unwrap(), BASE);
+}
+
+#[test]
+fn legacy_projection_parent_conflict_is_rejected_before_candidate_creation() {
+    let f = fixture();
+    let source = f.temporary.path().join("parent-conflict");
+    fs::create_dir(&source).unwrap();
+    fs::write(source.join("data"), b"not a directory").unwrap();
+    let object = f.cas.import_directory(&source).unwrap();
+    let mut doc = document(RUNTIME_ONE, "1");
+    doc["layers"].as_array_mut().unwrap().push(json!({
+        "id":"overlay", "kind":"mod", "depends_on":["base"],
+        "source":{"kind":"user_provided"}
+    }));
+    let mut inputs = f.inputs.clone();
+    inputs.insert(
+        "overlay".into(),
+        LayerInput::Cas {
+            digest: object.digest,
+            runtime_lock: None,
+        },
+    );
+    assert_eq!(
+        f.assemble(&canonical(&doc), &inputs).unwrap_err().code,
+        ErrorCode::InvalidManifest
+    );
+    let snapshots = f
+        .context
+        .workspace_dir
+        .join(".fusion-source/workspaces/test-source/native-game/snapshots");
+    assert_eq!(fs::read_dir(snapshots).unwrap().count(), 0);
+}
+
+#[test]
 fn immutable_projection_uses_hardlinks_and_mutable_outputs_preserve_cas() {
     let f = fixture();
     let assembled = f.assemble(&f.manifest, &f.inputs).unwrap();
@@ -356,6 +415,84 @@ fn a_patch_without_a_pinned_tool_preserves_the_active_workspace() {
         .unwrap_err();
     assert_eq!(error.code, ErrorCode::MissingPatchTool);
     assert_eq!(f.assembler.active().unwrap().unwrap().snapshot.id, active);
+}
+
+#[test]
+fn patch_barrier_path_conflicts_are_rejected_before_persistence_and_candidate_mutation() {
+    for (output, later) in [
+        ("data/patched.bin", "data/static.bin/child.bin"),
+        ("data/patched.bin", "data"),
+        ("data/patched.bin", "data/patched.bin/child.bin"),
+        ("data/nested/patched.bin", "data/nested"),
+        ("data/static.bin/child.bin", "unrelated.bin"),
+        ("data", "unrelated.bin"),
+    ] {
+        let f = fixture();
+        let first = f.assemble(&f.manifest, &f.inputs).unwrap();
+        let active = first.snapshot.id.clone();
+        fs_safety::atomic_write(
+            &first.snapshot.workspace_root.join("saves/progress.dat"),
+            b"live save not yet reconciled",
+        )
+        .unwrap();
+        drop(first);
+        let persistence = f
+            .context
+            .workspace_dir
+            .join(".fusion-source/persistence/test-source/native-game");
+        let fingerprint = || {
+            fs_safety::list_plain_files(&persistence)
+                .unwrap()
+                .into_iter()
+                .map(|(path, file)| (path, fs::read(file).unwrap()))
+                .collect::<Vec<_>>()
+        };
+        let before = fingerprint();
+        let source = f.temporary.path().join("post-patch");
+        let file = source.join(later);
+        fs::create_dir_all(file.parent().unwrap()).unwrap();
+        fs::write(file, b"later ordinary file").unwrap();
+        let object = f.cas.import_directory(&source).unwrap();
+        let payload = f.temporary.path().join("patch.payload");
+        fs::write(&payload, b"not executed by preflight").unwrap();
+        let patch = f.cas.import_file(&payload, "patch.payload").unwrap();
+        let mut inputs = f.inputs.clone();
+        for (id, digest) in [("delta", patch.digest), ("post", object.digest)] {
+            inputs.insert(
+                id.into(),
+                LayerInput::Cas {
+                    digest,
+                    runtime_lock: None,
+                },
+            );
+        }
+        let mut doc = document(RUNTIME_ONE, "2");
+        doc["layers"].as_array_mut().unwrap().extend([
+            json!({"id":"delta","kind":"patch","source":{"kind":"user_provided"},
+                "patch":{"format":"xdelta3","base_layer":"base",
+                    "input_path":"data/static.bin","output_path":output,
+                    "input_digest":{"algorithm":"blake3","value":hash(BASE)},
+                    "output_digest":{"algorithm":"blake3","value":hash(b"patched data")}}}),
+            json!({"id":"post","kind":"mod","depends_on":["delta"],
+                "source":{"kind":"user_provided"}}),
+        ]);
+        assert_eq!(
+            f.assemble(&canonical(&doc), &inputs).unwrap_err().code,
+            ErrorCode::InvalidManifest,
+            "output={output}, later={later}"
+        );
+        assert_eq!(
+            fingerprint(),
+            before,
+            "persistence changed for {output}, {later}"
+        );
+        assert_eq!(f.assembler.active().unwrap().unwrap().snapshot.id, active);
+        let snapshots = f
+            .context
+            .workspace_dir
+            .join(".fusion-source/workspaces/test-source/native-game/snapshots");
+        assert_eq!(fs::read_dir(snapshots).unwrap().count(), 1);
+    }
 }
 
 #[test]
