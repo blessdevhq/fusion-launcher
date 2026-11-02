@@ -269,3 +269,48 @@ entry count, отдельно проверяющий fallback-denial branch. Э�
 SuperTuxKart install → run → profile change → update → rollback. Пока этот цикл
 **BLOCKED / NOT RUN**, а не PASS. Реальная controller/InputDeviceSession приёмка,
 Eden optional writer и интеграция C/G остаются отдельными неподтверждёнными частями.
+
+## Интеграция в creator-wave3-base
+
+Общая база: annotated tag
+[`creator-wave3-base`](https://github.com/blessdevhq/fusion-launcher/tree/creator-wave3-base),
+ветка `creator/wave3-base`.
+
+- Ветка создана от `creator-wave2-base` (`5b3d611e17e9cfa4caa1aa24632beb877fb6c4dd`).
+- `creator/executor` (`96963a219761fa581f2205e092959b62cffb6054`) интегрирован
+  **fast-forward**, без merge-коммита и без конфликтов, в том числе в
+  `supervisor.rs` и `workspace.rs`. Все предки wave2 и изменения X сохранены.
+- Интегратор ничего нового не реализовывал. После проверенного executor SHA
+  добавлен только этот раздел handoff; исходники, тесты, manifests и locks неизменны.
+
+Новый независимый прогон в `F:/MVP/Fusion-Creator-Wave3` на executor SHA:
+
+| Проверка | Фактический результат |
+| --- | --- |
+| `RUST_TEST_THREADS=4 npm run qa` | **PASS, exit 0 с первой попытки**: Node **159 passed**, Rust lib **656 passed / 0 failed / 4 прежних ignored**, Packer CLI **3 passed**; typecheck, static-check, production build, fmt и clippy `--all-targets -- -D warnings` прошли |
+| `external_program_execution_stays_unavailable_until_a_acquisition_is_integrated`, полное имя с `--lib -- --exact --nocapture` | **PASS, exit 0: 1 passed / 0 failed / 659 filtered out**; descriptor external по-прежнему возвращает `ActionUnavailable` до интеграции acquisition A |
+| Известные native supervisor/sidecar tests в полном QA | Прошли с первой попытки; повтор не запускался, FLAKY в этом прогоне не наблюдался |
+
+Точная отдельная проверка gate:
+
+```sh
+RUST_TEST_THREADS=4 cargo test --manifest-path src-tauri/Cargo.toml --locked --offline --lib fusion_creator::declarative::provider_tests::external_program_execution_stays_unavailable_until_a_acquisition_is_integrated -- --exact --nocapture
+```
+
+Окружение: VS2022 Native Tools, `CARGO_BUILD_JOBS=4`, offline Cargo, тот же
+сериализованный shared target `F:/MVP/Fusion Launcher/src-tauri/target`, физический
+`FUSION_TEST_PYTHON`. Node dependencies подключены доверенным junction без изменения
+lockfile; чистый dependency install не заявляется. Исходный dirty launcher и чужие
+worktrees не изменялись. Исторические native failures выше и в A/C handoffs не
+переписаны в PASS; исправление или доказательство стабильности native teardown
+этой интеграцией не заявляется.
+
+Новые raw logs и JSON с exit/count/hash сохранены локально в
+`.tmp/wave3-integration/` интеграционного worktree:
+
+- `wave3-qa-attempt1.log`, SHA-256 `4b066969703bcebed535c2529b8a7aaefbc24c43076ee4d514050339f540069c`.
+- `wave3-external-exact.log`, SHA-256 `fb3c0ed8d43955e388b4e609f9f1967e466dbdd8466281701a6fb6eaec81c86a`.
+
+Тег обозначает проверенный код X плюс этот docs-only отчёт, не полную приёмку
+Creator. External acquisition и реальный SuperTuxKart lifecycle остаются
+**BLOCKED / NOT RUN**; дополнительные границы выше сохранены.
