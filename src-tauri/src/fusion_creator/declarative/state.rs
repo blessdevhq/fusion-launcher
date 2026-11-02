@@ -48,6 +48,13 @@ struct Latest {
     inventory_blake3: String,
 }
 
+struct StoredGeneration {
+    root: PathBuf,
+    inventory: Inventory,
+    _root_guard: DirectoryGuard,
+    _data_guards: Vec<DirectoryGuard>,
+}
+
 impl ProgramPersistenceStore {
     pub fn open(root: &Path) -> Result<Self, FusionError> {
         let _root = fs_safety::ensure_directory(root)?;
@@ -71,33 +78,14 @@ impl ProgramPersistenceStore {
         // replacing any leaf. Keep directory guards until validation completes.
         let (_, guards) = inspect(candidate, entries)?;
         drop(guards);
-        let pointer = self.root.join("latest.json");
-        if metadata(&pointer)?.is_none() {
+        let Some(saved_generation) = self.latest_generation()? else {
             return Ok(());
-        }
-        let latest: Latest = read_json(&pointer)?;
-        fs_safety::validate_relative_path(&latest.generation)?;
-        if latest.version != 1
-            || latest.generation.contains('/')
-            || !latest.generation.starts_with("generation-")
-        {
-            return Err(corrupt("Invalid save generation pointer."));
-        }
-        let generation = self.root.join("generations").join(&latest.generation);
-        let _generation = fs_safety::guard(&generation)?;
-        let bytes = read_bytes(&generation.join("inventory.json"))?;
-        if blake3::hash(&bytes).to_hex().as_str() != latest.inventory_blake3 {
-            return Err(corrupt("Save inventory hash mismatch."));
-        }
-        let inventory: Inventory = serde_json::from_slice(&bytes)
-            .map_err(|e| io_error("Decode save inventory", &generation, e))?;
-        let recorded: Vec<_> = inventory
-            .entries
-            .iter()
-            .map(|e| e.declaration.clone())
-            .collect();
-        validate_entries(&recorded)?;
-        let _saved_guards = verify_inventory(&generation.join("data"), &inventory)?;
+        };
+        let generation = &saved_generation.root;
+        let inventory = &saved_generation.inventory;
+        // Reject removal before an older snapshot can become active. Waiting
+        // until post-run capture would allow a run whose new saves cannot commit.
+        validate_history(inventory, entries)?;
         // Reject descriptor kind changes before touching any candidate path.
         for entry in entries {
             if inventory.entries.iter().any(|old| {
@@ -142,6 +130,9 @@ impl ProgramPersistenceStore {
         let _lock = self.lock()?;
         let _candidate = fs_safety::guard(candidate)?;
         let (inventory, _source_guards) = inspect(candidate, entries)?;
+        if let Some(previous) = self.latest_generation()? {
+            validate_history(&previous.inventory, entries)?;
+        }
         let generations = self.root.join("generations");
         let _generations = fs_safety::guard(&generations)?;
         let id = fs_safety::unique_name("generation");
@@ -177,6 +168,44 @@ impl ProgramPersistenceStore {
             return Err(corrupt("Save pointer failed read-back verification."));
         }
         Ok(())
+    }
+
+    // Both readers and writers validate the complete previous commit before reuse.
+    fn latest_generation(&self) -> Result<Option<StoredGeneration>, FusionError> {
+        let pointer = self.root.join("latest.json");
+        if metadata(&pointer)?.is_none() {
+            return Ok(None);
+        }
+        let latest: Latest = read_json(&pointer)?;
+        fs_safety::validate_relative_path(&latest.generation)?;
+        if latest.version != 1
+            || latest.generation.contains('/')
+            || !latest.generation.starts_with("generation-")
+        {
+            return Err(corrupt("Invalid save generation pointer."));
+        }
+        let root = self.root.join("generations").join(&latest.generation);
+        let root_guard = fs_safety::guard(&root)?;
+        let bytes = read_bytes(&root.join("inventory.json"))?;
+        if blake3::hash(&bytes).to_hex().as_str() != latest.inventory_blake3 {
+            return Err(corrupt("Save inventory hash mismatch."));
+        }
+        let inventory: Inventory = serde_json::from_slice(&bytes)
+            .map_err(|e| io_error("Decode save inventory", &root, e))?;
+        validate_entries(
+            &inventory
+                .entries
+                .iter()
+                .map(|e| e.declaration.clone())
+                .collect::<Vec<_>>(),
+        )?;
+        let guards = verify_inventory(&root.join("data"), &inventory)?;
+        Ok(Some(StoredGeneration {
+            root,
+            inventory,
+            _root_guard: root_guard,
+            _data_guards: guards,
+        }))
     }
 
     fn check_separate(&self, candidate: &Path) -> Result<(), FusionError> {
@@ -244,6 +273,22 @@ fn invalid(message: &str) -> FusionError {
 }
 fn corrupt(message: &str) -> FusionError {
     FusionError::new(ErrorCode::IntegrityViolation, message)
+}
+
+fn validate_history(
+    inventory: &Inventory,
+    entries: &[ProgramPersistence],
+) -> Result<(), FusionError> {
+    if inventory
+        .entries
+        .iter()
+        .any(|old| !entries.contains(&old.declaration))
+    {
+        return Err(invalid(
+            "Removing or changing recorded persistence requires an explicit migration.",
+        ));
+    }
+    Ok(())
 }
 
 fn validate_entries(entries: &[ProgramPersistence]) -> Result<(), FusionError> {

@@ -33,7 +33,10 @@ fn ini_rust_callers_cannot_inject_addresses_or_mismatched_codecs() {
 use serde_json::json;
 
 fn frozen_stk() -> ProgramDescriptor {
-    serde_json::from_str(include_str!("../../../../fixtures/creator/programs/supertuxkart-1.5.json")).unwrap()
+    serde_json::from_str(include_str!(
+        "../../../../fixtures/creator/programs/supertuxkart-1.5.json"
+    ))
+    .unwrap()
 }
 
 #[test]
@@ -49,11 +52,15 @@ fn xml_frozen_stk_seed_then_profile_change_preserves_private_state() {
     assert!(seed.contains("music_on=\"true\""));
     let original = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!-- private -->\n<stkconfig version=\"9\" token=\"a&amp;b&quot;c\">\n  <Video fullscreen='false' show_fps=\"false\" real_width=\"1920\"/>\n  <Audio music_on=\"false\" private=\"keep\"/>\n  <Players><Player name=\"Alice\"/><Player name=\"Bob\"/></Players>\n</stkconfig>\n";
     let changed = render_config(config, Some(original), fullscreen).unwrap();
-    let expected = original.replace("fullscreen='false'", "fullscreen='true'")
+    let expected = original
+        .replace("fullscreen='false'", "fullscreen='true'")
         .replace("show_fps=\"false\"", "show_fps=\"true\"")
         .replace("music_on=\"false\"", "music_on=\"true\"");
     assert_eq!(changed, expected);
-    assert_eq!(render_config(config, Some(&changed), fullscreen).unwrap(), changed);
+    assert_eq!(
+        render_config(config, Some(&changed), fullscreen).unwrap(),
+        changed
+    );
     let back = render_config(config, Some(&changed), windowed).unwrap();
     assert!(back.contains("fullscreen='false'"));
     assert!(back.contains("version=\"9\""));
@@ -67,40 +74,72 @@ fn xml_creates_direct_child_path_and_escapes_only_scalar_values() {
     config.keys.truncate(1);
     config.keys[0].id = "enabled".into();
     config.keys[0].address = ProgramConfigAddress::XmlAttribute {
-        elements: vec!["Video".into(), "Display".into()], attribute: "label".into(),
+        elements: vec!["Video".into(), "Display".into()],
+        attribute: "label".into(),
     };
     config.keys[0].scalar_type = ProgramScalarType::String;
     let value = "A & B < C > D \" '";
     config.keys[0].allowed_values = vec![ProgramScalar::String(value.into())];
-    let output = render_config(&config, Some("<stkconfig><Video/><!--keep--></stkconfig>"), &[setting("enabled", json!(value))]).unwrap();
-    assert!(output.contains("<Video><Display label=\"A &amp; B &lt; C &gt; D &quot; &apos;\"/></Video>"));
+    let output = render_config(
+        &config,
+        Some("<stkconfig><Video/><!--keep--></stkconfig>"),
+        &[setting("enabled", json!(value))],
+    )
+    .unwrap();
+    assert!(output
+        .contains("<Video><Display label=\"A &amp; B &lt; C &gt; D &quot; &apos;\"/></Video>"));
     assert!(output.contains("<!--keep-->"));
-    assert_eq!(render_config(&config, Some(&output), &[setting("enabled", json!(value))]).unwrap(), output);
+    assert_eq!(
+        render_config(&config, Some(&output), &[setting("enabled", json!(value))]).unwrap(),
+        output
+    );
 }
 
 #[test]
 fn xml_rejects_malformed_unsafe_or_ambiguous_existing_state() {
     let descriptor = frozen_stk();
     for input in [
-        "", "<other/>", "<stkconfig/><stkconfig/>",
+        "",
+        "<other/>",
+        "<stkconfig/><stkconfig/>",
         "<!DOCTYPE stkconfig [<!ENTITY x 'secret'>]><stkconfig/>",
-        "<stkconfig xmlns='urn:test'/>", "<stkconfig><x:include/></stkconfig>",
-        "<?unsafe x?><stkconfig/>", "<stkconfig><?unsafe x?></stkconfig>",
+        "<stkconfig xmlns='urn:test'/>",
+        "<stkconfig><x:include/></stkconfig>",
+        "<?unsafe x?><stkconfig/>",
+        "<stkconfig><?unsafe x?></stkconfig>",
         "<stkconfig><![CDATA[secret]]></stkconfig>",
-        "<stkconfig x='&custom;'/>", "<stkconfig x='&'/>", "<stkconfig>&custom;</stkconfig>",
+        "<stkconfig x='&custom;'/>",
+        "<stkconfig x='&'/>",
+        "<stkconfig>&custom;</stkconfig>",
         "<stkconfig><Video/><Video/></stkconfig>",
         "<stkconfig><Video x='1' x='2'/></stkconfig>",
-        "<stkconfig><Video></Audio></stkconfig>", "<stkconfig><Video></stkconfig>",
-        "<stkconfig x=unquoted/>", "<stkconfig x='a<b'/>",
-        "<stkconfig x='1'y='2'/>", "<stkconfig / >", "<stkconfig></ stkconfig>",
+        "<stkconfig><Video></Audio></stkconfig>",
+        "<stkconfig><Video></stkconfig>",
+        "<stkconfig x=unquoted/>",
+        "<stkconfig x='a<b'/>",
+        "<stkconfig x='1'y='2'/>",
+        "<stkconfig / >",
+        "<stkconfig></ stkconfig>",
         "<stkconfig><!-- bad -- comment --></stkconfig>",
-        "<stkconfig>]]></stkconfig>", "<stkconfig>\u{0}</stkconfig>",
-        "<stkconfig x='\u{1}'/>", "<stkconfig><1bad/></stkconfig>",
-        "text<stkconfig/>", "<stkconfig/>text", "<stkconfig>",
+        "<stkconfig>]]></stkconfig>",
+        "<stkconfig>\u{0}</stkconfig>",
+        "<stkconfig x='\u{1}'/>",
+        "<stkconfig><1bad/></stkconfig>",
+        "text<stkconfig/>",
+        "<stkconfig/>text",
+        "<stkconfig>",
         "<!-- hi --><?xml version='1.0'?><stkconfig/>",
         "<?xml version='1.1'?><stkconfig/>",
     ] {
-        assert!(render_config(&descriptor.configs[0], Some(input), &descriptor.build_profiles[0].settings).is_err(), "accepted {input:?}");
+        assert!(
+            render_config(
+                &descriptor.configs[0],
+                Some(input),
+                &descriptor.build_profiles[0].settings
+            )
+            .is_err(),
+            "accepted {input:?}"
+        );
     }
 }
 
@@ -111,17 +150,28 @@ fn xml_rejects_resource_exhaustion_and_rust_constructed_invalid_seeds() {
     let settings = &descriptor.build_profiles[0].settings;
     for input in [
         format!("<stkconfig>{}</stkconfig>", " ".repeat(2 * 1024 * 1024)),
-        format!("<stkconfig>{}{}</stkconfig>", "<n>".repeat(33), "</n>".repeat(33)),
+        format!(
+            "<stkconfig>{}{}</stkconfig>",
+            "<n>".repeat(33),
+            "</n>".repeat(33)
+        ),
         format!("<stkconfig>{}</stkconfig>", "<n/>".repeat(16_385)),
-        format!("<stkconfig {}/>", (0..129).map(|n| format!("a{n}='v' ")).collect::<String>()),
+        format!(
+            "<stkconfig {}/>",
+            (0..129).map(|n| format!("a{n}='v' ")).collect::<String>()
+        ),
     ] {
         assert!(render_config(config, Some(&input), settings).is_err());
     }
     let mut invalid = config.clone();
-    if let ProgramConfigSeed::XmlRoot { root, .. } = &mut invalid.seed { *root = "bad:name".into(); }
+    if let ProgramConfigSeed::XmlRoot { root, .. } = &mut invalid.seed {
+        *root = "bad:name".into();
+    }
     assert!(render_config(&invalid, None, settings).is_err());
     let mut invalid = config.clone();
-    if let ProgramConfigSeed::XmlRoot { attributes, .. } = &mut invalid.seed { attributes.push(attributes[0].clone()); }
+    if let ProgramConfigSeed::XmlRoot { attributes, .. } = &mut invalid.seed {
+        attributes.push(attributes[0].clone());
+    }
     assert!(render_config(&invalid, None, settings).is_err());
 }
 
@@ -135,11 +185,14 @@ fn settings_require_exactly_one_typed_allowed_value_per_declared_key() {
         vec![valid.clone(), setting("unknown", json!(true))],
         vec![setting("enabled", json!("true"))],
     ] {
-        assert!(render_config(&config, None, &settings).is_err(), "{settings:?}");
+        assert!(
+            render_config(&config, None, &settings).is_err(),
+            "{settings:?}"
+        );
     }
     let mut limited = config.clone();
     limited.keys[0].allowed_values = vec![scalar(json!(false))];
-    assert!(render_config(&limited, None, &[valid.clone()]).is_err());
+    assert!(render_config(&limited, None, std::slice::from_ref(&valid)).is_err());
     let mut unrelated = valid.clone();
     unrelated.config_id = "other-config".into();
     assert!(render_config(&config, None, &[unrelated, valid]).is_ok());
@@ -158,7 +211,11 @@ fn ini_serializes_typed_scalars_as_safe_literals() {
         (ProgramScalarType::Integer, json!(12.0), "12"),
         (ProgramScalarType::Number, json!(0.125), "0.125"),
         (ProgramScalarType::Number, json!(0.0000001), "0.0000001"),
-        (ProgramScalarType::String, json!(" a\";#=\\b "), "\" a\\\";#=\\\\b \""),
+        (
+            ProgramScalarType::String,
+            json!(" a\";#=\\b "),
+            "\" a\\\";#=\\\\b \"",
+        ),
     ] {
         let mut config = ini();
         config.keys[0].scalar_type = kind;
@@ -178,7 +235,11 @@ fn ini() -> ProgramConfig {
 }
 
 fn setting(key: &str, value: serde_json::Value) -> ProgramSetting {
-    ProgramSetting { config_id: "main".into(), key_id: key.into(), value: scalar(value) }
+    ProgramSetting {
+        config_id: "main".into(),
+        key_id: key.into(),
+        value: scalar(value),
+    }
 }
 
 #[test]
@@ -191,6 +252,12 @@ fn ini_seed_renders_boolean_with_literal_backslash_key() {
 fn ini_updates_only_managed_key_preserving_private_lines_and_crlf() {
     let original = "; private comment\r\n[Video]\r\ntoken=secret\r\nenabled\\default=false\r\n[Private]\r\nname=Alice\r\n";
     let output = render_config(&ini(), Some(original), &[setting("enabled", json!(true))]).unwrap();
-    assert_eq!(output, original.replace("enabled\\default=false", "enabled\\default=true"));
-    assert_eq!(render_config(&ini(), Some(&output), &[setting("enabled", json!(true))]).unwrap(), output);
+    assert_eq!(
+        output,
+        original.replace("enabled\\default=false", "enabled\\default=true")
+    );
+    assert_eq!(
+        render_config(&ini(), Some(&output), &[setting("enabled", json!(true))]).unwrap(),
+        output
+    );
 }

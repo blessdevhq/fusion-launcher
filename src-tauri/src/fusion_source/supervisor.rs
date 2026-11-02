@@ -394,7 +394,24 @@ fn run_group(
     let telemetry_directory = lease.telemetry_directory()?;
     let commands: Vec<_> = specs
         .iter()
-        .map(|spec| prepare_command(spec, &snapshot.workspace_root, &environment))
+        .map(|spec| {
+            if let Some(program) =
+                crate::fusion_creator::declarative::runtime::descriptor(&snapshot.manifest)
+            {
+                let approved = crate::fusion_creator::declarative::runtime::approved_environment(
+                    program,
+                    snapshot.program_environment_approval.as_ref(),
+                )?;
+                crate::fusion_creator::declarative::runtime::prepare_program_command(
+                    program,
+                    &snapshot.workspace_root,
+                    &environment,
+                    &approved,
+                )
+            } else {
+                prepare_command(spec, &snapshot.workspace_root, &environment)
+            }
+        })
         .collect::<Result<_, _>>()?;
     let job = platform::WindowsJob::new()?;
     let mut group = OwnedGroup {
@@ -409,6 +426,14 @@ fn run_group(
     let operation = (|| {
         // Locks stay with the ownership worker until the ENTIRE job is empty.
         group.executable_locks = Some(PreLaunchIntegrityGuard::verify_and_lock(&snapshot, trust)?);
+        if let Some(program) =
+            crate::fusion_creator::declarative::runtime::descriptor(&snapshot.manifest)
+        {
+            crate::fusion_creator::declarative::runtime::verify_program_image(
+                program,
+                &snapshot.workspace_root,
+            )?;
+        }
         for (spec, command) in specs.iter().zip(&commands) {
             if cancel.load(Ordering::Acquire) {
                 break;
@@ -533,6 +558,15 @@ fn run_group(
 
 fn process_specs(snapshot: &WorkspaceSnapshot) -> Result<Vec<ProcessSpec>, FusionError> {
     let manifest = &snapshot.manifest;
+    if crate::fusion_creator::declarative::runtime::descriptor(manifest).is_some() {
+        let compiled = crate::fusion_creator::declarative::runtime::execution_manifest(manifest)?;
+        return Ok(vec![compiled.launch.ok_or_else(|| {
+            FusionError::new(
+                ErrorCode::InvalidManifest,
+                "Compiled program has no entrypoint.",
+            )
+        })?]);
+    }
     if let Some(runtime) = &manifest.runtime {
         return Ok(vec![ProcessSpec {
             id: "runtime".into(),

@@ -14,6 +14,67 @@ fn entry(path: &str, kind: ProgramPersistenceKind) -> ProgramPersistence {
     }
 }
 #[test]
+fn declaration_removal_cannot_discard_latest_bytes_or_tombstone() {
+    for deleted in [false, true] {
+        let temp = tempdir().unwrap();
+        let root = temp.path().join("durable");
+        let candidate = temp.path().join("candidate");
+        fs::create_dir(&candidate).unwrap();
+        fs::write(candidate.join("save"), b"latest").unwrap();
+        let entries = vec![entry("save", ProgramPersistenceKind::File)];
+        let store = ProgramPersistenceStore::open(&root).unwrap();
+        store.capture(&candidate, &entries).unwrap();
+        if deleted {
+            fs::remove_file(candidate.join("save")).unwrap();
+            store.capture(&candidate, &entries).unwrap();
+        }
+        let before = fs::read(root.join("latest.json")).unwrap();
+        assert!(
+            store.capture(&candidate, &[]).is_err(),
+            "removal requires an explicit migration"
+        );
+        assert_eq!(fs::read(root.join("latest.json")).unwrap(), before);
+        fs::write(candidate.join("save"), b"stale snapshot").unwrap();
+        store.rehydrate(&candidate, &entries).unwrap();
+        if deleted {
+            assert!(!candidate.join("save").exists());
+        } else {
+            assert_eq!(fs::read(candidate.join("save")).unwrap(), b"latest");
+        }
+    }
+}
+
+#[test]
+fn rehydrate_cannot_activate_a_descriptor_that_drops_recorded_roots() {
+    let temp = tempdir().unwrap();
+    let root = temp.path().join("durable");
+    let candidate = temp.path().join("candidate");
+    fs::create_dir(&candidate).unwrap();
+    fs::write(candidate.join("save"), b"latest").unwrap();
+    fs::write(candidate.join("new-save"), b"new latest").unwrap();
+    let entries = vec![
+        entry("save", ProgramPersistenceKind::File),
+        entry("new-save", ProgramPersistenceKind::File),
+    ];
+    let store = ProgramPersistenceStore::open(&root).unwrap();
+    store.capture(&candidate, &entries).unwrap();
+    fs::write(candidate.join("save"), b"stale snapshot").unwrap();
+    let identity = fs_safety::file_identity(&candidate.join("save")).unwrap();
+    assert!(
+        store.rehydrate(&candidate, &entries[..1]).is_err(),
+        "root removal must fail before activation, not at post-run capture"
+    );
+    assert_eq!(fs::read(candidate.join("save")).unwrap(), b"stale snapshot");
+    assert_eq!(
+        fs_safety::file_identity(&candidate.join("save")).unwrap(),
+        identity
+    );
+    store.rehydrate(&candidate, &entries).unwrap();
+    assert_eq!(fs::read(candidate.join("save")).unwrap(), b"latest");
+    assert_eq!(fs::read(candidate.join("new-save")).unwrap(), b"new latest");
+}
+
+#[test]
 fn latest_file_and_directory_generation_survives_binary_replacement() {
     let temp = tempdir().unwrap();
     let root = temp.path().join("durable");
@@ -210,7 +271,8 @@ fn rehydrate_does_not_change_shared_readonly_file_permissions_or_bytes() {
     fs::remove_file(candidate.join("save")).unwrap();
     let cas = temp.path().join("cas-file");
     fs::write(&cas, b"immutable").unwrap();
-    let mut permissions = fs::metadata(&cas).unwrap().permissions();
+    let original_permissions = fs::metadata(&cas).unwrap().permissions();
+    let mut permissions = original_permissions.clone();
     permissions.set_readonly(true);
     fs::set_permissions(&cas, permissions).unwrap();
     fs::hard_link(&cas, candidate.join("save")).unwrap();
@@ -218,9 +280,7 @@ fn rehydrate_does_not_change_shared_readonly_file_permissions_or_bytes() {
     assert!(fs::metadata(&cas).unwrap().permissions().readonly());
     assert_eq!(fs::read(&cas).unwrap(), b"immutable");
     assert_eq!(fs::read(candidate.join("save")).unwrap(), b"saved");
-    let mut cleanup_permissions = fs::metadata(&cas).unwrap().permissions();
-    cleanup_permissions.set_readonly(false);
-    fs::set_permissions(&cas, cleanup_permissions).unwrap();
+    fs::set_permissions(&cas, original_permissions).unwrap();
     result.unwrap();
 }
 

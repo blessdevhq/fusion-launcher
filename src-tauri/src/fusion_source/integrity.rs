@@ -95,6 +95,47 @@ fn check_integrity(
     let mut handles = Vec::new();
     let mut directories = vec![fs_safety::guard(&snapshot.workspace_root)?];
     snapshot.verify_directory_identity()?;
+    let program = crate::fusion_creator::declarative::runtime::descriptor(&snapshot.manifest);
+    if let Some(program) = program {
+        // Missing optional paths may compile, but must exist as plain targets
+        // before native launch. File arguments are read-only inputs while leased.
+        for argument in &program.entrypoint.arguments {
+            let crate::fusion_source::program_schema::ProgramArgument::WorkspacePath {
+                path, ..
+            } = argument
+            else {
+                continue;
+            };
+            let target = snapshot
+                .workspace_root
+                .join(fs_safety::validate_relative_path(path)?);
+            directories.push(fs_safety::guard(target.parent().expect("argument parent"))?);
+            let metadata = std::fs::symlink_metadata(&target)
+                .map_err(|error| fs_safety::io_error("Inspect argument target", &target, error))?;
+            fs_safety::check_metadata(&metadata, &target)?;
+            if metadata.is_dir() {
+                directories.push(fs_safety::guard(&target)?);
+            } else {
+                handles.push(fs_safety::open_read(&target)?);
+            }
+        }
+        for relative in std::iter::once(program.entrypoint.working_directory.as_str()).chain(
+            program
+                .entrypoint
+                .environment_paths
+                .iter()
+                .map(|path| path.path.as_str()),
+        ) {
+            let path = if relative.is_empty() {
+                snapshot.workspace_root.clone()
+            } else {
+                snapshot
+                    .workspace_root
+                    .join(fs_safety::validate_relative_path(relative)?)
+            };
+            directories.push(fs_safety::guard(&path)?);
+        }
+    }
     let mut expected = CriticalInventory::new();
     for id in &snapshot.plan.selected_layers {
         let layer = snapshot.manifest.layers.get(id).ok_or_else(|| {
@@ -150,7 +191,28 @@ fn check_integrity(
         };
         for file in locator_files.iter().chain(declared) {
             let path = super::evolution::mounted_path(&layer.mount_path, &file.path);
+            if program.is_some() && snapshot.projected_provider(&path) != Some(id.as_str()) {
+                continue;
+            }
             expected.insert(path.to_lowercase(), (path, file.clone()));
+        }
+    }
+    if program.is_some() {
+        // Inspect the real tree, including private/persisted directories. A
+        // descriptor/CAS inventory alone cannot detect DLLs added after assembly.
+        for (relative, path) in fs_safety::list_plain_files(&snapshot.workspace_root)? {
+            directories.push(fs_safety::guard(
+                path.parent().expect("workspace file parent"),
+            )?);
+            if crate::fusion_creator::declarative::candidate::is_loadable(&relative)
+                && !expected.contains_key(&relative.to_lowercase())
+            {
+                return Err(FusionError::new(
+                    ErrorCode::IntegrityViolation,
+                    "Workspace contains an undeclared executable or loadable library.",
+                )
+                .with_detail("path", relative));
+            }
         }
     }
     for (relative, file) in expected.values() {

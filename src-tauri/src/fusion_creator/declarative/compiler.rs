@@ -143,7 +143,17 @@ pub fn validate_descriptor_metadata(descriptor: &ProgramDescriptor) -> Result<()
         }
     }
     let executable = &descriptor.entrypoint.executable;
-    if !executable.to_ascii_lowercase().ends_with(".exe") {
+    let filename = executable
+        .rsplit('/')
+        .next()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if !filename.ends_with(".exe")
+        || matches!(
+            filename.as_str(),
+            "cmd.exe" | "powershell.exe" | "pwsh.exe" | "wscript.exe" | "cscript.exe" | "mshta.exe"
+        )
+    {
         return Err(invalid(
             "The entrypoint must be an executable, not a script or wrapper.",
         ));
@@ -168,7 +178,7 @@ pub fn validate_descriptor_metadata(descriptor: &ProgramDescriptor) -> Result<()
             "Exactly one required file must identify the main executable.",
         ));
     }
-    let components = unique_ids(descriptor.components.iter().map(|c| c.id.as_str()))?;
+    unique_ids(descriptor.components.iter().map(|c| c.id.as_str()))?;
     let layers = unique_ids(descriptor.components.iter().map(|c| c.layer_id.as_str()))?;
     let configs = unique_ids(descriptor.configs.iter().map(|c| c.id.as_str()))?;
     let controls = unique_ids(
@@ -178,7 +188,6 @@ pub fn validate_descriptor_metadata(descriptor: &ProgramDescriptor) -> Result<()
             .map(ProgramControlsProfile::id),
     )?;
     unique_ids(descriptor.build_profiles.iter().map(|p| p.id.as_str()))?;
-    let _ = components;
     let mut keys = BTreeSet::new();
     for config in &descriptor.configs {
         unique_ids(config.keys.iter().map(|key| key.id.as_str()))?;
@@ -398,29 +407,6 @@ fn validate_layout_paths(
     for env in &d.entrypoint.environment_paths {
         tree.insert(&env.path, false)?;
     }
-    // Workspace argument paths may name either files or directories. Check their
-    // lexical spelling without guessing a type or requiring optional files.
-    for arg in &d.entrypoint.arguments {
-        if let ProgramArgument::WorkspacePath { path, .. } = arg {
-            safe_path(path)?;
-            let mut spellings = tree.clone_spellings();
-            for end in path
-                .match_indices('/')
-                .map(|(i, _)| i)
-                .chain(std::iter::once(path.len()))
-            {
-                let spelling = &path[..end];
-                if spellings
-                    .insert(spelling.to_lowercase(), spelling.to_owned())
-                    .is_some_and(|old| old != spelling)
-                {
-                    return Err(invalid(
-                        "Workspace argument paths contain a Windows case alias.",
-                    ));
-                }
-            }
-        }
-    }
     let configs: Vec<_> = d.configs.iter().map(|c| c.path.to_lowercase()).collect();
     for (index, config) in d.configs.iter().enumerate() {
         tree.insert(&config.path, true)?;
@@ -468,16 +454,18 @@ fn validate_layout_paths(
             }
         }
     }
-    Ok(())
-}
-
-impl PathTree {
-    fn clone_spellings(&self) -> BTreeMap<String, String> {
-        self.0
-            .iter()
-            .map(|(key, (spelling, _))| (key.clone(), spelling.clone()))
-            .collect()
+    // Arguments do not create files and optional files need not exist. Known
+    // leaves keep their file/dir type; every parent must still be a directory.
+    for arg in &d.entrypoint.arguments {
+        if let ProgramArgument::WorkspacePath { path, .. } = arg {
+            let file = tree
+                .0
+                .get(&path.to_lowercase())
+                .is_some_and(|(_, file)| *file);
+            tree.insert(path, file)?;
+        }
     }
+    Ok(())
 }
 
 fn protected_environment(name: &str) -> bool {

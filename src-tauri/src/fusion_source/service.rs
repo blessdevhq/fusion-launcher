@@ -1213,6 +1213,12 @@ pub(crate) fn critical_inventory(
             };
             for file in locator_files.iter().chain(critical) {
                 let path = super::evolution::mounted_path(&layer.mount_path, &file.path);
+                if crate::fusion_creator::declarative::runtime::descriptor(&snapshot.manifest)
+                    .is_some()
+                    && snapshot.projected_provider(&path) != Some(id.as_str())
+                {
+                    continue;
+                }
                 files.insert(path.to_lowercase(), (path, file.clone()));
             }
         }

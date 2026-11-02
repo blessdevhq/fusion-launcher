@@ -167,6 +167,13 @@ impl AssembledWorkspace {
 }
 
 impl WorkspaceSnapshot {
+    /// Actual provider recorded by the shared resolver, not legacy layer order.
+    pub(crate) fn projected_provider(&self, relative: &str) -> Option<&str> {
+        self.files
+            .get(&relative.to_lowercase())
+            .map(|file| file.layer_id.as_str())
+    }
+
     pub(crate) fn verify_directory_identity(&self) -> Result<(), FusionError> {
         let container = self.workspace_root.parent().ok_or_else(|| {
             FusionError::new(
@@ -936,18 +943,20 @@ impl WorkspaceAssembler {
         let snapshot = self.read_snapshot(reference)?;
         let persistence = PersistenceManager::open(&self.library_root, &self.game)?;
         if let Some(program) = program_runtime::descriptor(&snapshot.manifest) {
-            let state = program_state(&self.library_root, &self.game)?;
-            if reconcile {
-                state.capture(&snapshot.workspace_root, &program.persistence)?;
+            // An active lease is an inspection/read, not a preparation job.
+            // Update and post-process reconciliation capture state explicitly.
+            // Only rollback's inactive target may be rehydrated/rendered here.
+            if !reconcile {
+                let state = program_state(&self.library_root, &self.game)?;
+                program_candidate::prepare(
+                    program,
+                    snapshot.plan.build_profile_id.as_deref().ok_or_else(|| {
+                        FusionError::new(ErrorCode::InvalidManifest, "Program profile is absent.")
+                    })?,
+                    &snapshot.workspace_root,
+                    &state,
+                )?;
             }
-            program_candidate::prepare(
-                program,
-                snapshot.plan.build_profile_id.as_deref().ok_or_else(|| {
-                    FusionError::new(ErrorCode::InvalidManifest, "Program profile is absent.")
-                })?,
-                &snapshot.workspace_root,
-                &state,
-            )?;
         } else if reconcile {
             persistence.reconcile_workspace(&snapshot.workspace_root, &snapshot.persistence)?;
         }

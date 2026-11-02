@@ -299,6 +299,78 @@ fn selects_only_declared_allowed_build_controls_pairs() {
     assert!(compiled.selected("standard", "other").is_err());
 }
 
+#[test]
+fn validates_full_inventory_not_only_required_file_subset() {
+    let (d, inventory) = fixture();
+    for path in [
+        "../outside",
+        "COM¹.bin",
+        "bin/DEMO.exe",
+        "bin/demo.exe/child",
+        "bin",
+    ] {
+        let mut inputs = inventory.clone();
+        inputs[0]
+            .verified_inventory
+            .push(file(path, b"not required"));
+        assert!(
+            compile_descriptor(&d, &inputs).is_err(),
+            "accepted inventory {path}"
+        );
+    }
+    let mut inputs = inventory;
+    inputs[0].verified_inventory[0].blake3 = "invalid".into();
+    assert!(compile_descriptor(&d, &inputs).is_err());
+}
+
+#[test]
+fn rejects_workspace_argument_aliases_and_parent_files() {
+    let (base, inventory) = fixture();
+    for path in [
+        "Userdata/main.ini",
+        "app/bin/demo.exe/child",
+        "app/bin/Extra.dat",
+    ] {
+        let mut d = base.clone();
+        d.entrypoint.arguments.push(ProgramArgument::WorkspacePath {
+            path: path.into(),
+            prefix: "--file=".into(),
+        });
+        let mut inputs = inventory.clone();
+        inputs[0]
+            .verified_inventory
+            .push(file("bin/extra.dat", b"data"));
+        assert!(
+            compile_descriptor(&d, &inputs).is_err(),
+            "accepted argument {path}"
+        );
+    }
+    let mut d = base;
+    d.entrypoint.arguments.push(ProgramArgument::WorkspacePath {
+        path: "optional/data".into(),
+        prefix: "--file=".into(),
+    });
+    compile_descriptor(&d, &inventory).unwrap();
+}
+
+#[test]
+fn rejects_shell_and_script_host_entrypoints() {
+    let (base, _) = fixture();
+    for name in [
+        "cmd.exe",
+        "powershell.exe",
+        "pwsh.exe",
+        "wscript.exe",
+        "cscript.exe",
+        "mshta.exe",
+    ] {
+        let mut d = base.clone();
+        d.entrypoint.executable = format!("app/bin/{name}");
+        d.required_files[0].path = d.entrypoint.executable.clone();
+        assert!(validate_descriptor_metadata(&d).is_err(), "accepted {name}");
+    }
+}
+
 fn fixture() -> (ProgramDescriptor, Vec<ProjectionLayer>) {
     let descriptor = ProgramDescriptor::read_json(&json!({
         "document_type":"program_descriptor", "schema_version":"1.0",

@@ -182,6 +182,17 @@ pub fn build_program_plan(
             "Finite profiles cannot mix legacy addon or channel overrides.",
         ));
     }
+    if program.components.iter().any(|component| {
+        matches!(
+            component.origin,
+            crate::fusion_source::creator_schema::ComponentOrigin::External { .. }
+        )
+    }) {
+        return Err(FusionError::new(
+            ErrorCode::ActionUnavailable,
+            "Descriptor external acquisition requires the A transport/recipe integration.",
+        ));
+    }
     let profile = program
         .build_profiles
         .iter()
@@ -200,15 +211,9 @@ pub fn build_program_plan(
         .iter()
         .find(|p| p.id() == controls)
         .ok_or_else(|| FusionError::new(ErrorCode::InvalidManifest, "Unknown controls profile."))?;
-    if !matches!(
-        control,
-        crate::fusion_source::program_schema::ProgramControlsProfile::ApplicationDefaults { .. }
-    ) {
-        return Err(FusionError::new(
-            ErrorCode::ActionUnavailable,
-            "Selected host capability is not registered.",
-        ));
-    }
+    let capabilities = super::capabilities::ProgramCapabilityRegistry;
+    capabilities.require("fusion.declarative", "1.0")?;
+    capabilities.require_controls(control)?;
     let mut lowered = execution_manifest(manifest)?;
     lowered.creator = None;
     lowered.schema_version = "1.0".into();
@@ -233,6 +238,17 @@ pub fn build_program_plan(
     )?;
     plan.build_profile_id = Some(build.clone());
     plan.controls_profile_id = Some(controls.clone());
+    // Verified inventories are not available to this pure metadata planner.
+    // The supervisor always checks and pins the actual resolved providers.
+    plan.steps.retain(|step| {
+        !matches!(
+            step,
+            crate::fusion_source::plan::PlanStep::Exec(
+                crate::fusion_source::plan::ExecStep::CheckCriticalFile { .. }
+                    | crate::fusion_source::plan::ExecStep::RequireExecutableTrust { .. }
+            )
+        )
+    });
     Ok(plan)
 }
 
@@ -299,4 +315,52 @@ pub fn prepare_program_command(
         command.env(name, value);
     }
     Ok(command)
+}
+
+/// Called only after the existing integrity/trust guard has pinned the image.
+pub fn verify_program_image(
+    program: &ProgramDescriptor,
+    workspace: &Path,
+) -> Result<(), FusionError> {
+    use crate::fusion_source::program_schema::ProgramArchitecture;
+    use std::io::{Read, Seek, SeekFrom};
+    let fail = || {
+        FusionError::new(
+            ErrorCode::ProcessLaunchFailed,
+            "Program entrypoint is not a matching PE image.",
+        )
+    };
+    let path = workspace.join(crate::fusion_source::fs_safety::validate_relative_path(
+        &program.entrypoint.executable,
+    )?);
+    let mut image = crate::fusion_source::fs_safety::open_read(&path)?;
+    let mut dos = [0u8; 64];
+    image.read_exact(&mut dos).map_err(|_| fail())?;
+    if &dos[..2] != b"MZ" {
+        return Err(fail());
+    }
+    let offset = u32::from_le_bytes(dos[60..64].try_into().map_err(|_| fail())?) as u64;
+    let length = image.metadata().map_err(|_| fail())?.len();
+    if offset < 64 || offset > length.saturating_sub(24) || offset > 64 * 1024 * 1024 {
+        return Err(fail());
+    }
+    image.seek(SeekFrom::Start(offset)).map_err(|_| fail())?;
+    let mut header = [0u8; 24];
+    image.read_exact(&mut header).map_err(|_| fail())?;
+    let machine = u16::from_le_bytes([header[4], header[5]]);
+    let expected = match program.identity.architecture {
+        ProgramArchitecture::X86_64 => 0x8664,
+        ProgramArchitecture::X86 => 0x014c,
+        ProgramArchitecture::Aarch64 => 0xaa64,
+        ProgramArchitecture::Armv7 => 0x01c4,
+    };
+    let characteristics = u16::from_le_bytes([header[22], header[23]]);
+    if &header[..4] != b"PE\0\0"
+        || machine != expected
+        || characteristics & 0x0002 == 0
+        || characteristics & 0x2000 != 0
+    {
+        return Err(fail());
+    }
+    Ok(())
 }
