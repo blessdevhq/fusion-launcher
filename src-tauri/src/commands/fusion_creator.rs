@@ -11,7 +11,46 @@ fn unavailable(command: &str) -> FusionError {
     .with_detail("command", command)
 }
 
+// Additive input dispatch. Keep the frozen registration declarations below:
+// their historical macro name is also consumed by the shared namespace test.
+macro_rules! input_command {
+    ($name:ident () -> $response:ty, $method:ident) => {
+        #[tauri::command]
+        pub async fn $name() -> Result<$response, FusionError> {
+            #[cfg(windows)]
+            {
+                crate::input::ipc::run(stringify!($name), |service| service.$method()).await
+            }
+            #[cfg(not(windows))]
+            {
+                Err(unavailable(stringify!($name)))
+            }
+        }
+    };
+    ($name:ident ($request:ty) -> $response:ty, $method:ident) => {
+        #[tauri::command]
+        pub async fn $name(request: $request) -> Result<$response, FusionError> {
+            #[cfg(windows)]
+            {
+                crate::input::ipc::run(stringify!($name), move |service| service.$method(request))
+                    .await
+            }
+            #[cfg(not(windows))]
+            {
+                let _ = request;
+                Err(unavailable(stringify!($name)))
+            }
+        }
+    };
+}
+
 macro_rules! unavailable_command {
+    (fusion_input_devices () -> $response:ty) => { input_command!(fusion_input_devices() -> $response, devices); };
+    (fusion_input_session_start ($request:ty) -> $response:ty) => { input_command!(fusion_input_session_start($request) -> $response, start); };
+    (fusion_input_session_get ($request:ty) -> $response:ty) => { input_command!(fusion_input_session_get($request) -> $response, state); };
+    (fusion_input_session_stop ($request:ty) -> $response:ty) => { input_command!(fusion_input_session_stop($request) -> $response, stop); };
+    (fusion_input_bindings_save ($request:ty) -> $response:ty) => { input_command!(fusion_input_bindings_save($request) -> $response, save_bindings); };
+    (fusion_input_release_for_launch ($request:ty) -> $response:ty) => { input_command!(fusion_input_release_for_launch($request) -> $response, release_for_launch); };
     ($name:ident () -> $response:ty) => {
         #[tauri::command]
         pub async fn $name() -> Result<$response, FusionError> {

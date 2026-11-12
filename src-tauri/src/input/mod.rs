@@ -1,4 +1,4 @@
-//! Windows SDL feasibility spike, not the Creator input IPC implementation.
+//! Windows native input. Exactly one SDL owner; no native handles cross threads.
 //! Native objects never leave their worker. Only owned commands and values cross
 //! threads. Virtual hardware exists exclusively in cfg(test).
 use sdl2::controller::{Axis, Button, GameController};
@@ -7,11 +7,22 @@ use serde::Serialize;
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::Arc;
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
+
+pub mod eden;
+pub mod ipc;
+pub mod service;
 
 #[cfg(test)]
+mod fault_tests;
+#[cfg(test)]
 mod fixture;
+#[cfg(test)]
+mod safety_tests;
+#[cfg(test)]
+mod service_tests;
 #[cfg(test)]
 mod tests;
 
@@ -33,22 +44,25 @@ impl Drop for Lease {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct DeviceInfo {
     /// Ephemeral instance, NOT a device index, GUID or portable profile identity.
     pub instance_id: u32,
     pub name: String,
     pub is_game_controller: bool,
+    /// Local-only identity, never projected into InputDevice.
+    pub guid: String,
+    pub port: u32,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct RawState {
     pub buttons: Vec<bool>,
     pub axes: Vec<i16>,
     pub hats: Vec<u8>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ControllerState {
     pub instance_id: u32,
     pub buttons: BTreeMap<String, bool>,
@@ -81,16 +95,26 @@ enum Operation {
     Devices,
     Open(u32),
     Read,
+    Mapping,
+    Observe(Observer),
     Stop,
     #[cfg(test)]
     Fixture(fixture::Action),
+    #[cfg(test)]
+    DuplicateFixture,
+    #[cfg(test)]
+    ReleaseFault(Duration, bool),
+    #[cfg(test)]
+    FailRead,
 }
 enum Reply {
     Devices(Vec<DeviceInfo>),
     Opened(u32),
     State(ControllerState),
+    Mapping(String),
     Released(ReleaseProof),
 }
+type Observer = Arc<dyn Fn(Result<ControllerState, String>) + Send + Sync>;
 type ReplySender = Sender<Result<Reply, String>>;
 struct Request {
     operation: Operation,
@@ -101,6 +125,7 @@ pub struct InputWorker {
     commands: Option<Sender<Request>>,
     worker: Option<JoinHandle<()>>,
     metadata: Metadata,
+    reply_timeout: Duration,
 }
 
 impl InputWorker {
@@ -140,6 +165,7 @@ impl InputWorker {
         let mut client = Self {
             commands: Some(commands),
             worker: Some(worker),
+            reply_timeout: REPLY_TIMEOUT,
             metadata: Metadata {
                 sdl_version: String::new(),
                 worker_thread: String::new(),
@@ -159,7 +185,7 @@ impl InputWorker {
             .send(Request { operation, reply })
             .map_err(|e| e.to_string())?;
         receive
-            .recv_timeout(REPLY_TIMEOUT)
+            .recv_timeout(self.reply_timeout)
             .map_err(|e| format!("SDL operation NOT acknowledged: {e}"))?
     }
 
@@ -181,6 +207,18 @@ impl InputWorker {
             _ => Err("invalid read reply".into()),
         }
     }
+    pub fn mapping(&self) -> Result<String, String> {
+        match self.call(Operation::Mapping)? {
+            Reply::Mapping(value) => Ok(value),
+            _ => Err("invalid mapping reply".into()),
+        }
+    }
+    fn observe(&self, observer: Observer) -> Result<(), String> {
+        match self.call(Operation::Observe(observer))? {
+            Reply::Opened(_) => Ok(()),
+            _ => Err("invalid observer reply".into()),
+        }
+    }
     /// Success requires checked handle closure, SDL stack teardown, explicit
     /// worker acknowledgement AND join. A timeout is never release evidence.
     pub fn stop(mut self) -> Result<ReleaseProof, String> {
@@ -195,6 +233,17 @@ impl InputWorker {
         // Disconnect before join; a worker whose client vanished must exit.
         self.commands.take();
         if let Some(worker) = self.worker.take() {
+            let deadline = Instant::now() + self.reply_timeout;
+            while !worker.is_finished() {
+                if Instant::now() >= deadline {
+                    // Detach only the JoinHandle, NEVER native ownership. A hung
+                    // thread retains its Lease; no replacement SDL worker opens.
+                    return Err(
+                        "SDL worker join timed out; release unconfirmed, restart Fusion".into(),
+                    );
+                }
+                thread::sleep(Duration::from_millis(1));
+            }
             worker
                 .join()
                 .map_err(|_| "SDL worker panicked; release unconfirmed".to_string())?;
@@ -246,6 +295,7 @@ fn instances(
     joysticks: &JoystickSubsystem,
     controllers: &GameControllerSubsystem,
 ) -> Result<Vec<(u32, DeviceInfo)>, String> {
+    let mut ports = BTreeMap::<String, u32>::new();
     (0..joysticks.num_joysticks()?)
         .map(|index| {
             // SAFETY: live subsystem, index within the just-enumerated range. Hotplug
@@ -254,12 +304,23 @@ fn instances(
             if id < 0 {
                 return Err(sdl2::get_error());
             }
+            let guid = eden::normalize_guid(
+                &joysticks
+                    .device_guid(index)
+                    .map_err(|e| e.to_string())?
+                    .to_string(),
+            )?;
+            let port = ports.entry(guid.clone()).or_default();
+            let current_port = *port;
+            *port += 1;
             Ok((
                 index,
                 DeviceInfo {
                     instance_id: id as u32,
                     name: joysticks.name_for_index(index).map_err(|e| e.to_string())?,
                     is_game_controller: controllers.is_game_controller(index),
+                    guid,
+                    port: current_port,
                 },
             ))
         })
@@ -350,13 +411,21 @@ fn serve(
     receiver: Receiver<Request>,
     ready: &Sender<Result<Metadata, String>>,
 ) -> Result<Option<ReplySender>, String> {
+    eden::apply_hints()?;
     let sdl = sdl2::init()?;
     let joysticks = sdl.joystick()?;
     let controllers = sdl.game_controller()?;
     let mut pump = sdl.event_pump()?;
     let mut selected: Option<GameController> = None;
+    let mut observer: Option<Observer> = None;
     #[cfg(test)]
     let mut fixture = None;
+    #[cfg(test)]
+    let mut duplicate_fixture = None;
+    #[cfg(test)]
+    let mut release_fault = (Duration::ZERO, false);
+    #[cfg(test)]
+    let mut fail_read = false;
     ready
         .send(Ok(Metadata {
             sdl_version: sdl2::version::version().to_string(),
@@ -364,16 +433,25 @@ fn serve(
         }))
         .map_err(|e| e.to_string())?;
     loop {
-        // Drain rather than accumulate events. Public API returns polled state;
-        // this spike does not emit production IPC events or synthesize shell keys.
+        // This same owner samples state. No second reader or shell key synthesis.
         for _ in pump.poll_iter() {}
         controllers.update();
+        if let (Some(selected), Some(observer)) = (&selected, &observer) {
+            observer(snapshot(selected));
+        }
         let request = match receiver.recv_timeout(Duration::from_millis(8)) {
             Ok(request) => request,
             Err(mpsc::RecvTimeoutError::Timeout) => continue,
             Err(mpsc::RecvTimeoutError::Disconnected) => return Ok(None),
         };
         if matches!(request.operation, Operation::Stop) {
+            #[cfg(test)]
+            {
+                thread::sleep(release_fault.0);
+                if release_fault.1 {
+                    return Ok(None);
+                }
+            }
             let id = selected.as_ref().map(|c| c.instance_id());
             drop(selected.take());
             // SAFETY: lookup only, before subsystem teardown, on the owner thread.
@@ -407,11 +485,29 @@ fn serve(
                 selected = Some(controller);
                 Ok(Reply::Opened(id))
             })(),
-            Operation::Read => selected
+            Operation::Read => {
+                #[cfg(test)]
+                if std::mem::take(&mut fail_read) {
+                    let _ = request
+                        .reply
+                        .send(Err("injected native read failure".into()));
+                    continue;
+                }
+                selected
+                    .as_ref()
+                    .ok_or("no controller selected".to_string())
+                    .and_then(snapshot)
+                    .map(Reply::State)
+            }
+            Operation::Mapping => selected
                 .as_ref()
-                .ok_or("no controller selected".to_string())
-                .and_then(snapshot)
-                .map(Reply::State),
+                .filter(|c| c.attached())
+                .map(|c| Reply::Mapping(c.mapping()))
+                .ok_or("controller disconnected or not selected".into()),
+            Operation::Observe(value) => {
+                observer = Some(value);
+                Ok(Reply::Opened(0))
+            }
             #[cfg(test)]
             Operation::Fixture(action) => fixture::apply(
                 &mut fixture,
@@ -420,6 +516,24 @@ fn serve(
                 &controllers,
                 selected.as_ref().map(|c| c.instance_id()),
             ),
+            #[cfg(test)]
+            Operation::DuplicateFixture => fixture::apply(
+                &mut duplicate_fixture,
+                fixture::Action::Attach,
+                &joysticks,
+                &controllers,
+                None,
+            ),
+            #[cfg(test)]
+            Operation::ReleaseFault(delay, suppress_ack) => {
+                release_fault = (delay, suppress_ack);
+                Ok(Reply::Opened(0))
+            }
+            #[cfg(test)]
+            Operation::FailRead => {
+                fail_read = true;
+                Ok(Reply::Opened(0))
+            }
             Operation::Stop => unreachable!("stop handled before dispatch"),
         };
         let _ = request.reply.send(result);

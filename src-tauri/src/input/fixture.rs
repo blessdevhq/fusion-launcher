@@ -94,7 +94,7 @@ pub(super) fn apply(
     selected: Option<u32>,
 ) -> Result<Reply, String> {
     if matches!(action, Action::Attach) {
-        if fixture.is_some() {
+        if fixture.as_ref().is_some_and(|f| f.attached) {
             return Err("only one test fixture may be attached".into());
         }
         let device = Fixture::attach(joysticks, controllers)?;
@@ -104,6 +104,8 @@ pub(super) fn apply(
             instance_id: id,
             name: "Fusion native input fixture".into(),
             is_game_controller: true,
+            guid: "".into(),
+            port: 0,
         }]));
     }
     let fixture = fixture.as_mut().ok_or("fixture is not attached")?;
