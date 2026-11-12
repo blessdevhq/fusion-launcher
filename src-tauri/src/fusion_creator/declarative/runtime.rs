@@ -182,17 +182,7 @@ pub fn build_program_plan(
             "Finite profiles cannot mix legacy addon or channel overrides.",
         ));
     }
-    if program.components.iter().any(|component| {
-        matches!(
-            component.origin,
-            crate::fusion_source::creator_schema::ComponentOrigin::External { .. }
-        )
-    }) {
-        return Err(FusionError::new(
-            ErrorCode::ActionUnavailable,
-            "Descriptor external acquisition requires the A transport/recipe integration.",
-        ));
-    }
+
     let profile = program
         .build_profiles
         .iter()
@@ -215,6 +205,7 @@ pub fn build_program_plan(
     capabilities.require("fusion.declarative", "1.0")?;
     capabilities.require_controls(control)?;
     let mut lowered = execution_manifest(manifest)?;
+    crate::fusion_source::external::lower_plan_layers(&mut lowered)?;
     lowered.creator = None;
     lowered.schema_version = "1.0".into();
     let selected: BTreeSet<_> = profile.layer_ids.iter().cloned().collect();

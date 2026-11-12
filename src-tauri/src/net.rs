@@ -136,6 +136,9 @@ async fn get_external_inner(
             .connect_timeout(timeout)
             .user_agent(HTTP_USER_AGENT);
         let builder = target_resolver_builder(builder, &current, allow_dev_http)?;
+        #[cfg(test)]
+        let builder =
+            crate::fusion_source::test_support::https::configure_client(builder, &current);
         let client = builder.build().map_err(|error| error.to_string())?;
         let response = client
             .get(current.clone())

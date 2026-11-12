@@ -17,6 +17,7 @@ pub mod creator_schema;
 pub mod dto;
 pub mod errors;
 pub mod evolution;
+pub mod external;
 pub mod fs_safety;
 pub mod host_tools;
 pub mod integrity;
