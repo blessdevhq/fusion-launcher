@@ -20,9 +20,10 @@ test('versioned program project and manifest carriers reject legacy copies and p
     source_id: 'source', game_id: 'game', game_version: '1', program_descriptor: fixtures[0] };
   assert.deepEqual(creator.creatorProgramProjectSchema.parse(project), project);
   assert.equal(creator.creatorProjectSchema.safeParse(project).success, false);
-  const legacy = JSON.parse(readFileSync(new URL('../../fixtures/creator/contracts.json', import.meta.url), 'utf8'));
-  assert.equal(creator.creatorProgramProjectSchema.safeParse(legacy.project).success, false);
-  assert.equal(creator.programCreatorManifestSchema.safeParse(legacy.manifest.creator).success, false);
+  const fixture = JSON.parse(readFileSync(new URL('../../fixtures/creator/contracts.json', import.meta.url), 'utf8'));
+  assert.deepEqual(creator.creatorProgramProjectSchema.parse(fixture.project), fixture.project);
+  assert.equal(creator.creatorProgramProjectSchema.safeParse(fixture.legacyProject).success, false);
+  assert.equal(creator.programCreatorManifestSchema.safeParse(fixture.manifest.creator).success, false);
   assert.deepEqual(creator.programCreatorManifestSchema.parse({ program_descriptor: fixtures[0] }),
     { program_descriptor: fixtures[0] });
   for (const extra of [{ components: [] }, { adapter: { id: 'native', version: '1' } }, { localPath: 'C:/private' }]) {

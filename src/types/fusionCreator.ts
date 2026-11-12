@@ -1,11 +1,13 @@
 import { z } from 'zod';
-import type { FusionError } from './fusionSource.ts';
-import { preservingJsonRecord } from './fusionProgram.ts';
+import { creatorProgramProjectSchema, programDescriptorSchema, preservingJsonRecord } from './fusionProgram.ts';
 export { programDescriptorSchema, creatorProgramProjectSchema, programCreatorManifestSchema } from './fusionProgram.ts';
 export type { ProgramDescriptor, CreatorProgramProject, ProgramCreatorManifest } from './fusionProgram.ts';
 
 /** Portable source/project data has snake_case keys; IPC envelopes use camelCase. */
-const id = z.string().min(1).max(128);
+const id = z.string().refine((value) => {
+  const length = [...value].length;
+  return length >= 1 && length <= 128;
+}, 'Identifier must contain 1..128 Unicode code points');
 const hash = z.string().regex(/^[a-f0-9]{64}$/);
 const sequence = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
 const revision = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
@@ -46,6 +48,7 @@ export const creatorManifestSchema = z.object({
   build_profiles: z.array(buildProfileSchema), controls_profiles: z.array(controlsProfileSchema),
   projection_rules: z.array(projectionRuleSchema)
 }).strict();
+/** Legacy 1.0 validation only; not an IPC/storage carrier or an implicit migration path. */
 export const creatorProjectSchema = z.object({
   schema_version: z.literal('1.0'), project_id: id, revision, title: z.string(),
   source_id: id, game_id: id, game_version: id,
@@ -88,9 +91,10 @@ export const creatorJobProgressSchema = z.object({
 export type CreatorJobProgress = z.infer<typeof creatorJobProgressSchema>;
 export interface CreatorJobReceipt { jobId: string; projectId: string; projectRevision: number }
 export type CreatorCheckpointBoundary = 'scan_classification_saved' | 'artifact_committed' | 'release_built' | 'verification_completed' | 'export_completed';
-export interface CreatorResumeStamp {
-  projectRevision: number; inputHashes: Record<string, string>; adapter: AdapterReference;
-}
+export const creatorResumeStampSchema = z.object({
+  projectRevision: revision, inputHashes: preservingJsonRecord(hash), executor: programDescriptorSchema.shape.executor
+}).strict();
+export type CreatorResumeStamp = z.infer<typeof creatorResumeStampSchema>;
 /** A checkpoint references an already verified, atomic result, never an unfinished file. */
 export interface CreatorCheckpoint {
   checkpointId: string; jobId: string; boundary: CreatorCheckpointBoundary;
@@ -100,26 +104,53 @@ export interface CreatorJob {
   progress: CreatorJobProgress; checkpoints: CreatorCheckpoint[]; reportIds: string[];
 }
 export type CreatorReportKind = 'structure_integrity' | 'clean_install' | 'observed_launch' | 'manual_scenario' | 'https_acquisition';
-export interface CreatorReport {
-  reportId: string; releaseId: string; releaseBlake3: string; projectRevision: number;
-  kind: CreatorReportKind; status: 'passed' | 'failed' | 'not_tested'; adapter: AdapterReference;
-  buildProfileId: string; controlsProfileId: string; environment: Record<string, string>;
-  diagnostics: FusionError[];
-}
+export const creatorReportStatusSchema = z.enum(['passed', 'failed', 'not_tested']);
+export const creatorReportSchema = z.object({
+  reportId: id, releaseId: id, releaseBlake3: hash, projectRevision: revision,
+  kind: z.enum(['structure_integrity', 'clean_install', 'observed_launch', 'manual_scenario', 'https_acquisition']),
+  status: creatorReportStatusSchema, executor: programDescriptorSchema.shape.executor,
+  buildProfileId: id, controlsProfileId: id, environment: preservingJsonRecord(z.string()),
+  diagnostics: z.array(fusionErrorSchema)
+}).strict();
+export type CreatorReport = z.infer<typeof creatorReportSchema>;
 export interface CreatorRelease {
   releaseId: string; projectId: string; projectRevision: number; manifestBlake3: string;
   artifactHashes: Record<string, string>; reportIds: string[];
 }
-/** Private storage only. Not part of CreatorProject, release or Source export. */
-export interface CreatorPrivateBindings {
-  projectId: string; componentPaths: Record<string, string>; signingKeyRef: string | null;
-}
-export interface CreatorProjectRequest { projectId: string }
-export interface CreatorProjectSaveRequest { project: CreatorProject; expectedRevision: number }
-export interface CreatorJobStartRequest {
-  projectId: string; projectRevision: number; buildProfileIds: string[]; controlsProfileIds: string[];
-  releaseId: string | null; targetDirectory: string | null; sourceUrl: string | null;
-}
+/** Local IPC/storage only. Never part of a portable project, release or Source export. */
+export const creatorPrivateBindingsSchema = z.object({
+  projectId: id, componentPaths: preservingJsonRecord(z.string()), signingKeyRef: z.string().nullable()
+}).strict();
+/** Same revision/bindings envelope as project_storage::SavedPrivateBindings. */
+export const savedPrivateBindingsSchema = z.object({ revision, bindings: creatorPrivateBindingsSchema }).strict();
+export const creatorProjectOpenResponseSchema = z.object({
+  project: creatorProgramProjectSchema, privateBindings: savedPrivateBindingsSchema.nullable(), missingInputs: z.array(id)
+}).strict();
+export const creatorProjectSummarySchema = z.object({
+  projectId: id, title: z.string(), revision, verificationStatus: creatorReportStatusSchema,
+  modifiedAt: revision // UTC Unix epoch milliseconds, not a formatted local date.
+}).strict();
+export const creatorProjectListResponseSchema = z.array(creatorProjectSummarySchema);
+export const creatorProjectRequestSchema = z.object({ projectId: id }).strict();
+export type CreatorPrivateBindings = z.infer<typeof creatorPrivateBindingsSchema>;
+export type SavedPrivateBindings = z.infer<typeof savedPrivateBindingsSchema>;
+export type CreatorProjectOpenResponse = z.infer<typeof creatorProjectOpenResponseSchema>;
+export type CreatorProjectSummary = z.infer<typeof creatorProjectSummarySchema>;
+export type CreatorProjectListResponse = z.infer<typeof creatorProjectListResponseSchema>;
+export type CreatorProjectRequest = z.infer<typeof creatorProjectRequestSchema>;
+/** null is insert-only; n updates n to the supplied project.revision = n + 1. */
+export const creatorProjectSaveRequestSchema = z.object({
+  project: creatorProgramProjectSchema, expectedRevision: revision.nullable()
+}).strict();
+export const creatorProjectSaveResponseSchema = z.object({ revision }).strict();
+export type CreatorProjectSaveRequest = z.infer<typeof creatorProjectSaveRequestSchema>;
+export type CreatorProjectSaveResponse = z.infer<typeof creatorProjectSaveResponseSchema>;
+/** IDs reference program_descriptor; export never embeds private project data. */
+export const creatorJobStartRequestSchema = z.object({
+  projectId: id, projectRevision: revision, buildProfileIds: z.array(id), controlsProfileIds: z.array(id),
+  releaseId: id.nullable(), targetDirectory: z.string().nullable(), sourceUrl: z.string().nullable()
+}).strict();
+export type CreatorJobStartRequest = z.infer<typeof creatorJobStartRequestSchema>;
 export interface CreatorJobRequest { jobId: string }
 export interface CreatorReportRequest { reportId: string }
 export interface InputDevice {
@@ -151,9 +182,9 @@ export interface InputBindingsSaveRequest {
 
 /** Signatures only: production bridge may reject with action_unavailable during wave zero. */
 export interface CreatorApi {
-  projectList(): Promise<CreatorProject[]>;
-  projectOpen(request: CreatorProjectRequest): Promise<CreatorProject>;
-  projectSave(request: CreatorProjectSaveRequest): Promise<CreatorProject>;
+  projectList(): Promise<CreatorProjectListResponse>;
+  projectOpen(request: CreatorProjectRequest): Promise<CreatorProjectOpenResponse>;
+  projectSave(request: CreatorProjectSaveRequest): Promise<CreatorProjectSaveResponse>;
   scan(request: CreatorJobStartRequest): Promise<CreatorJobReceipt>;
   classify(request: CreatorJobStartRequest): Promise<CreatorJobReceipt>;
   build(request: CreatorJobStartRequest): Promise<CreatorJobReceipt>;
