@@ -13,6 +13,36 @@ use crate::fusion_source::creator_schema::{
     AdapterReference, BuildProfile, ComponentOrigin, ControlsProfile, ProjectionRule,
 };
 use crate::fusion_source::errors::FusionError;
+use crate::fusion_source::program_schema::{CreatorProgramProject, ProgramExecutor, MAX_REVISION};
+
+// Nullable fields remain required on the wire. Cross-reference/IO policy is C2's.
+fn required_nullable<'de, D, T>(d: D) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<T>::deserialize(d)
+}
+
+fn wire_revision<'de, D: serde::Deserializer<'de>>(d: D) -> Result<u64, D::Error> {
+    let value = u64::deserialize(d)?;
+    if value > MAX_REVISION {
+        return Err(serde::de::Error::custom(
+            "Creator revision is outside the wire range.",
+        ));
+    }
+    Ok(value)
+}
+
+fn expected_revision<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<u64>, D::Error> {
+    let value = Option::<u64>::deserialize(d)?;
+    if value.is_some_and(|value| value > MAX_REVISION) {
+        return Err(serde::de::Error::custom(
+            "Creator revision is outside the wire range.",
+        ));
+    }
+    Ok(value)
+}
 
 pub const JOB_PROGRESS_EVENT: &str = "fusion-creator:job-progress";
 pub const CREATOR_COMMANDS: &[&str] = &[
@@ -42,6 +72,7 @@ pub struct CreatorComponent {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+/// Legacy validation/compatibility tests only; never a project IPC/storage carrier.
 pub struct CreatorProject {
     pub schema_version: String,
     pub project_id: String,
@@ -65,13 +96,46 @@ pub struct CreatorProfileSelection {
     pub controls_profile_id: String,
 }
 
-/// Private local storage only; never serialized into a portable project or Source.
+/// Private local IPC/storage only; never serialized into a portable project or Source.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CreatorPrivateBindings {
     pub project_id: String,
     pub component_paths: BTreeMap<String, String>,
+    #[serde(deserialize_with = "required_nullable")]
     pub signing_key_ref: Option<String>,
+}
+
+/// Shared with project_storage::open_private_bindings; revision is independent of the project.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SavedPrivateBindings {
+    #[serde(deserialize_with = "wire_revision")]
+    pub revision: u64,
+    pub bindings: CreatorPrivateBindings,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CreatorProjectOpenResponse {
+    pub project: CreatorProgramProject,
+    #[serde(deserialize_with = "required_nullable")]
+    pub private_bindings: Option<SavedPrivateBindings>,
+    /// Component IDs in program_descriptor that need local selection/rebinding.
+    pub missing_inputs: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CreatorProjectSummary {
+    pub project_id: String,
+    pub title: String,
+    #[serde(deserialize_with = "wire_revision")]
+    pub revision: u64,
+    pub verification_status: CreatorReportStatus,
+    /// UTC Unix epoch milliseconds, bounded to a safe JSON integer.
+    #[serde(deserialize_with = "wire_revision")]
+    pub modified_at: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -138,7 +202,7 @@ pub enum CreatorCheckpointBoundary {
 pub struct CreatorResumeStamp {
     pub project_revision: u64,
     pub input_hashes: BTreeMap<String, String>,
-    pub adapter: AdapterReference,
+    pub executor: ProgramExecutor,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -188,7 +252,7 @@ pub struct CreatorReport {
     pub project_revision: u64,
     pub kind: CreatorReportKind,
     pub status: CreatorReportStatus,
-    pub adapter: AdapterReference,
+    pub executor: ProgramExecutor,
     pub build_profile_id: String,
     pub controls_profile_id: String,
     pub environment: BTreeMap<String, String>,
@@ -214,8 +278,16 @@ pub struct CreatorProjectRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CreatorProjectSaveRequest {
-    pub project: CreatorProject,
-    pub expected_revision: u64,
+    pub project: CreatorProgramProject,
+    /// Required: null is insert-only; n requires supplied project.revision = n + 1.
+    #[serde(deserialize_with = "expected_revision")]
+    pub expected_revision: Option<u64>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CreatorProjectSaveResponse {
+    #[serde(deserialize_with = "wire_revision")]
+    pub revision: u64,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -224,8 +296,11 @@ pub struct CreatorJobStartRequest {
     pub project_revision: u64,
     pub build_profile_ids: Vec<String>,
     pub controls_profile_ids: Vec<String>,
+    #[serde(deserialize_with = "required_nullable")]
     pub release_id: Option<String>,
+    #[serde(deserialize_with = "required_nullable")]
     pub target_directory: Option<String>,
+    #[serde(deserialize_with = "required_nullable")]
     pub source_url: Option<String>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -240,13 +315,27 @@ pub struct CreatorReportRequest {
 }
 
 #[cfg(test)]
+mod ipc_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn project_ipc_rejects_legacy_save_without_implicit_migration() {
+        let fixture: serde_json::Value =
+            serde_json::from_str(include_str!("../../../fixtures/creator/contracts.json")).unwrap();
+        let request = serde_json::json!({
+            "project": fixture["legacyProject"], "expectedRevision": 1
+        });
+        assert!(serde_json::from_value::<CreatorProjectSaveRequest>(request).is_err());
+    }
+
     #[test]
     fn shared_wire_fixtures_round_trip_without_private_paths() {
         let fixture: serde_json::Value =
             serde_json::from_str(include_str!("../../../fixtures/creator/contracts.json")).unwrap();
-        let project: CreatorProject = serde_json::from_value(fixture["project"].clone()).unwrap();
+        let project: CreatorProgramProject =
+            serde_json::from_value(fixture["project"].clone()).unwrap();
         let progress: CreatorJobProgress = serde_json::from_value(fixture["job"].clone()).unwrap();
         let input: input::InputState = serde_json::from_value(fixture["input"].clone()).unwrap();
         assert_eq!(serde_json::to_value(project).unwrap(), fixture["project"]);
@@ -271,7 +360,14 @@ mod tests {
             input
         );
         let mut private = fixture["project"].clone();
-        private["components"][0]["localPath"] = serde_json::json!("C:/private/runtime");
-        assert!(serde_json::from_value::<CreatorProject>(private).is_err());
+        private["program_descriptor"]["components"][0]["localPath"] =
+            serde_json::json!("C:/private/runtime");
+        assert!(serde_json::from_value::<CreatorProgramProject>(private).is_err());
+        let legacy: CreatorProject =
+            serde_json::from_value(fixture["legacyProject"].clone()).unwrap();
+        assert_eq!(
+            serde_json::to_value(legacy).unwrap(),
+            fixture["legacyProject"]
+        );
     }
 }

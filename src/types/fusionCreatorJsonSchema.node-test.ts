@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
+import * as creator from './fusionCreator.ts';
 import {
   adapterReferenceSchema, buildProfileSchema, componentOriginSchema,
   controlsProfileSchema, creatorJobProgressSchema, creatorManifestSchema,
@@ -118,6 +119,129 @@ function matches(node: Schema, value: unknown): boolean {
 const accepts = (name: string, value: unknown): boolean => matches(definition(name), value);
 audit(schema);
 
+const openResponse = { project: fixture.project, privateBindings: fixture.projectBindings, missingInputs: [] };
+for (const [name, field, zod, withId] of [
+  ['CreatorProgramProject', 'project_id', creator.creatorProgramProjectSchema,
+    (id: string) => ({ ...fixture.project, project_id: id })],
+  ['ProgramDescriptor', 'identity.id', creator.programDescriptorSchema,
+    (id: string) => ({ ...fixture.project.program_descriptor, identity: { ...fixture.project.program_descriptor.identity, id } })],
+  ['CreatorProjectSaveRequest', 'project.project_id', creator.creatorProjectSaveRequestSchema,
+    (id: string) => ({ project: { ...fixture.project, project_id: id }, expectedRevision: null })],
+  ['CreatorProjectRequest', 'projectId', creator.creatorProjectRequestSchema,
+    (id: string) => ({ projectId: id })],
+  ['CreatorPrivateBindings', 'projectId', creator.creatorPrivateBindingsSchema,
+    (id: string) => ({ ...fixture.projectBindings.bindings, projectId: id })],
+  ['SavedPrivateBindings', 'bindings.projectId', creator.savedPrivateBindingsSchema,
+    (id: string) => ({ ...fixture.projectBindings, bindings: { ...fixture.projectBindings.bindings, projectId: id } })],
+  ['CreatorProjectOpenResponse', 'project.project_id', creator.creatorProjectOpenResponseSchema,
+    (id: string) => ({ ...openResponse, project: { ...fixture.project, project_id: id } })],
+  ['CreatorProjectOpenResponse', 'privateBindings.bindings.projectId', creator.creatorProjectOpenResponseSchema,
+    (id: string) => ({ ...openResponse, privateBindings: { ...fixture.projectBindings, bindings: { ...fixture.projectBindings.bindings, projectId: id } } })],
+  ['CreatorProjectOpenResponse', 'missingInputs[]', creator.creatorProjectOpenResponseSchema,
+    (id: string) => ({ ...openResponse, missingInputs: [id] })],
+  ['CreatorProjectSummary', 'projectId', creator.creatorProjectSummarySchema,
+    (id: string) => ({ ...fixture.projectSummary, projectId: id })],
+  ['CreatorProjectListResponse', '[].projectId', creator.creatorProjectListResponseSchema,
+    (id: string) => [{ ...fixture.projectSummary, projectId: id }]],
+  ['CreatorJobStartRequest', 'projectId', creator.creatorJobStartRequestSchema,
+    (id: string) => ({ ...fixture.jobStart, projectId: id })],
+  ['CreatorJobStartRequest', 'buildProfileIds[]', creator.creatorJobStartRequestSchema,
+    (id: string) => ({ ...fixture.jobStart, buildProfileIds: [id] })],
+  ['CreatorJobStartRequest', 'controlsProfileIds[]', creator.creatorJobStartRequestSchema,
+    (id: string) => ({ ...fixture.jobStart, controlsProfileIds: [id] })],
+  ['CreatorJobStartRequest', 'releaseId', creator.creatorJobStartRequestSchema,
+    (id: string) => ({ ...fixture.jobStart, releaseId: id })],
+  ['CreatorJobProgress', 'jobId', creatorJobProgressSchema,
+    (id: string) => ({ ...fixture.job, jobId: id })],
+  ['CreatorJobProgress', 'projectId', creatorJobProgressSchema,
+    (id: string) => ({ ...fixture.job, projectId: id })],
+  ['CreatorJobProgress', 'checkpointId', creatorJobProgressSchema,
+    (id: string) => ({ ...fixture.job, checkpointId: id })],
+  ['CreatorJobProgress', 'releaseId', creatorJobProgressSchema,
+    (id: string) => ({ ...fixture.job, releaseId: id })],
+  ['CreatorReport', 'reportId', creator.creatorReportSchema,
+    (id: string) => ({ ...fixture.report, reportId: id })],
+  ['CreatorReport', 'releaseId', creator.creatorReportSchema,
+    (id: string) => ({ ...fixture.report, releaseId: id })],
+  ['CreatorReport', 'buildProfileId', creator.creatorReportSchema,
+    (id: string) => ({ ...fixture.report, buildProfileId: id })],
+  ['CreatorReport', 'controlsProfileId', creator.creatorReportSchema,
+    (id: string) => ({ ...fixture.report, controlsProfileId: id })],
+  ['CreatorProfileSelection', 'buildProfileId', creatorProfileSelectionSchema,
+    (id: string) => ({ ...fixture.profileSelection, buildProfileId: id })],
+  ['CreatorProfileSelection', 'controlsProfileId', creatorProfileSelectionSchema,
+    (id: string) => ({ ...fixture.profileSelection, controlsProfileId: id })]
+] as const) {
+  test(`Unicode code-point identifier bounds: ${name}.${field}`, () => {
+    for (const [length, expected] of [[0, false], [1, true], [65, true], [128, true], [129, false]] as const) {
+      const value = withId('🎮'.repeat(length));
+      const label = `${name}.${field}: ${length} code points`;
+      assert.equal(accepts(name, value), expected, `JSON Schema ${label}`);
+      assert.equal(zod.safeParse(value).success, expected, `Zod ${label}`);
+    }
+  });
+}
+
+test('project save JSON definitions accept 1.1 and reject legacy carriers and duplicate fields', () => {
+  const program = JSON.parse(readFileSync(new URL('../../fixtures/creator/programs/supertuxkart-1.5.json', import.meta.url), 'utf8'));
+  const project = {
+    schema_version: '1.1', project_id: 'fixture-project', revision: 1, title: program.identity.title,
+    source_id: 'fixture-source', game_id: program.identity.id, game_version: program.identity.version,
+    program_descriptor: program
+  };
+  const request = { project, expectedRevision: null };
+  assert.equal(accepts('CreatorProjectSaveRequest', request), true);
+  assert.equal(accepts('CreatorProjectSaveResponse', { revision: 1 }), true);
+  assert.equal(accepts('CreatorProjectSaveRequest', { project }), false);
+  assert.equal(accepts('CreatorProjectSaveRequest', { ...request, expectedRevision: 0 }), true);
+  assert.equal(accepts('CreatorProjectSaveRequest', { ...request, project: { ...project, schema_version: '1.0' } }), false);
+  for (const field of ['adapter', 'components', 'build_profiles', 'controls_profiles', 'projection_rules']) {
+    assert.equal(accepts('CreatorProjectSaveRequest', { ...request, project: { ...project, [field]: [] } }), false, field);
+  }
+});
+
+test('local open, private binding and summary definitions match strict Zod contracts', () => {
+  const program = JSON.parse(readFileSync(new URL('../../fixtures/creator/programs/supertuxkart-1.5.json', import.meta.url), 'utf8'));
+  const project = {
+    schema_version: '1.1', project_id: 'fixture-project', revision: 1, title: program.identity.title,
+    source_id: 'fixture-source', game_id: program.identity.id, game_version: program.identity.version,
+    program_descriptor: program
+  };
+  const bindings = { projectId: project.project_id, componentPaths: JSON.parse('{"__proto__":"C:/private/stk"}'), signingKeyRef: null };
+  const saved = { revision: 2, bindings };
+  const cases = [
+    ['CreatorPrivateBindings', creator.creatorPrivateBindingsSchema, bindings],
+    ['SavedPrivateBindings', creator.savedPrivateBindingsSchema, saved],
+    ['CreatorProjectOpenResponse', creator.creatorProjectOpenResponseSchema, { project, privateBindings: saved, missingInputs: [] }],
+    ['CreatorProjectOpenResponse', creator.creatorProjectOpenResponseSchema, { project, privateBindings: null, missingInputs: [program.components[0].id] }],
+    ['CreatorProjectSummary', creator.creatorProjectSummarySchema, { projectId: project.project_id, title: project.title, revision: 1, verificationStatus: 'not_tested', modifiedAt: 0 }]
+  ] as const;
+  for (const [name, zod, value] of cases) {
+    assert.equal(accepts(name, value), true, name);
+    assert.deepEqual(zod.parse(value), value);
+    assert.equal(matches(schema, value), false, `${name}: local envelopes are not portable roots`);
+    assert.equal(accepts(name, { ...value, unknown: true }), false);
+    assert.equal(zod.safeParse({ ...value, unknown: true }).success, false);
+    for (const key of Object.keys(value)) {
+      const missing: Record<string, unknown> = { ...value };
+      delete missing[key];
+      assert.equal(accepts(name, missing), false, `${name}: missing ${key}`);
+      assert.equal(zod.safeParse(missing).success, false, `${name}: missing ${key}`);
+    }
+  }
+  const summary = cases[4][2];
+  for (const modifiedAt of [-1, 0.5, Number.MAX_SAFE_INTEGER + 1, Infinity, NaN, '0']) {
+    assert.equal(accepts('CreatorProjectSummary', { ...summary, modifiedAt }), false);
+    assert.equal(creator.creatorProjectSummarySchema.safeParse({ ...summary, modifiedAt }).success, false);
+  }
+  for (const verificationStatus of ['passed', 'failed', 'not_tested']) {
+    const value = { ...summary, verificationStatus, modifiedAt: Number.MAX_SAFE_INTEGER };
+    assert.equal(accepts('CreatorProjectSummary', value), true);
+    assert.equal(creator.creatorProjectSummarySchema.safeParse(value).success, true);
+  }
+  assert.equal(accepts('CreatorProjectSummary', { ...summary, verificationStatus: 'completed' }), false);
+});
+
 test('program descriptor v1 is a separate versioned public contract, not an adapter name', () => {
   const descriptor = definition('ProgramDescriptor') as SchemaObject;
   assert.equal(descriptor.type, 'object');
@@ -147,7 +271,8 @@ test('Creator JSON Schema publishes draft 2020-12 and the five public roots', ()
 
 test('shared Rust/TypeScript fixtures validate against their definitions and public roots', () => {
   for (const [name, value] of [
-    ['CreatorProject', fixture.project], ['CreatorJobProgress', fixture.job], ['InputState', fixture.input]
+    ['CreatorProgramProject', fixture.project], ['CreatorProject', fixture.legacyProject],
+    ['CreatorJobProgress', fixture.job], ['InputState', fixture.input]
   ] as const) {
     assert.equal(accepts(name, value), true, name);
     assert.equal(matches(schema, value), true, name);
@@ -160,14 +285,25 @@ test('shared Rust/TypeScript fixtures validate against their definitions and pub
 
 test('JSON Schema definitions agree with Zod on fixtures, required fields and unknown fields', () => {
   const cases = [
-    ['CreatorProject', creatorProjectSchema, fixture.project],
+    ['CreatorProgramProject', creator.creatorProgramProjectSchema, fixture.project],
+    ['CreatorProject', creatorProjectSchema, fixture.legacyProject],
     ['CreatorManifest', creatorManifestSchema, fixture.manifest.creator],
     ['CreatorJobProgress', creatorJobProgressSchema, fixture.job],
     ['InputState', inputStateSchema, fixture.input],
-    ['AdapterReference', adapterReferenceSchema, fixture.project.adapter],
-    ['BuildProfile', buildProfileSchema, fixture.project.build_profiles[0]],
-    ['ControlsProfile', controlsProfileSchema, fixture.project.controls_profiles[0]],
-    ['ProjectionRule', projectionRuleSchema, fixture.project.projection_rules[0]],
+    ['AdapterReference', adapterReferenceSchema, fixture.legacyProject.adapter],
+    ['BuildProfile', buildProfileSchema, fixture.legacyProject.build_profiles[0]],
+    ['ControlsProfile', controlsProfileSchema, fixture.legacyProject.controls_profiles[0]],
+    ['ProjectionRule', projectionRuleSchema, fixture.legacyProject.projection_rules[0]],
+    ['CreatorProjectRequest', creator.creatorProjectRequestSchema, { projectId: fixture.project.project_id }],
+    ['CreatorProjectSaveRequest', creator.creatorProjectSaveRequestSchema, { project: fixture.project, expectedRevision: null }],
+    ['CreatorProjectSaveResponse', creator.creatorProjectSaveResponseSchema, fixture.projectSaved],
+    ['CreatorPrivateBindings', creator.creatorPrivateBindingsSchema, fixture.projectBindings.bindings],
+    ['SavedPrivateBindings', creator.savedPrivateBindingsSchema, fixture.projectBindings],
+    ['CreatorProjectOpenResponse', creator.creatorProjectOpenResponseSchema, { project: fixture.project, privateBindings: fixture.projectBindings, missingInputs: [] }],
+    ['CreatorProjectSummary', creator.creatorProjectSummarySchema, fixture.projectSummary],
+    ['CreatorResumeStamp', creator.creatorResumeStampSchema, fixture.resumeStamp],
+    ['CreatorReport', creator.creatorReportSchema, fixture.report],
+    ['CreatorJobStartRequest', creator.creatorJobStartRequestSchema, fixture.jobStart],
     ['CreatorProfileSelection', creatorProfileSelectionSchema, fixture.profileSelection]
   ] as const;
   for (const [name, zod, value] of cases) {
@@ -183,8 +319,8 @@ test('JSON Schema definitions agree with Zod on fixtures, required fields and un
     }
   }
   const project = structuredClone(fixture.project);
-  project.components[0].localPath = 'C:/private/runtime';
-  assert.equal(accepts('CreatorProject', project), false);
+  project.program_descriptor.components[0].localPath = 'C:/private/runtime';
+  assert.equal(accepts('CreatorProgramProject', project), false);
   const manifest = structuredClone(fixture.manifest.creator);
   manifest.components[0].id = 'project-component-id-is-not-a-manifest-field';
   assert.equal(accepts('CreatorManifest', manifest), false);
@@ -261,16 +397,16 @@ test('job/input sequences and revisions are bounded safe integers; null fields r
     assert.equal(accepts('InputState', { ...fixture.input, sequence }), true);
   }
   for (const revision of [-1, 0.5, Number.MAX_SAFE_INTEGER + 1]) {
-    assert.equal(accepts('CreatorProject', { ...fixture.project, revision }), false);
+    assert.equal(accepts('CreatorProgramProject', { ...fixture.project, revision }), false);
     assert.equal(accepts('CreatorJobProgress', { ...fixture.job, projectRevision: revision }), false);
     assert.equal(accepts('CreatorJobProgress', { ...fixture.job, completedUnits: revision }), false);
     assert.equal(accepts('CreatorJobProgress', { ...fixture.job, totalUnits: revision }), false);
   }
-  assert.equal(accepts('CreatorProject', { ...fixture.project, revision: 0 }), true);
-  assert.equal(accepts('CreatorProject', { ...fixture.project, revision: Number.MAX_SAFE_INTEGER }), true);
-  assert.equal(accepts('CreatorProject', { ...fixture.project, schema_version: '1.1' }), false);
-  assert.equal(accepts('CreatorProject', { ...fixture.project, project_id: '' }), false);
-  assert.equal(accepts('CreatorProject', { ...fixture.project, project_id: 'a'.repeat(129) }), false);
+  assert.equal(accepts('CreatorProgramProject', { ...fixture.project, revision: 0 }), true);
+  assert.equal(accepts('CreatorProgramProject', { ...fixture.project, revision: Number.MAX_SAFE_INTEGER }), true);
+  assert.equal(accepts('CreatorProgramProject', { ...fixture.project, schema_version: '1.0' }), false);
+  assert.equal(accepts('CreatorProgramProject', { ...fixture.project, project_id: '' }), false);
+  assert.equal(accepts('CreatorProgramProject', { ...fixture.project, project_id: 'a'.repeat(129) }), false);
   const error = { code: 'unavailable', message: 'Not available', details: { nested: [null, true, 1] } };
   assert.equal(accepts('CreatorJobProgress', { ...fixture.job, totalUnits: 10, checkpointId: 'cp-1', releaseId: 'release-1', error }), true);
   assert.equal(accepts('InputState', { ...fixture.input, deviceId: null, error }), true);
@@ -287,14 +423,10 @@ test('checkpoint, report, release and job DTO definitions validate pinned camelC
   const hash = 'b'.repeat(64);
   const checkpoint = {
     checkpointId: 'cp-1', jobId: 'job-1', boundary: 'artifact_committed',
-    stamp: { projectRevision: 1, inputHashes: { runtime: hash }, adapter: fixture.project.adapter },
+    stamp: fixture.resumeStamp,
     resultBlake3: hash, artifactId: 'artifact-1'
   };
-  const report = {
-    reportId: 'report-1', releaseId: 'release-1', releaseBlake3: hash, projectRevision: 1,
-    kind: 'structure_integrity', status: 'not_tested', adapter: fixture.project.adapter,
-    buildProfileId: 'default', controlsProfileId: 'keyboard', environment: { os: 'windows' }, diagnostics: []
-  };
+  const report = fixture.report;
   const release = {
     releaseId: 'release-1', projectId: 'fixture-project', projectRevision: 1,
     manifestBlake3: hash, artifactHashes: { runtime: hash }, reportIds: ['report-1']
@@ -319,6 +451,16 @@ test('checkpoint, report, release and job DTO definitions validate pinned camelC
   assert.equal(accepts('CreatorCheckpoint', { ...checkpoint, stamp: { ...checkpoint.stamp, inputHashes: { runtime: 'short' } } }), false);
   assert.equal(accepts('CreatorReport', { ...report, kind: 'verified' }), false);
   assert.equal(accepts('CreatorReport', { ...report, status: 'completed' }), false);
+  for (const [name, value] of [['CreatorResumeStamp', fixture.resumeStamp], ['CreatorReport', report]] as const) {
+    const { executor: _executor, ...legacy } = value;
+    assert.equal(accepts(name, { ...legacy, adapter: fixture.legacyProject.adapter }), false);
+    assert.equal(accepts(name, { ...value, adapter: fixture.legacyProject.adapter }), false);
+    assert.equal(accepts(name, { ...value, executor: { id: 'supertuxkart', version: '1.5' } }), false);
+  }
+  assert.equal(accepts('CreatorProjectListResponse', [fixture.projectSummary]), true);
+  assert.equal(accepts('CreatorProjectListResponse', [fixture.project]), false);
+  assert.equal(creator.creatorProjectListResponseSchema.safeParse([fixture.project]).success, false);
+  assert.equal(accepts('CreatorProjectSaveRequest', { project: fixture.legacyProject, expectedRevision: 1 }), false);
   assert.equal(accepts('CreatorRelease', { ...release, artifactHashes: { runtime: 'short' } }), false);
 });
 
@@ -359,7 +501,7 @@ test('Eden and non-emulator SuperTuxKart descriptors validate without changing l
     };
     assert.equal(accepts('CreatorProgramProject', project), true);
     assert.equal(matches(schema, project), true);
-    assert.equal(creatorProjectSchema.safeParse(project).success, false, 'legacy runtime is not wired to new format');
+    assert.equal(creatorProjectSchema.safeParse(project).success, false, 'legacy validator must not accept the project IPC 1.1 carrier');
     const extension = { program_descriptor: program };
     assert.equal(accepts('ProgramCreatorManifest', extension), true);
     assert.equal(matches(schema, extension), false, 'select extension, not a complete GameManifest');

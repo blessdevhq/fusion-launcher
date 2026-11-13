@@ -27,9 +27,9 @@ macro_rules! unavailable_command {
     };
 }
 
-unavailable_command!(fusion_creator_project_list() -> Vec<CreatorProject>);
-unavailable_command!(fusion_creator_project_open(CreatorProjectRequest) -> CreatorProject);
-unavailable_command!(fusion_creator_project_save(CreatorProjectSaveRequest) -> CreatorProject);
+unavailable_command!(fusion_creator_project_list() -> Vec<CreatorProjectSummary>);
+unavailable_command!(fusion_creator_project_open(CreatorProjectRequest) -> CreatorProjectOpenResponse);
+unavailable_command!(fusion_creator_project_save(CreatorProjectSaveRequest) -> CreatorProjectSaveResponse);
 unavailable_command!(fusion_creator_scan(CreatorJobStartRequest) -> CreatorJobReceipt);
 unavailable_command!(fusion_creator_classify(CreatorJobStartRequest) -> CreatorJobReceipt);
 unavailable_command!(fusion_creator_build(CreatorJobStartRequest) -> CreatorJobReceipt);
@@ -78,18 +78,11 @@ mod tests {
             fusion_creator_project_save,
             CreatorProjectSaveRequest {
                 project: serde_json::from_value(fixture["project"].clone()).unwrap(),
-                expected_revision: 1,
+                expected_revision: None,
             }
         );
-        let start = CreatorJobStartRequest {
-            project_id: "fixture-project".into(),
-            project_revision: 1,
-            build_profile_ids: vec!["default".into()],
-            controls_profile_ids: vec!["keyboard".into()],
-            release_id: None,
-            target_directory: None,
-            source_url: None,
-        };
+        let start: CreatorJobStartRequest =
+            serde_json::from_value(fixture["jobStart"].clone()).unwrap();
         rejects!(fusion_creator_scan, start.clone());
         rejects!(fusion_creator_classify, start.clone());
         rejects!(fusion_creator_build, start.clone());

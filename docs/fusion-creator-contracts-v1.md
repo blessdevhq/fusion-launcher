@@ -1,5 +1,10 @@
 # Fusion Creator v1 — контрактный каркас волны 0
 
+**Актуализация `creator-wave3-contracts` от `creator-wave3-base` (`e30ee4b`):** project IPC
+использует только `CreatorProgramProject` 1.1. Формы open/save/list и зависимости jobs/reports/export
+ниже обновлены согласованно с Rust/Zod/TS/JSON Schema и fixtures. [Аудит и проверка](fusion-creator-wave3-contracts.md).
+Это изменение контракта, **не** реализация C2: все production-команды остаются `action_unavailable`.
+
 Авторитетный контракт объединённого исходного baseline Creator; Creator v1 ещё не реализован.
 Исходный DTO-only коммит `4cf8971` ветки `creator/contracts` от `creator-base`
 (`287dc370b891577c5c5ca27ac9126766daf89920`) имел только контрактный scope A–H.
@@ -14,7 +19,9 @@
 Нормативная разбивка потоков: [план v1](fusion-creator-v1-plan.md).
 
 **Дополнение `creator-wave1-descriptor`: формат ProgramDescriptor 1.0 заморожен ниже и в JSON Schema.**
-Это **JSON/document contract freeze**, не реализация новых Rust/TS DTO, reader или executor.
+Первоначально это был **JSON/document contract freeze**, не реализация новых Rust/TS DTO,
+reader или executor. В базе wave 3 carriers/reader/storage уже интегрированы; актуальная
+граница этого изменения — project IPC 1.1 без реализации C2, как зафиксировано выше.
 `creator-wave1-base` не перемещается. Сверка двух программ, первоисточники, реальные pins,
 расхождения с кодом и границы проверки — [descriptor evidence](fusion-creator-descriptor-evidence.md).
 
@@ -52,8 +59,9 @@ Manifest `1.0` не может содержать `creator` или наслед�
 
 ## Формат данных и профили
 
-- Переносимый `CreatorProject` имеет собственный `schema_version: "1.0"`, `project_id`, ревизию,
-  title/source/game/version, pinned adapter, components, конечные build/control profiles и projection rules.
+- Переносимый проект IPC/storage — `CreatorProgramProject`, `schema_version: "1.1"`, `project_id`,
+  ревизия, title/source/game/version и встроенный `program_descriptor`. Только descriptor владеет
+  components, build/control profiles и projection rules; его executor — общий host API, не версия приложения.
   Ключи переносимых документов — **snake_case**, оболочки IPC — **camelCase**.
 - `AdapterReference { id, version }` не ограничен `eden_portable`: новая обычная portable-программа
   подключается данными/декларативным описанием, без нового Rust/TS module, IPC/program enum,
@@ -62,9 +70,11 @@ Manifest `1.0` не может содержать `creator` или наслед�
   Общий descriptor и безопасные declarative layout/config recipes реализуются по обновлённому плану,
   не выдаются за уже работающую возможность этого baseline. Новые поля DTO — только через владельца
   и интегратора; input/Eden ParamPackage не являются обязательными capabilities любой программы.
-- `BuildProfile { id, title, layer_ids, controls_profile_ids }` задаёт точный конечный набор слоёв
-  и допустимые профили управления. Зависимости не устанавливают приоритет перезаписи файлов.
-- `ControlsProfile { id, title, device, bindings }`: keyboard/mouse либо один SDL GameController;
+- Legacy `BuildProfile { id, title, layer_ids, controls_profile_ids }` сохраняется для опубликованного
+  `CreatorManifest`; project 1.1 использует `program_descriptor.build_profiles` с `settings`.
+  Набор слоёв и допустимые профили конечны. Зависимости не задают приоритет перезаписи файлов.
+- Legacy `ControlsProfile { id, title, device, bindings }`: keyboard/mouse либо один SDL GameController;
+  project 1.1 использует `program_descriptor.controls_profiles` с явным kind defaults/capability;
   переносимые bindings логические. Физические GUID/path/serial/port, raw bindings и калибровка
   остаются в приватном локальном storage. Только D сериализует назначения в Eden ParamPackage.
 - `CreatorProfileSelection { buildProfileId, controlsProfileId }` — выбранная точная пара;
@@ -77,8 +87,9 @@ Manifest `1.0` не может содержать `creator` или наслед�
   любой non-null выбранный ID вызывает `action_unavailable` до candidate mutation.
   Исходный `4cf8971` этих legacy-полей не менял; это только историческая граница. B отвечает
   за применение и execution tests без молчаливого игнорирования выбранных профилей.
-- Каждый project component имеет `id`, `layer_id`, `origin`. В published extension — `layer_id` и origin,
-  без приватных путей автора.
+- Каждый `program_descriptor.components[]` имеет `id`, `layer_id`, `origin`, `source_root`, `mount_path`.
+  Legacy published `CreatorManifest.components` остаётся `{ layer_id, origin }` для чтения старых
+  публикаций; новые program-публикации содержат inline descriptor. Приватных путей автора в них нет.
 - Origins: `managed { artifact_ref, redistribution_allowed }`,
   `external { url, transport_blake3, inventory_blake3 }`,
   `user_provided { requirement_id, inventory_blake3, instructions }`.
@@ -86,7 +97,8 @@ Manifest `1.0` не может содержать `creator` или наслед�
   не выдача разрешения: G отдельно применяет allowlist и проверяет право экспорта.
 - Reports раздельные: `structure_integrity`, `clean_install`, `observed_launch`, `manual_scenario`,
   `https_acquisition`; статус `passed|failed|not_tested`. Отчёт связан с immutable release/hash,
-  ревизией проекта, adapter/version, выбранной парой профилей и environment.
+  ревизией проекта 1.1, `executor { id: "fusion.declarative", version: "1.0" }`, выбранной парой
+  профилей из descriptor и environment. `CreatorReport.adapter` удалён, legacy fallback нет.
 
 Zod/JSON Schema проверяют форму и границы wire-значений. Rust serde DTO задают форму,
 но не заменяют semantic validation у C/E/G: references, ranges, URL/path policy, hash/signature
@@ -108,16 +120,19 @@ Zod/JSON Schema проверяют форму и границы wire-значе�
   Последние game-поля — metadata библиотечного выпуска, не compatibility requirements.
   Descriptor единолично владеет components/profiles/rules: дубликатов `adapter`, `components`,
   `build_profiles`, `controls_profiles`, `projection_rules` на уровне этого проекта нет.
-- Старые `$defs/CreatorProject` 1.0 и `$defs/CreatorManifest` **не изменены**. Новые поля нельзя
-  подмешивать в строгий legacy DTO или прятать в строку `adapter.id`. Миграция только явная.
+- Старые формы `$defs/CreatorProject` 1.0 и `$defs/CreatorManifest` сохранены для существующих
+  legacy validation/reader tests. `CreatorProject` **не используется в IPC**, хранилища/клиентов для
+  него нет и не создаётся. Неявных миграций нет; legacy save отклоняется, а не конвертируется.
+  `CreatorManifest` остаётся отдельным форматом ранее опубликованных manifests. Новые поля нельзя
+  подмешивать в строгий legacy DTO или прятать в строку `adapter.id`.
 - Для публикации `$defs/ProgramCreatorManifest` — новая строгая альтернатива `GameManifest.creator`:
   **ровно** `{ program_descriptor: ProgramDescriptor }`. Legacy CreatorManifest и эта альтернатива
   взаимно исключаются. Внешний GameManifest остаётся 1.1, SourceIndex остаётся 1.0.
   Descriptor встроен inline: canonical manifest hash и существующая Ed25519 signature покрывают
   его содержимое. Никаких незакреплённых sidecar URL/дескрипторов, загружаемых после проверки подписи.
-- Это нормативная целевая форма: текущие Rust/TS project DTO и metadata reader новую альтернативу
-  ещё **не принимают**. A/C/D обязаны согласованно добавить типы, canonical/storage и потребителей;
-  нельзя включать execution до этого. Производные legacy runtime/launch/persistence поля, если
+- Rust/TS carriers, metadata reader/canonical и typed project storage уже принимают эти формы;
+  project IPC теперь ссылается на тот же carrier 1.1. Это **не** включает команды, runner или C2
+  storage wiring. Производные legacy runtime/launch/persistence поля, если
   нужны transport/planner, генерирует общий compiler; расхождение с descriptor — ошибка, не выбор
   «более удобной» копии. Старые 1.0 публикации не мигрируют неявно.
 - Release/report/resume привязаны к immutable release и выбранной паре профилей. C добавляет
@@ -290,8 +305,9 @@ streaming-normalizer; candidate preparation не меняет active config, sha
 
 | Команды | Request → response |
 | --- | --- |
-| `fusion_creator_project_list` | — → `CreatorProject[]` |
-| `fusion_creator_project_open`, `fusion_creator_project_save` | project request / save request → `CreatorProject` |
+| `fusion_creator_project_list` | — → `CreatorProjectSummary[]` |
+| `fusion_creator_project_open` | `CreatorProjectRequest { projectId }` → `CreatorProjectOpenResponse` |
+| `fusion_creator_project_save` | `CreatorProjectSaveRequest` → `CreatorProjectSaveResponse { revision }` |
 | `fusion_creator_scan`, `fusion_creator_classify`, `fusion_creator_build`, `fusion_creator_verify`, `fusion_creator_export`, `fusion_creator_verify_https` | `CreatorJobStartRequest` → `CreatorJobReceipt` |
 | `fusion_creator_job_get`, `fusion_creator_job_cancel` | `CreatorJobRequest` → `CreatorJob` |
 | `fusion_creator_job_resume` | `CreatorJobRequest` → `CreatorJobReceipt` |
@@ -306,6 +322,44 @@ streaming-normalizer; candidate preparation не меняет active config, sha
 **Сейчас все перечисленные production-команды возвращают `FusionError` с `code: "action_unavailable"`
 и `details.command` — точным именем команды.** Даже list/devices не возвращают фиктивный пустой список.
 Нет созданных jobId/sessionId и нет emitted progress. Typed result — будущий контракт, не успешная заглушка.
+
+### Project IPC 1.1 (C2 реализует позже)
+
+- `CreatorProjectOpenResponse { project, privateBindings, missingInputs }`: `project` — строго
+  `CreatorProgramProject` 1.1; `privateBindings` — `null` либо существующая storage-форма
+  `SavedPrivateBindings { revision, bindings: CreatorPrivateBindings }`. `CreatorPrivateBindings`
+  ровно `{ projectId, componentPaths: Record<string,string>, signingKeyRef: string|null }`.
+  Ревизия bindings независима от project revision. Перенесено только определение DTO из storage
+  в общий модуль; новый storage API или альтернативная binding-модель не вводятся.
+- `missingInputs: string[]` — component IDs из `project.program_descriptor.components`, требующие
+  локального выбора/повторной привязки (нет входа, путь исчез/недоступен). Это не пути и не список
+  новых DTO требований. Пустой список означает отсутствие таких пропусков, **не** успешную
+  проверку byte pins. C2 вычисляет список и валидирует принадлежность IDs проекту; отсутствие
+  private row само по себе не доказывает, что managed/external input недоступен.
+- `CreatorProjectSaveRequest { project, expectedRevision }` принимает только 1.1.
+  `expectedRevision` обязателен и nullable: `null` — insert-only (проект ещё отсутствует), число `n`
+  — CAS update существующей ревизии `n`, при этом автор передаёт `project.revision = n + 1`.
+  Новая запись может начинаться с любой допустимой ревизии, включая 0; `0` не синоним `null`.
+  Ответ `{ revision }` содержит фактически сохранённую новую ревизию. Это та же семантика, что
+  `project_storage::check_revision`; проверки конфликтов остаются в storage, не в JSON Schema.
+  Bindings в save request не встраиваются и этой командой не изменяются.
+- `CreatorProjectSummary { projectId, title, revision, verificationStatus, modifiedAt }` — только
+  сводка, без descriptor/paths/bindings. `verificationStatus` — `passed|failed|not_tested` для текущей
+  ревизии: отсутствие актуальных свидетельств означает `not_tested`, изменение проекта не наследует
+  старый `passed`. `passed` не означает observed/manual acceptance, нужны отдельные reports.
+  `modifiedAt` — UTC Unix epoch **milliseconds**, целое `0..9007199254740991`; ревизии имеют те же
+  границы. Хранение времени/вычисление статуса и реализация list остаются C2.
+- Все поля, включая nullable, обязательны; новые DTO strict. Локальный open envelope и bindings
+  выбираются в JSON Schema только через `$defs`, не являются portable roots и не экспортируются.
+- Jobs (включая export) фиксируют `projectId/projectRevision` проекта 1.1; `buildProfileIds` и
+  `controlsProfileIds` ссылаются только на `program_descriptor.*_profiles`. Top-level adapter,
+  components/profiles и private bindings в `CreatorJobStartRequest` не допускаются.
+  `targetDirectory` — только локальный IPC-путь назначения, не поле публикации.
+- `CreatorResumeStamp.executor` и `CreatorReport.executor` — **тот же** тип `ProgramExecutor`, что
+  в descriptor. Поле `adapter` в этих DTO больше не принимается. `CreatorJob`/`CreatorCheckpoint`
+  получают изменение транзитивно через stamp; `CreatorRelease` по-прежнему содержит только
+  immutable ID/revision/hashes/report IDs. Program-export использует `ProgramCreatorManifest`
+  с inline descriptor, не legacy верхнеуровневые поля; bindings/open envelope не сериализуются.
 
 - `fusion-creator:job-progress`: `jobId`, `projectId`, `projectRevision`, `sequence`, kind/status/phase,
   completed/total units, nullable checkpoint/release/error.
@@ -330,7 +384,9 @@ streaming-normalizer; candidate preparation не меняет active config, sha
 | `export_completed` | Полный allowlisted export атомарно опубликован, сохранён его inventory/hash. |
 
 Каждый checkpoint содержит `checkpointId`, `jobId`, boundary, result BLAKE3 и stamp:
-`projectRevision + inputHashes + adapter ID/version`. До reuse C/G повторно проверяют stamp
+`projectRevision + inputHashes + executor ID/version`. `inputHashes.program_descriptor` содержит
+canonical descriptor BLAKE3; локальные hashes/revision bindings и digests реализаций также обязательны
+до reuse и не публикуются. Executor API version не fingerprint кода. До reuse C/G повторно проверяют stamp
 и сохранённый результат. Изменившийся/отсутствующий результат не применяется; частичный файл или
 операция — не checkpoint. После restart незавершённые jobs становятся `interrupted`.
 Workspace имеет одного writer. Cancel/error сохраняет предыдущий immutable release и active installation.

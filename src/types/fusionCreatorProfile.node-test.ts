@@ -18,8 +18,8 @@ test('a selected profile pair has explicit buildProfileId and controlsProfileId'
   assert.equal(document.$defs.CreatorProfileSelection.additionalProperties, false);
 });
 
-test('a portable path decision names its explicit winning layer, never dependency priority', () => {
-  const decision = fixture.project.projection_rules[0];
+test('a legacy 1.0 portable path decision names its explicit winning layer, never dependency priority', () => {
+  const decision = fixture.legacyProject.projection_rules[0];
   assert.deepEqual(projectionRuleSchema.parse(decision), decision);
   assert.equal(projectionRuleSchema.safeParse({ path: decision.path }).success, false);
   assert.equal(projectionRuleSchema.safeParse({ path: decision.path, priority: 1 }).success, false);

@@ -2,7 +2,7 @@
 //! SQLite is authoritative: there is no portable-file/DB dual write and no IPC wiring.
 #![allow(dead_code)]
 
-use super::CreatorPrivateBindings;
+use super::{CreatorPrivateBindings, SavedPrivateBindings};
 use crate::fusion_source::errors::{ErrorCode, FusionError};
 use crate::fusion_source::program_schema::{
     CreatorProgramProject, MAX_PROGRAM_BYTES as MAX_BYTES, MAX_REVISION,
@@ -22,12 +22,6 @@ pub(crate) struct PrivateBindingsSave<'a> {
     pub revision: u64,
     pub expected_revision: Option<u64>,
     pub bindings: &'a CreatorPrivateBindings,
-}
-
-#[derive(Debug)]
-pub(crate) struct SavedPrivateBindings {
-    pub revision: u64,
-    pub bindings: CreatorPrivateBindings,
 }
 
 pub(crate) fn save_project_with_bindings(

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:fusion:creator-contracts:1.0",
   "title": "Fusion Creator contracts",
-  "description": "CreatorProject 1.0, standalone ProgramDescriptor 1.0, and camelCase job/input events. CreatorManifest is only the existing creator extension of GameManifest 1.1. ProgramDescriptor is a newly frozen authoring contract, not yet a Rust/TypeScript runtime DTO; adding it does not enable Creator execution.",
+  "description": "CreatorProgramProject 1.1 project IPC, ProgramDescriptor 1.0 and camelCase job/input DTOs. CreatorProject 1.0 is legacy document validation only, never project IPC/storage. Local project/binding envelopes are selected through $defs and must not be exported. Contracts do not enable Creator execution.",
   "oneOf": [
     { "$ref": "#/$defs/CreatorProject" },
     { "$ref": "#/$defs/CreatorJobProgress" },
@@ -190,16 +190,17 @@
         "policy": { "const": "preserve_latest" }, "export": { "const": "never" }
       }
     },
+    "ProgramExecutor": {
+      "type": "object", "additionalProperties": false, "required": ["id", "version"],
+      "properties": { "id": { "const": "fusion.declarative" }, "version": { "const": "1.0" } }
+    },
     "ProgramDescriptor": {
       "type": "object", "additionalProperties": false,
       "required": ["document_type", "schema_version", "identity", "executor", "components", "required_files", "projection_rules", "directories", "entrypoint", "configs", "build_profiles", "controls_profiles", "persistence"],
       "properties": {
         "document_type": { "const": "program_descriptor" }, "schema_version": { "const": "1.0" },
         "identity": { "$ref": "#/$defs/ProgramIdentity" },
-        "executor": {
-          "type": "object", "additionalProperties": false, "required": ["id", "version"],
-          "properties": { "id": { "const": "fusion.declarative" }, "version": { "const": "1.0" } }
-        },
+        "executor": { "$ref": "#/$defs/ProgramExecutor" },
         "components": { "type": "array", "minItems": 1, "maxItems": 64, "items": { "$ref": "#/$defs/ProgramComponent" } },
         "required_files": { "type": "array", "minItems": 1, "maxItems": 256, "items": { "$ref": "#/$defs/ProgramFile" } },
         "projection_rules": { "type": "array", "maxItems": 4096, "items": { "$ref": "#/$defs/ProgramProjectionRule" } },
@@ -221,12 +222,12 @@
         "source_id": { "$ref": "#/$defs/Identifier" }, "game_id": { "$ref": "#/$defs/Identifier" },
         "game_version": { "$ref": "#/$defs/Identifier" }, "program_descriptor": { "$ref": "#/$defs/ProgramDescriptor" }
       },
-      "description": "Versioned authoring carrier, not the existing CreatorProject 1.0 DTO. Descriptor owns components/profiles; no conflicting legacy copies. game_version is library/release metadata, not a compatibility resolver. Consumer implementation is pending."
+      "description": "The single project IPC/storage carrier. Descriptor owns components/profiles; no conflicting legacy copies. game_version is library/release metadata, not a compatibility resolver. Project commands stay action_unavailable until C2."
     },
     "ProgramCreatorManifest": {
       "type": "object", "additionalProperties": false, "required": ["program_descriptor"],
       "properties": { "program_descriptor": { "$ref": "#/$defs/ProgramDescriptor" } },
-      "description": "New strict alternative for GameManifest 1.1 creator, NOT the legacy CreatorManifest definition. Embed inline so the existing manifest canonical hash and Ed25519 signature cover descriptor bytes. Reader/canonical/runtime support is pending; unknown variants must fail closed."
+      "description": "Strict GameManifest 1.1 creator alternative, NOT legacy CreatorManifest. Inline descriptor is covered by manifest canonical hash/signature. Reader/canonical/storage support exists; this schema does not enable export or execution."
     },
     "Identifier": { "type": "string", "minLength": 1, "maxLength": 128 },
     "Blake3": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
@@ -347,6 +348,7 @@
     },
     "CreatorProject": {
       "type": "object", "additionalProperties": false,
+      "description": "Legacy document validation only. No project IPC, no storage and no implicit migration to 1.1.",
       "required": ["schema_version", "project_id", "revision", "title", "source_id", "game_id", "game_version", "adapter", "components", "build_profiles", "controls_profiles", "projection_rules"],
       "properties": {
         "schema_version": { "const": "1.0" }, "project_id": { "$ref": "#/$defs/Identifier" },
@@ -358,6 +360,68 @@
         "controls_profiles": { "type": "array", "items": { "$ref": "#/$defs/ControlsProfile" } },
         "projection_rules": { "type": "array", "items": { "$ref": "#/$defs/ProjectionRule" } }
       }
+    },
+    "CreatorProjectRequest": {
+      "type": "object", "additionalProperties": false, "required": ["projectId"],
+      "properties": { "projectId": { "$ref": "#/$defs/Identifier" } }
+    },
+    "CreatorPrivateBindings": {
+      "type": "object", "additionalProperties": false, "required": ["projectId", "componentPaths", "signingKeyRef"],
+      "properties": {
+        "projectId": { "$ref": "#/$defs/Identifier" },
+        "componentPaths": { "type": "object", "additionalProperties": { "type": "string" } },
+        "signingKeyRef": { "anyOf": [{ "type": "string" }, { "type": "null" }] }
+      },
+      "description": "Local IPC/storage only. componentPaths keys are program_descriptor component IDs. Never export."
+    },
+    "SavedPrivateBindings": {
+      "type": "object", "additionalProperties": false, "required": ["revision", "bindings"],
+      "properties": { "revision": { "$ref": "#/$defs/Revision" }, "bindings": { "$ref": "#/$defs/CreatorPrivateBindings" } },
+      "description": "Same revision/bindings envelope as project_storage. Binding revision is independent of project revision."
+    },
+    "CreatorProjectOpenResponse": {
+      "type": "object", "additionalProperties": false, "required": ["project", "privateBindings", "missingInputs"],
+      "properties": {
+        "project": { "$ref": "#/$defs/CreatorProgramProject" },
+        "privateBindings": { "anyOf": [{ "$ref": "#/$defs/SavedPrivateBindings" }, { "type": "null" }] },
+        "missingInputs": { "type": "array", "items": { "$ref": "#/$defs/Identifier" } }
+      },
+      "description": "Local open response only. null means no stored private bindings. missingInputs lists descriptor component IDs needing local selection/rebinding, not absolute paths; C2 computes and validates it. Never export this envelope."
+    },
+    "CreatorReportStatus": { "enum": ["passed", "failed", "not_tested"] },
+    "CreatorProjectSummary": {
+      "type": "object", "additionalProperties": false, "required": ["projectId", "title", "revision", "verificationStatus", "modifiedAt"],
+      "properties": {
+        "projectId": { "$ref": "#/$defs/Identifier" }, "title": { "type": "string" }, "revision": { "$ref": "#/$defs/Revision" },
+        "verificationStatus": { "$ref": "#/$defs/CreatorReportStatus" }, "modifiedAt": { "$ref": "#/$defs/Revision" }
+      },
+      "description": "No descriptor/private bindings. modifiedAt is UTC Unix epoch milliseconds, a safe nonnegative JSON integer. verificationStatus describes current-revision verification, not a job status; no evidence means not_tested."
+    },
+    "CreatorProjectListResponse": { "type": "array", "items": { "$ref": "#/$defs/CreatorProjectSummary" } },
+    "CreatorProjectSaveRequest": {
+      "type": "object", "additionalProperties": false, "required": ["project", "expectedRevision"],
+      "properties": {
+        "project": { "$ref": "#/$defs/CreatorProgramProject" },
+        "expectedRevision": { "anyOf": [{ "$ref": "#/$defs/Revision" }, { "type": "null" }] }
+      },
+      "description": "null means insert-only. n updates revision n to the already supplied project.revision n+1; storage enforces this optimistic concurrency rule. No private bindings or implicit legacy migration."
+    },
+    "CreatorProjectSaveResponse": {
+      "type": "object", "additionalProperties": false, "required": ["revision"],
+      "properties": { "revision": { "$ref": "#/$defs/Revision" } }
+    },
+    "CreatorJobStartRequest": {
+      "type": "object", "additionalProperties": false,
+      "required": ["projectId", "projectRevision", "buildProfileIds", "controlsProfileIds", "releaseId", "targetDirectory", "sourceUrl"],
+      "properties": {
+        "projectId": { "$ref": "#/$defs/Identifier" }, "projectRevision": { "$ref": "#/$defs/Revision" },
+        "buildProfileIds": { "type": "array", "items": { "$ref": "#/$defs/Identifier" } },
+        "controlsProfileIds": { "type": "array", "items": { "$ref": "#/$defs/Identifier" } },
+        "releaseId": { "anyOf": [{ "$ref": "#/$defs/Identifier" }, { "type": "null" }] },
+        "targetDirectory": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
+        "sourceUrl": { "anyOf": [{ "type": "string" }, { "type": "null" }] }
+      },
+      "description": "All job kinds including export resolve immutable CreatorProgramProject 1.1 revision and profile IDs inside program_descriptor. targetDirectory is local IPC, never portable metadata. URL/path/reference policy remains host validation."
     },
     "FusionError": {
       "type": "object", "additionalProperties": false, "required": ["code", "message", "details"],
@@ -395,10 +459,10 @@
       "properties": { "jobId": { "$ref": "#/$defs/Identifier" }, "projectId": { "$ref": "#/$defs/Identifier" }, "projectRevision": { "$ref": "#/$defs/Revision" } }
     },
     "CreatorResumeStamp": {
-      "type": "object", "additionalProperties": false, "required": ["projectRevision", "inputHashes", "adapter"],
+      "type": "object", "additionalProperties": false, "required": ["projectRevision", "inputHashes", "executor"],
       "properties": {
         "projectRevision": { "$ref": "#/$defs/Revision" }, "inputHashes": { "type": "object", "additionalProperties": { "$ref": "#/$defs/Blake3" } },
-        "adapter": { "$ref": "#/$defs/AdapterReference" }
+        "executor": { "$ref": "#/$defs/ProgramExecutor" }
       }
     },
     "CreatorCheckpoint": {
@@ -421,12 +485,12 @@
     },
     "CreatorReport": {
       "type": "object", "additionalProperties": false,
-      "required": ["reportId", "releaseId", "releaseBlake3", "projectRevision", "kind", "status", "adapter", "buildProfileId", "controlsProfileId", "environment", "diagnostics"],
+      "required": ["reportId", "releaseId", "releaseBlake3", "projectRevision", "kind", "status", "executor", "buildProfileId", "controlsProfileId", "environment", "diagnostics"],
       "properties": {
         "reportId": { "$ref": "#/$defs/Identifier" }, "releaseId": { "$ref": "#/$defs/Identifier" }, "releaseBlake3": { "$ref": "#/$defs/Blake3" },
         "projectRevision": { "$ref": "#/$defs/Revision" },
         "kind": { "enum": ["structure_integrity", "clean_install", "observed_launch", "manual_scenario", "https_acquisition"] },
-        "status": { "enum": ["passed", "failed", "not_tested"] }, "adapter": { "$ref": "#/$defs/AdapterReference" },
+        "status": { "$ref": "#/$defs/CreatorReportStatus" }, "executor": { "$ref": "#/$defs/ProgramExecutor" },
         "buildProfileId": { "$ref": "#/$defs/Identifier" }, "controlsProfileId": { "$ref": "#/$defs/Identifier" },
         "environment": { "type": "object", "additionalProperties": { "type": "string" } },
         "diagnostics": { "type": "array", "items": { "$ref": "#/$defs/FusionError" } }

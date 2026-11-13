@@ -4,9 +4,9 @@
 JSON Schema **draft 2020-12**. It mirrors the portable Creator and IPC contracts in
 `src/types/fusionCreator.ts`, `src-tauri/src/fusion_creator/`, and
 `src-tauri/src/fusion_source/creator_schema.rs` for the legacy definitions.
-The additive `creator-wave1-descriptor` definitions freeze a **new document format only**:
-ProgramDescriptor 1.0, CreatorProgramProject 1.1, and ProgramCreatorManifest. They are not
-yet mirrored by Rust/TS runtime DTOs or wired to the reader/executor. The normative semantics,
+ProgramDescriptor 1.0, CreatorProgramProject 1.1, and ProgramCreatorManifest now have strict
+Rust/Zod carriers and reader/canonical/storage support. `creator-wave3-contracts` aligns project
+IPC with the same 1.1 carrier; commands still return `action_unavailable` until C2. The normative semantics,
 security checks and handoff gaps are in [`../fusion-creator-contracts-v1.md`](../fusion-creator-contracts-v1.md).
 
 ## Select the correct contract
@@ -15,11 +15,11 @@ The document root accepts exactly one of:
 
 | Definition | Wire shape |
 | --- | --- |
-| `CreatorProject` | Portable project, **snake_case**, `schema_version: "1.0"` |
+| `CreatorProject` | Legacy validation only, **snake_case**, `schema_version: "1.0"`; never project IPC/storage |
 | `CreatorJobProgress` | Job progress event, **camelCase** |
 | `InputState` | Input session state event, **camelCase** |
 | `ProgramDescriptor` | Standalone program recipe, **snake_case**, document_type `program_descriptor`, schema_version `1.0` |
-| `CreatorProgramProject` | New authoring carrier, **snake_case**, schema_version `1.1`, inline program_descriptor; no duplicate legacy adapter/profiles |
+| `CreatorProgramProject` | The project IPC/storage carrier, **snake_case**, schema_version `1.1`, inline program_descriptor; no duplicate legacy adapter/profiles |
 
 All definitions are available under `#/$defs/<Name>`. Additional definitions cover
 adapter references, all component-origin and logical-binding variants, profiles,
@@ -27,6 +27,21 @@ projection rules, checkpoint/resume stamps, reports, releases, job records/recei
 and input binding requests/receipts (including the separate raw-binding union).
 `CreatorProfileSelection` is the explicit camelCase pair `buildProfileId` /
 `controlsProfileId`; select it via `$defs`, not the document root.
+
+Project IPC definitions are also selected through `$defs`: `CreatorProjectRequest`,
+`CreatorProjectSaveRequest/Response`, `CreatorProjectOpenResponse`, `CreatorProjectSummary`
+and `CreatorProjectListResponse` (an array of summaries). Save requires 1.1 and a required
+nullable `expectedRevision`: null is insert-only; n updates n to supplied project.revision n+1.
+Open includes the storage `SavedPrivateBindings { revision, bindings }` envelope or null,
+plus `missingInputs` descriptor component IDs. Its `CreatorPrivateBindings` fields remain
+`projectId`, `componentPaths`, `signingKeyRef`. These local envelopes are **not portable roots**
+and must never be exported. Summary `modifiedAt` is a nonnegative safe integer of UTC Unix
+epoch milliseconds; `verificationStatus` is passed/failed/not_tested, not job status.
+`CreatorJobStartRequest` (including export) references a 1.1 project revision and nested
+descriptor profile IDs. `CreatorResumeStamp`/`CreatorReport` use `ProgramExecutor`, not
+legacy `adapter`; `CreatorCheckpoint`/`CreatorJob` inherit the changed stamp.
+No legacy project store or implicit migration is provided. Retained legacy roots/definitions
+only support existing document-validation tests and old published manifest reading.
 
 **`CreatorManifest` validates only `manifest.creator`, the snake_case Creator
 extension embedded in a GameManifest 1.1.** It does not validate the containing
@@ -48,8 +63,8 @@ Descriptor-format verification is recorded separately in `../fusion-creator-desc
 `{ program_descriptor: ProgramDescriptor }`, the newly specified alternative for GameManifest
 1.1 `creator`. It is not a complete GameManifest, not a new SourceIndex version, and not the
 legacy `CreatorManifest`. Inline descriptor content must be covered by canonical manifest
-hash/signature. Current metadata consumers reject this new alternative until A adds typed
-reader/canonical/storage support; do not silently discard it or enable execution prematurely.
+hash/signature. Metadata reader/canonical/storage support is integrated; do not silently discard
+the descriptor or treat metadata support as successful project/job/export execution.
 
 The schema identifier is `urn:fusion:creator-contracts:1.0`. Register the whole
 document with a draft-2020-12 validator before referencing, for example,
@@ -82,8 +97,9 @@ produce a standalone schema.
   or hash verification remain application responsibilities.
 - Portable project/manifest definitions do not contain local paths, signing-key
   references, or physical device identities. `InputBindingsSaveRequest` is a
-  local IPC DTO, **not** a portable project or export format. Private-storage
-  identity/binding DTOs and the complete command-request surface are not covered.
+  local IPC DTO, **not** a portable project or export format. Project binding DTOs are covered
+  explicitly as local-only definitions; physical input identities and the complete command
+  request surface are not covered.
 - Program paths have a lexical Windows prefilter, not filesystem authority. References,
   unique IDs, profile completeness, scalar-type/domain consistency, codec/seed compatibility,
   reparse/TOCTOU checks, environment policy, complete critical-file approval, private writable
