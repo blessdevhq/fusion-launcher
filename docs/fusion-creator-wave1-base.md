@@ -162,3 +162,86 @@ NOT TESTED этой подготовкой: реальный Creator v1 A–G pi
 Eden/gameplay, native UI, external HTTPS cold acquisition, разные физические тома,
 чистая dependency install и новый Windows CI run именно объединённой ревизии.
 `npm run mvp:visual` не запускался: UI/CSS не менялись. Прежние ignored tests не считаются покрытием.
+
+## Wave 4 — интеграция external acquisition и project contracts
+
+Новая база: annotated tag
+[`creator-wave4-base`](https://github.com/blessdevhq/fusion-launcher/releases/tag/creator-wave4-base),
+ветка `creator/wave4-base`. Старые base tags не перемещаются.
+
+От `creator-wave3-base` (`e30ee4b3950b3279dcbca7492579104968c75615`)
+без конфликтов объединены:
+
+- `creator/external-acquisition` — `8c46119b97bea7ead020c85d956134869fd328fe`;
+- `creator/wave3-contracts` — `17dcbaad95f91100c81ad5df18ebc4c06da9eee5`.
+
+Новой реализации при интеграции нет. Исходный dirty worktree и чужие изменения
+не затрагиваются. External planner regression заменён с ожидания
+`ActionUnavailable` на позитивный
+`external_program_plan_uses_pinned_descriptor_acquisition`: проверяются успешный
+plan, HTTPS ZIP source и закреплённый transport BLAKE3. Production Creator IPC
+остаётся честно `action_unavailable`; контрактный merge не реализует C2 jobs.
+
+### Сериализация QA и актуальный список нестабильных тестов
+
+Для этой интеграции используется `RUST_TEST_THREADS=4 npm run qa`.
+Перед каждым прогоном проверяется отсутствие `F:\MVP\.qa.lock`, lock создаётся
+эксклюзивно и удаляется после завершения. Одновременный QA/Cargo не допускается.
+
+Текущий явно разрешённый список для wave 4 (не расширять автоматически):
+
+1. `windows_sidecar::tests::graceful_exit_preserves_final_output_and_releases_job`;
+2. `partial_graph_startup_failure_stops_started_support_and_releases_lease`;
+3. `cancelling_job_waits_for_actual_descendants_and_drops_all_base_locks`;
+4. `fusion_source::transforms::tests::patch_adapter_reaps_timeout_and_failed_tool_and_cleans_private_files`
+   — cleanup временных файлов `.fusion-patch-*` (`transforms.rs:1173`).
+
+Если падает только тест из этого списка, допускается один повтор; первоначальный
+FAIL сохраняется, успешный повтор отмечается **FLAKY (initial FAIL, retry PASS)**,
+а не PASS. Любое другое падение требует разбора. Историческая более узкая policy
+wave 1 выше сохранена как история, а не как актуальный список для wave 4.
+
+### Результат QA объединения wave 4
+
+**PASS / exit 0, один полный `RUST_TEST_THREADS=4 npm run qa`, без retry.**
+Проверенный merge commit: `cccab076fdf46ac7a7e02002eaa76cf9f1d39a93`.
+После QA добавлен только этот документ; production/test source не менялся.
+
+| Gate | Результат |
+| --- | --- |
+| TypeScript typecheck | PASS |
+| Node tests | **190 passed / 0 failed / 0 skipped** |
+| Static check | PASS |
+| Next.js production build / static export | PASS |
+| Rust library tests | **677 passed / 0 failed / 4 прежних ignored** |
+| Packer CLI tests | **3 passed / 0 failed** |
+| Остальные binary targets / doctests | 0 tests, без ошибок |
+| Rustfmt | PASS |
+| Clippy `--all-targets -- -D warnings` | PASS |
+
+В полном Rust-прогоне позитивный
+`external_program_plan_uses_pinned_descriptor_acquisition` и реальный loopback-TLS
+`external_https_clean_cache_acquires_normalized_cas_and_installs_without_user_files`
+оба прошли. `commands_never_report_mock_success` тоже прошёл. Все четыре теста из
+актуального flaky allowlist выше прошли с первого раза; **FLAKY в этом QA не было**.
+Их историческая нестабильность не объявляется исправленной.
+
+Окружение: Windows, Node 24.14.0, Rust 1.95.0, VS2022 Native Tools,
+CMake 3.31.6-msvc6, physical `FUSION_TEST_PYTHON`, `CARGO_BUILD_JOBS=4`,
+offline Cargo; доверенный Node dependencies junction и общий
+`CARGO_TARGET_DIR=F:/MVP/Fusion Launcher/src-tauri/target`.
+До фактического QA исправлены только вызовы VS/CMake в ignored runner;
+те попытки завершились до запуска QA/тестов и не являются FLAKY.
+Запуск дождался освобождения чужого C2 lock, затем собственный lock создан
+эксклюзивно и удалён в `finally` после QA. Последующий чужой lock не удаляется.
+
+Raw log: `F:/MVP/Fusion-Creator-Wave4/.tmp/wave4/qa-01.log`;
+exit/SHA evidence: `.tmp/wave4/qa-01-result.json`.
+SHA-256 raw log:
+`b48c0eda62ff190c09b5261269de07336ad4a4f1e67ffcd8f9bdc62bde9827e7`.
+Проверенный `src-tauri` subtree:
+`d2de74abdfb274e94bbc34164a672cd065fc3817`.
+
+NOT TESTED этим объединением: новый hosted CI, чистый dependency install,
+реальные upstream CDN/большие архивы, real-program/controller/UI acceptance,
+C2 jobs/export end-to-end. UI/CSS не менялись, `npm run mvp:visual` не запускался.
