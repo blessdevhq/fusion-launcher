@@ -9,15 +9,18 @@ use crate::fusion_source::{CapabilityRegistry, PlanBuilder, PlanOptions, Qualifi
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 
+#[path = "external_acquisition_tests.rs"]
+mod acquisition;
+
 #[test]
-fn external_program_execution_stays_unavailable_until_a_acquisition_is_integrated() {
+fn external_program_plan_uses_pinned_descriptor_acquisition() {
     let mut value = serde_json::to_value(manifest()).unwrap();
     value["creator"]["program_descriptor"]["components"][0]["origin"] = serde_json::json!({
         "kind":"external", "url":"https://example.test/pinned.zip",
         "transport_blake3":"a".repeat(64), "inventory_blake3":"b".repeat(64)
     });
     let manifest = serde_json::from_value(value).unwrap();
-    let error = PlanBuilder::build(
+    let plan = PlanBuilder::build(
         &manifest,
         &PlanOptions {
             build_profile_id: Some("standard".into()),
@@ -26,11 +29,17 @@ fn external_program_execution_stays_unavailable_until_a_acquisition_is_integrate
         },
         &CapabilityRegistry::current_client(),
     )
-    .unwrap_err();
-    assert_eq!(
-        error.code,
-        crate::fusion_source::ErrorCode::ActionUnavailable
-    );
+    .unwrap();
+    assert!(plan.steps.iter().any(|step| matches!(step,
+        crate::fusion_source::plan::PlanStep::Fetch(
+            crate::fusion_source::plan::FetchStep::AcquireLayer {
+                layer_id, source: crate::fusion_source::schema::LayerSource::Remote { mirrors, archive },
+                transport_digest: Some(digest),
+            }) if layer_id == "runtime" && mirrors == &["https://example.test/pinned.zip"]
+                && *archive == crate::fusion_source::schema::ArchiveFormat::Zip
+                && digest.value == "a".repeat(64)
+                && digest.algorithm == crate::fusion_source::schema::DigestAlgorithm::Blake3
+    )));
 }
 
 #[tokio::test]

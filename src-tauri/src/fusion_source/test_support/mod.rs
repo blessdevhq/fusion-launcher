@@ -2,6 +2,7 @@
 #![cfg(test)]
 
 pub(crate) mod creator;
+pub(crate) mod https;
 pub(crate) use creator::{
     publication_hashes, CreatorHarness, BASE, CONTENT, RUNTIME, SOURCE_ID, USER_DATA,
 };

@@ -1016,6 +1016,19 @@ impl FusionService {
             .layers
             .values()
             .filter(|layer| selected.contains(&layer.id))
+            .filter(|layer| {
+                !crate::fusion_creator::declarative::runtime::descriptor(&manifest).is_some_and(
+                    |program| {
+                        program.components.iter().any(|component| {
+                            component.layer_id == layer.id
+                                && matches!(
+                                    component.origin,
+                                    super::creator_schema::ComponentOrigin::External { .. }
+                                )
+                        })
+                    },
+                )
+            })
             .filter_map(|layer| match &layer.source {
                 LayerSource::UserProvided {
                     instructions,
@@ -1589,6 +1602,45 @@ impl FusionService {
             cancel.check()?;
             self.progress(game, operation_id, "fetch", Some(id))?;
             let layer = &manifest.canonical.layers[id];
+            if let Some(component) =
+                crate::fusion_creator::declarative::runtime::descriptor(&manifest.canonical)
+                    .and_then(|program| {
+                        program.components.iter().find(|component| {
+                            component.layer_id == *id
+                                && matches!(
+                                    component.origin,
+                                    super::creator_schema::ComponentOrigin::External { .. }
+                                )
+                        })
+                    })
+            {
+                if request.user_files.contains_key(id) || request.raw_paths.contains_key(id) {
+                    return Err(FusionError::new(
+                        ErrorCode::InvalidManifest,
+                        "External components cannot be replaced by a user import.",
+                    ));
+                }
+                let input = super::external::acquire(
+                    &self.inner.library_root,
+                    component,
+                    self.inner.transport.clone(),
+                    &TransferLimits {
+                        max_bytes: 64 << 30,
+                        timeout: Duration::from_secs(24 * 60 * 60),
+                    },
+                    crate::fusion_creator::declarative::io::ZipNormalizationLimits::default(),
+                    cancel,
+                    Some(Arc::new(OperationTransferSink {
+                        service: self.clone(),
+                        game: game.clone(),
+                        operation_id: operation_id.to_owned(),
+                        layer_id: id.clone(),
+                    })),
+                )
+                .await?;
+                inputs.insert(id.clone(), input);
+                continue;
+            }
             let reusable = old
                 .as_ref()
                 .filter(|old| {
