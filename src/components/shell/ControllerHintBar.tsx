@@ -6,6 +6,10 @@ import type { LauncherView } from '../../stores/launcherStore.ts';
 type HintLabel = 'select' | 'back' | 'details' | 'open' | 'home' | 'filters' | 'action' | 'retry';
 
 const VIEW_HINTS: Record<LauncherView, Array<{ key: string; label: HintLabel; tone: string }>> = {
+  creator: [
+    { key: 'A', label: 'select', tone: 'primary' },
+    { key: 'B', label: 'home', tone: 'quiet' }
+  ],
   home: [
     { key: 'A', label: 'select', tone: 'primary' },
     { key: 'B', label: 'back', tone: 'quiet' },

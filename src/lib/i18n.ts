@@ -14,6 +14,31 @@ export function normalizeLocale(value: unknown): Locale {
 }
 
 export const en = {
+  creator: {
+    ui: {
+      title: 'Creator', description: 'Projects, job evidence and device checks. Porting Studio remains a separate legacy workflow.',
+      create: 'Create build', context: 'Selected library item', contextNote: 'No project was created. Authoring requires a program descriptor; project creation is unavailable in this early UI.',
+      stages: { base: 'Base', composition: 'Composition', profiles: 'Profiles', verification: 'Verification', release: 'Release' },
+      descriptorUnavailable: 'Unavailable: this stage requires descriptor authoring and is not part of the early UI.',
+      releaseUnavailable: 'Unavailable: real build and export are not enabled in this UI.',
+      projects: 'Projects', refresh: 'Refresh', emptyProjects: 'No saved projects.', revision: 'Revision', modified: 'Modified',
+      jobs: 'Job progress and history', jobId: 'Job ID', loadJob: 'Open job', noJobs: 'No jobs opened in this session. Enter an existing job ID to read its saved state.',
+      historyNote: 'Only acknowledged job snapshots and ordered events are shown. Closing Creator does not cancel a job.',
+      sequence: 'Sequence', phase: 'Phase', cancel: 'Cancel job', resume: 'Resume job',
+      statuses: { queued: 'Queued', running: 'Running', cancelling: 'Cancelling', cancelled: 'Cancelled', interrupted: 'Interrupted', completed: 'Completed', failed: 'Failed', passed: 'Passed', not_tested: 'Not tested' },
+      kinds: { scan: 'Scan', classify: 'Classification', build: 'Build', verify: 'Verification', export: 'Export', verify_https: 'HTTPS verification' }
+    },
+    common: { unavailable: 'Unavailable', error: 'Error', idle: 'Not requested', preview: 'Browser preview: Creator commands are unavailable without the native bridge.' }
+  },
+  input: {
+    title: 'Device selection and check', open: 'Check input device', devices: 'Devices', empty: 'No devices reported by the input service.',
+    connected: 'Connected', disconnected: 'Disconnected', known: 'Mapping known', unknown: 'Unknown mapping — no button layout inferred',
+    check: 'Start check', stop: 'Stop and release device', assignment: 'Binding assignment', assignmentNote: 'Unavailable: saving assignments requires a descriptor controls profile. No binding is saved by this dialog.',
+    ownership: 'This dialog owns navigation input. The launcher shell is paused.',
+    releaseRequired: 'Device release is not confirmed. Retry stop; input ownership is retained until handlesClosed is acknowledged.',
+    noSession: 'No input session started.', session: 'Session', buttons: 'Logical buttons', axes: 'Logical axes',
+    statuses: { active: 'Active', disconnected: 'Disconnected', stopping: 'Stopping', stopped: 'Stopped', failed: 'Failed' }
+  },
   language: {
     label: 'Language',
     description: 'Choose the interface language. Catalog text stays as the source provides it.',
@@ -418,6 +443,7 @@ export const en = {
       home: 'Home',
       library: 'Library',
       downloads: 'Downloads',
+      creator: 'Creator',
       settings: 'Settings'
     },
     stats: {
@@ -855,6 +881,31 @@ type DeepWiden<T> =
 export type UiText = DeepWiden<typeof en>;
 
 export const ru: UiText = {
+  creator: {
+    ui: {
+      title: 'Creator', description: 'Проекты, свидетельства заданий и проверка устройств. Porting Studio остаётся отдельным legacy-потоком.',
+      create: 'Создать сборку', context: 'Выбрано в библиотеке', contextNote: 'Проект не создан. Для создания нужен дескриптор программы; в раннем UI создание проекта недоступно.',
+      stages: { base: 'Основа', composition: 'Состав', profiles: 'Профили', verification: 'Проверка', release: 'Выпуск' },
+      descriptorUnavailable: 'Недоступно: этап требует редактирования дескриптора и не входит в ранний UI.',
+      releaseUnavailable: 'Недоступно: реальные build и export в этом UI не включены.',
+      projects: 'Проекты', refresh: 'Обновить', emptyProjects: 'Сохранённых проектов нет.', revision: 'Ревизия', modified: 'Изменён',
+      jobs: 'Прогресс и история заданий', jobId: 'ID задания', loadJob: 'Открыть задание', noJobs: 'В этой сессии задания не открывались. Введи ID существующего задания, чтобы прочитать сохранённое состояние.',
+      historyNote: 'Показаны только подтверждённые снимки заданий и упорядоченные события. Закрытие Creator не отменяет задание.',
+      sequence: 'Последовательность', phase: 'Этап', cancel: 'Отменить задание', resume: 'Продолжить задание',
+      statuses: { queued: 'В очереди', running: 'Выполняется', cancelling: 'Отмена', cancelled: 'Отменено', interrupted: 'Прервано', completed: 'Завершено', failed: 'Ошибка', passed: 'Пройдено', not_tested: 'Не проверено' },
+      kinds: { scan: 'Сканирование', classify: 'Классификация', build: 'Сборка', verify: 'Проверка', export: 'Экспорт', verify_https: 'Проверка HTTPS' }
+    },
+    common: { unavailable: 'Недоступно', error: 'Ошибка', idle: 'Не запрошено', preview: 'Предпросмотр в браузере: команды Creator недоступны без нативного bridge.' }
+  },
+  input: {
+    title: 'Выбор и проверка устройства', open: 'Проверить устройство ввода', devices: 'Устройства', empty: 'Сервис ввода не сообщил об устройствах.',
+    connected: 'Подключено', disconnected: 'Отключено', known: 'Раскладка известна', unknown: 'Раскладка неизвестна — расположение кнопок не предполагается',
+    check: 'Начать проверку', stop: 'Остановить и освободить устройство', assignment: 'Назначение кнопок', assignmentNote: 'Недоступно: сохранение назначений требует профиля управления в дескрипторе. Этот диалог не сохраняет назначения.',
+    ownership: 'Диалог владеет навигационным вводом. Навигация shell приостановлена.',
+    releaseRequired: 'Освобождение устройства не подтверждено. Повтори остановку; владение вводом сохраняется до подтверждения handlesClosed.',
+    noSession: 'Сессия ввода не запущена.', session: 'Сессия', buttons: 'Логические кнопки', axes: 'Логические оси',
+    statuses: { active: 'Активно', disconnected: 'Отключено', stopping: 'Остановка', stopped: 'Остановлено', failed: 'Ошибка' }
+  },
   language: {
     label: 'Язык',
     description: 'Выбери язык интерфейса. Текст каталогов остается таким, каким его дает источник.',
@@ -1259,6 +1310,7 @@ export const ru: UiText = {
       home: 'Главная',
       library: 'Библиотека',
       downloads: 'Загрузки',
+      creator: 'Creator',
       settings: 'Настройки'
     },
     stats: {

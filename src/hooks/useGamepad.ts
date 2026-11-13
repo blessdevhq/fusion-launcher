@@ -1,37 +1,38 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, type RefObject } from 'react';
 import {
-  actionForInput,
   nextFocusTarget,
-  type FocusDirection,
   type FocusTarget
 } from '../lib/focusManager.ts';
+import { gamepadCommandForKey, type InputOwnershipOptions } from '../lib/gamepadInput.ts';
 
-interface UseGamepadOptions {
+interface UseGamepadOptions extends InputOwnershipOptions {
   focusedItemId: string | null;
   setFocusedItemId: (id: string | null) => void;
   onActivate: (id: string) => void;
   onBack: () => void;
   onMenu: (id: string | null) => void;
+  /** Limit collection and focus lookup to this root when using an explicit inputOwner. */
+  focusRoot?: RefObject<HTMLElement | null>;
 }
-
-const DIRECTION_KEYS: Record<string, FocusDirection> = {
-  ArrowLeft: 'left',
-  ArrowRight: 'right',
-  ArrowUp: 'up',
-  ArrowDown: 'down'
-};
 
 export function useGamepad({
   focusedItemId,
   setFocusedItemId,
   onActivate,
   onBack,
-  onMenu
+  onMenu,
+  inputOwner,
+  enabled = true,
+  focusRoot
 }: UseGamepadOptions) {
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
+      const command = gamepadCommandForKey(event, { inputOwner, enabled });
+      if (!command) return;
+      const root = focusRoot ? focusRoot.current : document;
+      if (!root) return;
       const target = event.target;
       // Native selects own arrows, activation and Escape; do not route them to the shell.
       if (target instanceof HTMLElement && target.tagName === 'SELECT') return;
@@ -49,34 +50,32 @@ export function useGamepad({
         return;
       }
 
-      const direction = DIRECTION_KEYS[event.code] ?? DIRECTION_KEYS[event.key];
-      if (direction) {
-        const targets = collectFocusTargets();
-        const next = nextFocusTarget(targets, focusedItemId, direction);
+      if (command === 'left' || command === 'right' || command === 'up' || command === 'down') {
+        const targets = collectFocusTargets(root);
+        const next = nextFocusTarget(targets, focusedItemId, command);
         if (next) {
           event.preventDefault();
           setFocusedItemId(next.id);
-          document.querySelector<HTMLElement>(`[data-focus-id="${cssEscape(next.id)}"]`)?.focus({ preventScroll: false });
+          // Compare IDs as data, not selector syntax (also safe without CSS.escape).
+          Array.from(root.querySelectorAll<HTMLElement>('[data-focus-id]'))
+            .find((element) => element.dataset.focusId === next.id)?.focus({ preventScroll: false });
         }
         return;
       }
 
-      const action = actionForInput(event.code);
-      if (!action) return;
-
       event.preventDefault();
-      if (action === 'activate' && focusedItemId) onActivate(focusedItemId);
-      if (action === 'back') onBack();
-      if (action === 'menu') onMenu(focusedItemId);
+      if (command === 'activate' && focusedItemId) onActivate(focusedItemId);
+      if (command === 'back') onBack();
+      if (command === 'menu') onMenu(focusedItemId);
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [focusedItemId, onActivate, onBack, onMenu, setFocusedItemId]);
+  }, [focusedItemId, onActivate, onBack, onMenu, setFocusedItemId, inputOwner, enabled, focusRoot]);
 }
 
-function collectFocusTargets(): FocusTarget[] {
-  return Array.from(document.querySelectorAll<HTMLElement>('[data-focus-id]'))
+function collectFocusTargets(root: ParentNode): FocusTarget[] {
+  return Array.from(root.querySelectorAll<HTMLElement>('[data-focus-id]'))
     .filter((element) => !element.hasAttribute('disabled') && element.offsetParent !== null)
     .map((element) => {
       const rect = element.getBoundingClientRect();
@@ -92,11 +91,4 @@ function collectFocusTargets(): FocusTarget[] {
       };
     })
     .filter((target) => target.id);
-}
-
-function cssEscape(value: string) {
-  if (typeof CSS !== 'undefined' && CSS.escape) {
-    return CSS.escape(value);
-  }
-  return value.replace(/"/g, '\\"');
 }
