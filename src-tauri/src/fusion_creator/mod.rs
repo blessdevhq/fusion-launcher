@@ -1,9 +1,22 @@
-//! Wave-zero DTOs and signatures. No project writes, job runner, export or input backend.
+//! Frozen Creator DTOs, project storage and durable jobs. Build/export handlers are host-owned.
+pub mod bridge;
 pub mod declarative;
 pub mod input;
+pub mod jobs;
+pub(crate) mod jobs_schema;
 pub mod profiles;
 pub(crate) mod project_storage;
+pub(crate) mod project_service;
 pub mod projection;
+
+#[cfg(test)]
+mod jobs_tests;
+
+#[cfg(test)]
+mod project_service_tests;
+
+#[cfg(test)]
+mod runner_tests;
 
 use std::collections::BTreeMap;
 
