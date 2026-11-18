@@ -235,6 +235,66 @@ async fn external_state_omits_local_input_requirements_without_allowing_override
     assert!(state.user_layers[0].raw_path_required);
 }
 
+#[tokio::test]
+async fn external_install_requires_local_approval_for_exact_descriptor() {
+    use crate::fusion_creator::declarative::runtime::EnvironmentApproval;
+    use crate::fusion_source::program_schema::ProgramDescriptor;
+    use crate::fusion_source::ErrorCode;
+
+    let mut fixture = Fixture::new();
+    fixture.document["creator"]["program_descriptor"]["entrypoint"]["environment_paths"] =
+        json!([{"name":"FUSION_FIXTURE_DATA", "path":"userdata"}]);
+    fixture.publish();
+    fixture.connect().await;
+    let request = InstallRequest::default();
+    let error = fixture
+        .service
+        .game_install(&fixture.game, request.clone())
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, ErrorCode::ActionUnavailable);
+    assert!(error.message.contains("require approval"));
+    assert!(fixture
+        .storage
+        .get_active_snapshot(&fixture.game)
+        .unwrap()
+        .is_none());
+
+    let program: ProgramDescriptor =
+        serde_json::from_value(fixture.document["creator"]["program_descriptor"].clone()).unwrap();
+    let approval =
+        EnvironmentApproval::for_descriptor(&program, ["FUSION_FIXTURE_DATA".into()].into())
+            .unwrap();
+    fixture.service = fixture
+        .service
+        .with_program_environment_approval(fixture.game.clone(), approval)
+        .unwrap();
+    fixture
+        .service
+        .game_install(&fixture.game, request.clone())
+        .await
+        .unwrap();
+    let original = fixture.active();
+    assert!(original.program_environment_approval.is_some());
+
+    fixture.document["version"] = json!("2");
+    fixture.document["creator"]["program_descriptor"]["identity"]["version"] = json!("2");
+    fixture.publish();
+    fixture
+        .service
+        .source_refresh(&fixture.game.source_id)
+        .await
+        .unwrap();
+    let error = fixture
+        .service
+        .game_update(&fixture.game, request)
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, ErrorCode::ActionUnavailable);
+    assert!(error.message.contains("require approval"));
+    assert_eq!(fixture.active().id, original.id);
+}
+
 fn workspace_bytes(
     root: &std::path::Path,
 ) -> Vec<(

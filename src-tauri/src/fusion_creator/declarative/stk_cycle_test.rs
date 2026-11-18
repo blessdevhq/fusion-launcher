@@ -105,18 +105,44 @@ fn config(snapshot: &WorkspaceSnapshot, windowed: bool) {
 
 fn process(path: &Path) -> Option<u32> {
     let output = Command::new("powershell.exe")
-        .args(["-NoProfile", "-NonInteractive", "-Command", "$wanted=[System.IO.Path]::GetFullPath($env:FUSION_OBSERVED_PE); Get-Process -Name ([System.IO.Path]::GetFileNameWithoutExtension($wanted)) -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $wanted } | ForEach-Object { $_.Id }"])
-        .env("FUSION_OBSERVED_PE", path).output().unwrap();
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            r#"
+            $ErrorActionPreference = 'Stop'
+            $wanted = [System.IO.Path]::GetFullPath($env:FUSION_OBSERVED_PE)
+            $name = [System.IO.Path]::GetFileNameWithoutExtension($wanted)
+            Get-Process | Where-Object { $_.ProcessName -eq $name -and $_.Path -eq $wanted } |
+                ForEach-Object { $_.Id }
+        "#,
+        ])
+        .env("FUSION_OBSERVED_PE", path)
+        .output()
+        .unwrap();
     assert!(
         output.status.success(),
-        "{}",
+        "observer failed ({}) for {}: {}",
+        output.status,
+        path.display(),
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let mut pids = stdout.lines().flat_map(|line| line.trim().parse::<u32>());
+    let mut pids = stdout
+        .lines()
+        .map(|line| line.trim().parse::<u32>().unwrap());
     let pid = pids.next();
     assert!(pids.next().is_none());
     pid
+}
+
+#[test]
+fn windows_observer_distinguishes_no_process_from_probe_failure() {
+    let directory = tempfile::tempdir().unwrap();
+    let executable = directory
+        .path()
+        .join("fusion_creator_absent_fixture_oQ9.exe");
+    assert_eq!(process(&executable), None);
 }
 
 #[tokio::test]
@@ -132,10 +158,10 @@ async fn real_supertuxkart_clean_install_observed_launch_update_rollback() {
         .unwrap();
     let root = sandbox.path();
     let library = root.join("library");
-    let workspace = root.join("workspace");
+    let workspace = library.join(".fusion-source/workspaces");
     let published = root.join("source");
     fs::create_dir(&published).unwrap();
-    fs::create_dir(&workspace).unwrap();
+
     let db = root.join("player.sqlite");
     let storage = Arc::new(SqliteFusionStorage::new(Arc::new(Mutex::new(
         RepositoryStore::open(&db).unwrap(),
@@ -165,6 +191,21 @@ async fn real_supertuxkart_clean_install_observed_launch_update_rollback() {
         source_id: "creator-live-cycle".into(),
         game_id: "portable".into(),
     };
+    // The operator of this opt-in test explicitly consents to these local
+    // paths. Never derive consent by iterating names in the remote manifest.
+    let approval = super::super::runtime::EnvironmentApproval::for_descriptor(
+        &program,
+        [
+            "SUPERTUXKART_SAVEDIR".into(),
+            "SUPERTUXKART_HIGHSCOREDIR".into(),
+            "SUPERTUXKART_DATADIR".into(),
+        ]
+        .into(),
+    )
+    .unwrap();
+    let service = service
+        .with_program_environment_approval(game.clone(), approval)
+        .unwrap();
     publish(&published, &server, &descriptor, "1.5-creator.1");
     let index = server.url("index.json");
     service.source_add(&index).await.unwrap();
@@ -180,10 +221,7 @@ async fn real_supertuxkart_clean_install_observed_launch_update_rollback() {
         .game_set_options(&game, options("windowed"))
         .await
         .unwrap();
-    let request = InstallRequest {
-        external_workspace_root: Some(workspace.to_str().unwrap().to_string()),
-        ..InstallRequest::default()
-    };
+    let request = InstallRequest::default();
     assert!(!library
         .join(".fusion-source/cas/objects")
         .read_dir()

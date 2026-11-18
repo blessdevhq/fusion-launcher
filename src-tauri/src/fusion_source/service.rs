@@ -220,6 +220,8 @@ struct ServiceInner {
     environment: ServiceEnvironment,
     adapters: FusionHostAdapters,
     attestations: BTreeMap<QualifiedGameId, DynamicAssetAttestation>,
+    program_environment_approvals:
+        BTreeMap<QualifiedGameId, crate::fusion_creator::declarative::runtime::EnvironmentApproval>,
 }
 
 #[derive(Clone)]
@@ -271,6 +273,7 @@ impl FusionService {
                 environment,
                 adapters: FusionHostAdapters::default(),
                 attestations: BTreeMap::new(),
+                program_environment_approvals: BTreeMap::new(),
             }),
         })
     }
@@ -315,6 +318,26 @@ impl FusionService {
                 )
             })?
             .attestations = attestations;
+        Ok(self)
+    }
+
+    /// Supply a local host decision before sharing the service. Neither the
+    /// Source nor an InstallRequest can supply approval. Assembly independently
+    /// checks the names and descriptor digest and records it in the local snapshot.
+    pub fn with_program_environment_approval(
+        mut self,
+        game: QualifiedGameId,
+        approval: crate::fusion_creator::declarative::runtime::EnvironmentApproval,
+    ) -> Result<Self, FusionError> {
+        Arc::get_mut(&mut self.inner)
+            .ok_or_else(|| {
+                FusionError::new(
+                    ErrorCode::OperationInProgress,
+                    "Configure environment approvals before sharing the service.",
+                )
+            })?
+            .program_environment_approvals
+            .insert(game, approval);
         Ok(self)
     }
 
@@ -811,6 +834,11 @@ impl FusionService {
     ) -> Result<WorkspaceAssembler, FusionError> {
         let assembler = WorkspaceAssembler::open(&self.inner.library_root, game)?
             .with_patch_tools(self.inner.adapters.patch_tools.clone());
+        let assembler = if let Some(approval) = self.inner.program_environment_approvals.get(game) {
+            assembler.with_program_environment_approval(approval.clone())
+        } else {
+            assembler
+        };
         if let Some(root) = external {
             assembler.with_external_workspace_root(Path::new(root))
         } else {
