@@ -797,6 +797,24 @@ async fn killed_child_recovers_and_resumes_each_of_the_five_durable_boundaries()
             assert!(handler.validate_checkpoint(checkpoint, &bytes).unwrap());
         }
         assert_eq!(done.report_ids, vec![report().report_id]);
+        let store = runner.store();
+        let store = store.lock().unwrap();
+        let projects = super::project_service::list(&store).unwrap();
+        let current = projects
+            .iter()
+            .find(|summary| summary.project_id == receipt.project_id)
+            .unwrap();
+        assert_eq!(current.verification_status, CreatorReportStatus::Passed);
+        let saved_release: Vec<u8> = store
+            .conn
+            .query_row(
+                "SELECT release_json FROM creator_releases WHERE release_id=?1",
+                [NEW_RELEASE],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(saved_release, serde_json::to_vec(&release()).unwrap());
+        drop(store);
         assert!(
             runner.resume(&receipt.job_id).is_err(),
             "completed jobs must not resume"

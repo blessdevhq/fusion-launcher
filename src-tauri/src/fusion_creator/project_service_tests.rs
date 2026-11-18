@@ -291,6 +291,38 @@ fn service_list_never_borrows_another_projects_evidence() {
 }
 
 #[test]
+fn service_list_rejects_a_report_bound_to_different_manifest_bytes() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = open_store(&dir.path().join("library.db")).unwrap();
+    let target = project("target", 0);
+    save(&mut store, target.clone(), None);
+    evidence(
+        &store,
+        &target,
+        "original",
+        CreatorReportKind::StructureIntegrity,
+        CreatorReportStatus::Passed,
+    );
+    let original: Vec<u8> = store
+        .conn
+        .query_row("SELECT report_json FROM creator_reports", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    let mut report: CreatorReport = serde_json::from_slice(&original).unwrap();
+    report.report_id = "wrong-manifest".into();
+    report.release_blake3 = "c".repeat(64);
+    store.conn.execute(
+        "INSERT INTO creator_reports(report_id,project_id,project_revision,report_json) VALUES(?1,?2,?3,?4)",
+        params![report.report_id, target.project_id, target.revision, serde_json::to_vec(&report).unwrap()],
+    ).unwrap();
+    assert_eq!(
+        project_service::list(&store).unwrap_err().code,
+        ErrorCode::IntegrityViolation
+    );
+}
+
+#[test]
 fn service_list_rejects_missing_or_out_of_range_metadata() {
     let dir = tempfile::tempdir().unwrap();
     let mut store = open_store(&dir.path().join("library.db")).unwrap();

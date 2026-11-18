@@ -256,6 +256,9 @@ fn validate_report_release(
     ).optional().map_err(sql_error)?;
     let (project_id, revision, bytes) = row.ok_or_else(invalid_stored)?;
     let release: CreatorRelease = stored_json(&bytes)?;
+    // The immutable report is added after the immutable release. Its release
+    // ID, project revision and pinned manifest digest define the association;
+    // the original release JSON cannot be updated with a later report ID.
     if project_id != project.project_id
         || revision < 0
         || revision as u64 != project.revision
@@ -263,7 +266,6 @@ fn validate_report_release(
         || release.project_id != project.project_id
         || release.project_revision != project.revision
         || release.manifest_blake3 != report.release_blake3
-        || !release.report_ids.contains(&report.report_id)
         || release
             .artifact_hashes
             .values()
