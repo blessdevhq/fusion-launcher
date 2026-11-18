@@ -1,5 +1,7 @@
-//! Typed Creator/input IPC surface. Wave-zero actions are explicitly unavailable.
+//! Typed Creator/input IPC. Unimplemented host operations remain explicitly unavailable.
+use crate::fusion_creator::bridge::CreatorBridge;
 use crate::fusion_creator::input::*;
+use crate::fusion_creator::project_service;
 use crate::fusion_creator::*;
 use crate::fusion_source::errors::{ErrorCode, FusionError};
 
@@ -27,17 +29,59 @@ macro_rules! unavailable_command {
     };
 }
 
-unavailable_command!(fusion_creator_project_list() -> Vec<CreatorProjectSummary>);
-unavailable_command!(fusion_creator_project_open(CreatorProjectRequest) -> CreatorProjectOpenResponse);
-unavailable_command!(fusion_creator_project_save(CreatorProjectSaveRequest) -> CreatorProjectSaveResponse);
+async fn blocking<T: Send + 'static>(
+    work: impl FnOnce() -> Result<T, FusionError> + Send + 'static,
+) -> Result<T, FusionError> {
+    tauri::async_runtime::spawn_blocking(work)
+        .await
+        .map_err(|_| crate::fusion_creator::jobs::io())?
+}
+
+macro_rules! creator_command {
+    ($name:ident () -> $response:ty, |$runner:ident| $body:block) => {
+        #[tauri::command]
+        pub async fn $name(bridge: tauri::State<'_, CreatorBridge>) -> Result<$response, FusionError> {
+            let $runner = bridge.runner.clone();
+            blocking(move || $body).await
+        }
+    };
+    ($name:ident ($request:ty) -> $response:ty, |$runner:ident, $value:ident| $body:block) => {
+        #[tauri::command]
+        pub async fn $name(request: $request, bridge: tauri::State<'_, CreatorBridge>) -> Result<$response, FusionError> {
+            let $runner = bridge.runner.clone();
+            let $value = request;
+            blocking(move || $body).await
+        }
+    };
+}
+
+creator_command!(fusion_creator_project_list() -> Vec<CreatorProjectSummary>, |runner| {
+    let shared = runner.store();
+    let store = shared.lock().map_err(|_| crate::fusion_creator::jobs::io())?;
+    project_service::list(&store)
+});
+creator_command!(fusion_creator_project_open(CreatorProjectRequest) -> CreatorProjectOpenResponse, |runner, request| {
+    let shared = runner.store();
+    let store = shared.lock().map_err(|_| crate::fusion_creator::jobs::io())?;
+    project_service::open(&store, &request.project_id)
+});
+creator_command!(fusion_creator_project_save(CreatorProjectSaveRequest) -> CreatorProjectSaveResponse, |runner, request| {
+    let shared = runner.store();
+    let mut store = shared.lock().map_err(|_| crate::fusion_creator::jobs::io())?;
+    project_service::save(&mut store, request)
+});
 unavailable_command!(fusion_creator_scan(CreatorJobStartRequest) -> CreatorJobReceipt);
 unavailable_command!(fusion_creator_classify(CreatorJobStartRequest) -> CreatorJobReceipt);
 unavailable_command!(fusion_creator_build(CreatorJobStartRequest) -> CreatorJobReceipt);
 unavailable_command!(fusion_creator_verify(CreatorJobStartRequest) -> CreatorJobReceipt);
 unavailable_command!(fusion_creator_export(CreatorJobStartRequest) -> CreatorJobReceipt);
 unavailable_command!(fusion_creator_verify_https(CreatorJobStartRequest) -> CreatorJobReceipt);
-unavailable_command!(fusion_creator_job_get(CreatorJobRequest) -> CreatorJob);
-unavailable_command!(fusion_creator_job_cancel(CreatorJobRequest) -> CreatorJob);
+creator_command!(fusion_creator_job_get(CreatorJobRequest) -> CreatorJob, |runner, request| {
+    runner.get(&request.job_id)
+});
+creator_command!(fusion_creator_job_cancel(CreatorJobRequest) -> CreatorJob, |runner, request| {
+    runner.cancel(&request.job_id)
+});
 unavailable_command!(fusion_creator_job_resume(CreatorJobRequest) -> CreatorJobReceipt);
 unavailable_command!(fusion_creator_release_list(CreatorProjectRequest) -> Vec<CreatorRelease>);
 unavailable_command!(fusion_creator_report_get(CreatorReportRequest) -> CreatorReport);
@@ -54,10 +98,7 @@ mod tests {
     use crate::fusion_source::errors::ErrorCode;
 
     #[tokio::test]
-    async fn commands_never_report_mock_success() {
-        let error = fusion_creator_project_list().await.unwrap_err();
-        assert_eq!(error.code, ErrorCode::ActionUnavailable);
-        assert_eq!(error.details["command"], "fusion_creator_project_list");
+    async fn unimplemented_commands_never_report_mock_success() {
         let error = fusion_input_devices().await.unwrap_err();
         assert_eq!(error.code, ErrorCode::ActionUnavailable);
         assert_eq!(error.details["command"], "fusion_input_devices");
@@ -73,14 +114,7 @@ mod tests {
         let project = CreatorProjectRequest {
             project_id: "fixture-project".into(),
         };
-        rejects!(fusion_creator_project_open, project.clone());
-        rejects!(
-            fusion_creator_project_save,
-            CreatorProjectSaveRequest {
-                project: serde_json::from_value(fixture["project"].clone()).unwrap(),
-                expected_revision: None,
-            }
-        );
+
         let start: CreatorJobStartRequest =
             serde_json::from_value(fixture["jobStart"].clone()).unwrap();
         rejects!(fusion_creator_scan, start.clone());
@@ -92,8 +126,6 @@ mod tests {
         let job = CreatorJobRequest {
             job_id: "job-1".into(),
         };
-        rejects!(fusion_creator_job_get, job.clone());
-        rejects!(fusion_creator_job_cancel, job.clone());
         rejects!(fusion_creator_job_resume, job);
         rejects!(fusion_creator_release_list, project);
         rejects!(

@@ -171,6 +171,10 @@ pub fn run() {
                 commands::fusion_source::FusionBridge::new(app.handle(), &app_state)
                     .map_err(|error| setup_error(error.to_string()))?,
             );
+            app.manage(
+                fusion_creator::bridge::CreatorBridge::new(app.handle(), &app_state)
+                    .map_err(|error| setup_error(error.to_string()))?,
+            );
 
             // Background cover backfill: fill in missing cover art for catalog
             // games on launch. No-op without a SteamGridDB key, and capped so a
