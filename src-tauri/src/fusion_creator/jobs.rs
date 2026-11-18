@@ -11,6 +11,11 @@ use std::fs::{File, OpenOptions};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 
+#[path = "release_content.rs"]
+mod release_content;
+use release_content::Receipt as ReleaseReceipt;
+pub use release_content::ReleaseContent;
+
 pub(crate) type ProgressSink = Arc<dyn Fn(CreatorJobProgress) + Send + Sync>;
 
 /// G implements this host-only API; never accept implementations from a Source.
@@ -23,6 +28,15 @@ pub trait JobHandler: Send + Sync {
         project: &CreatorProgramProject,
         bindings: Option<&SavedPrivateBindings>,
     ) -> Result<BTreeMap<String, String>, FusionError>;
+    /// The runner has audited the selected release before calling this hook.
+    fn input_hashes_for_release(
+        &self,
+        project: &CreatorProgramProject,
+        bindings: Option<&SavedPrivateBindings>,
+        _release: Option<&ReleaseContent>,
+    ) -> Result<BTreeMap<String, String>, FusionError> {
+        self.input_hashes(project, bindings)
+    }
     /// Validate complete, already atomically published output against its real storage.
     /// Scan requires BOTH scan and classification; a partial file is never evidence.
     fn validate_checkpoint(
@@ -274,6 +288,57 @@ impl JobRunner {
     pub fn get(&self, job_id: &str) -> Result<CreatorJob, FusionError> {
         Ok(load(&lock(&self.0.store)?.conn, job_id)?.0)
     }
+    /// Resolve a receipt-backed exact project release and audit actual CAS bytes.
+    pub fn read_release_content(
+        &self,
+        project_id: &str,
+        revision: u64,
+        release_id: &str,
+    ) -> Result<ReleaseContent, FusionError> {
+        let (release, evidence) = {
+            let store = lock(&self.0.store)?;
+            let bytes: Vec<u8> = store.conn.query_row(
+                "SELECT release_json FROM creator_releases WHERE release_id=?1 AND project_id=?2 AND project_revision=?3",
+                params![release_id, project_id, revision], |row| row.get(0),
+            ).optional().map_err(|_| io())?.ok_or_else(|| FusionError::new(ErrorCode::SnapshotNotFound, "Creator release not found for this project revision."))?;
+            let release: CreatorRelease = serde_json::from_slice(&bytes).map_err(|_| invalid())?;
+            if release.release_id != release_id
+                || release.project_id != project_id
+                || release.project_revision != revision
+            {
+                return Err(invalid());
+            }
+            let checkpoint_id = release_content::checkpoint_id(release_id);
+            let (evidence, job_id): (Vec<u8>, String) = store.conn.query_row(
+                "SELECT evidence, job_id FROM creator_checkpoint_results WHERE checkpoint_id=?1",
+                [&checkpoint_id], |row| Ok((row.get(0)?, row.get(1)?)),
+            ).optional().map_err(|_| io())?.ok_or_else(release_content::integrity)?;
+            let (job, _) = load(&store.conn, &job_id)?;
+            if job.progress.project_id != project_id
+                || job.progress.project_revision != revision
+                || !job.checkpoints.iter().any(|point| {
+                    point.checkpoint_id == checkpoint_id
+                        && point.job_id == job_id
+                        && point.boundary == CreatorCheckpointBoundary::ReleaseBuilt
+                        && point.result_blake3 == digest(&evidence)
+                })
+            {
+                return Err(release_content::integrity());
+            }
+            (release, evidence)
+        };
+        ReleaseReceipt::audit(&self.0.root, release, &evidence)
+    }
+    fn selected_release(
+        &self,
+        request: &CreatorJobStartRequest,
+    ) -> Result<Option<ReleaseContent>, FusionError> {
+        request
+            .release_id
+            .as_deref()
+            .map(|id| self.read_release_content(&request.project_id, request.project_revision, id))
+            .transpose()
+    }
     fn inputs(
         &self,
         project_id: &str,
@@ -290,8 +355,9 @@ impl JobRunner {
         project: &CreatorProgramProject,
         bindings: Option<&SavedPrivateBindings>,
         handler: &dyn JobHandler,
+        release: Option<&ReleaseContent>,
     ) -> Result<CreatorResumeStamp, FusionError> {
-        let mut hashes = handler.input_hashes(project, bindings)?;
+        let mut hashes = handler.input_hashes_for_release(project, bindings, release)?;
         if !hashes.contains_key("executor_implementation")
             || hashes.values().any(|value| !valid_hash(value))
         {
@@ -314,6 +380,10 @@ impl JobRunner {
             canonical_hash(&project.program_descriptor)?,
         );
         hashes.insert("private_bindings".into(), canonical_hash(&bindings)?);
+        hashes.remove("selected_release");
+        if let Some(release) = release {
+            hashes.insert("selected_release".into(), release.receipt_blake3().into());
+        }
         Ok(CreatorResumeStamp {
             project_revision: project.revision,
             input_hashes: hashes,
@@ -330,7 +400,8 @@ impl JobRunner {
         validate_request(&project, &request)?;
         let workspace = self.workspace(&project.project_id);
         let lease = Lease::acquire(&workspace, "writer.lock")?;
-        let stamp = self.stamp(&project, bindings.as_ref(), &*handler)?;
+        let release = self.selected_release(&request)?;
+        let stamp = self.stamp(&project, bindings.as_ref(), &*handler, release.as_ref())?;
         let token = id();
         let job_id = format!("job-{}", id());
         let job = CreatorJob {
@@ -345,7 +416,7 @@ impl JobRunner {
                 completed_units: 0,
                 total_units: None,
                 checkpoint_id: None,
-                release_id: None,
+                release_id: request.release_id.clone(),
                 error: None,
             },
             checkpoints: vec![],
@@ -374,6 +445,7 @@ impl JobRunner {
                 project,
                 request,
                 stamp,
+                release,
                 workspace,
                 handler,
             },
@@ -446,7 +518,8 @@ impl JobRunner {
         }
         let (project, bindings) = self.inputs(&request.project_id)?;
         validate_request(&project, &request)?;
-        let stamp = self.stamp(&project, bindings.as_ref(), &*handler)?;
+        let release = self.selected_release(&request)?;
+        let stamp = self.stamp(&project, bindings.as_ref(), &*handler, release.as_ref())?;
         let encoded_stamp = encode(&stamp)?;
         if encode(&saved_stamp)? != encoded_stamp {
             return Err(conflict());
@@ -474,6 +547,26 @@ impl JobRunner {
             if evidence.is_empty()
                 || evidence.len() > 2 * 1024 * 1024
                 || digest(&evidence) != checkpoint.result_blake3
+            {
+                return Err(invalid());
+            }
+            if checkpoint.boundary == CreatorCheckpointBoundary::ReleaseBuilt
+                && checkpoint
+                    .checkpoint_id
+                    .starts_with(release_content::CHECKPOINT_PREFIX)
+            {
+                let receipt: ReleaseReceipt =
+                    serde_json::from_slice(&evidence).map_err(|_| invalid())?;
+                if checkpoint.checkpoint_id != release_content::checkpoint_id(&receipt.release_id) {
+                    return Err(invalid());
+                }
+                self.read_release_content(
+                    &project.project_id,
+                    project.revision,
+                    &receipt.release_id,
+                )?;
+            } else if (!cfg!(test)
+                && checkpoint.boundary == CreatorCheckpointBoundary::ReleaseBuilt)
                 || !handler.validate_checkpoint(checkpoint, &evidence)?
             {
                 return Err(invalid());
@@ -522,6 +615,7 @@ impl JobRunner {
                 project,
                 request,
                 stamp,
+                release,
                 workspace,
                 handler,
             },
@@ -612,6 +706,7 @@ pub struct JobContext {
     project: CreatorProgramProject,
     request: CreatorJobStartRequest,
     stamp: CreatorResumeStamp,
+    release: Option<ReleaseContent>,
     workspace: PathBuf,
     handler: Arc<dyn JobHandler>,
 }
@@ -621,6 +716,9 @@ impl JobContext {
     }
     pub fn request(&self) -> &CreatorJobStartRequest {
         &self.request
+    }
+    pub fn selected_release(&self) -> Option<&ReleaseContent> {
+        self.release.as_ref()
     }
     pub fn workspace(&self) -> &Path {
         &self.workspace
@@ -652,11 +750,13 @@ impl JobContext {
     }
     fn recheck_stamp(&self) -> Result<(), FusionError> {
         let (project, bindings) = self.runner.inputs(&self.project.project_id)?;
-        if encode(
-            &self
-                .runner
-                .stamp(&project, bindings.as_ref(), &*self.handler)?,
-        )? != encode(&self.stamp)?
+        let release = self.runner.selected_release(&self.request)?;
+        if encode(&self.runner.stamp(
+            &project,
+            bindings.as_ref(),
+            &*self.handler,
+            release.as_ref(),
+        )?)? != encode(&self.stamp)?
         {
             return Err(conflict());
         }
@@ -698,6 +798,50 @@ impl JobContext {
         Ok(())
     }
     pub fn checkpoint(&self, output: CheckpointOutput) -> Result<CreatorCheckpoint, FusionError> {
+        // Legacy synthetic recovery fixtures predate receipts and remain test-only.
+        if output.boundary == CreatorCheckpointBoundary::ReleaseBuilt && !cfg!(test) {
+            return Err(release_content::integrity());
+        }
+        self.commit_checkpoint(output, None)
+    }
+
+    /// Commit manifest.json and artifacts/<id> from a direct child of the owned workspace.
+    pub fn checkpoint_release(
+        &self,
+        release: CreatorRelease,
+        staging_directory: &str,
+    ) -> Result<CreatorCheckpoint, FusionError> {
+        self.check_cancelled()?;
+        if self.release.is_some()
+            || release.project_id != self.project.project_id
+            || release.project_revision != self.project.revision
+        {
+            return Err(conflict());
+        }
+        let stage = fs_safety::validate_relative_path(staging_directory)?;
+        if stage.components().count() != 1 {
+            return Err(release_content::integrity());
+        }
+        let evidence =
+            ReleaseReceipt::capture(&self.runner.0.root, &self.workspace.join(stage), &release)?;
+        let checkpoint_id = release_content::checkpoint_id(&release.release_id);
+        self.commit_checkpoint(
+            CheckpointOutput {
+                boundary: CreatorCheckpointBoundary::ReleaseBuilt,
+                evidence,
+                artifact_id: None,
+                release: Some(release),
+                report: None,
+            },
+            Some(checkpoint_id),
+        )
+    }
+
+    fn commit_checkpoint(
+        &self,
+        output: CheckpointOutput,
+        receipt_id: Option<String>,
+    ) -> Result<CreatorCheckpoint, FusionError> {
         self.check_cancelled()?;
         self.recheck_stamp()?;
         if output.evidence.is_empty()
@@ -707,17 +851,27 @@ impl JobContext {
         {
             return Err(invalid());
         }
+        if output.report.as_ref().is_some_and(|report| {
+            self.request
+                .release_id
+                .as_ref()
+                .is_some_and(|id| *id != report.release_id)
+        }) {
+            return Err(conflict());
+        }
+        let receipt_backed = receipt_id.is_some();
         let checkpoint = CreatorCheckpoint {
-            checkpoint_id: format!("checkpoint-{}", id()),
+            checkpoint_id: receipt_id.unwrap_or_else(|| format!("checkpoint-{}", id())),
             job_id: self.job_id.clone(),
             boundary: output.boundary.clone(),
             stamp: self.stamp.clone(),
             result_blake3: digest(&output.evidence),
             artifact_id: output.artifact_id.clone(),
         };
-        if !self
-            .handler
-            .validate_checkpoint(&checkpoint, &output.evidence)?
+        if !receipt_backed
+            && !self
+                .handler
+                .validate_checkpoint(&checkpoint, &output.evidence)?
         {
             return Err(invalid());
         }
