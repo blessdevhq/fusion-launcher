@@ -12,6 +12,10 @@ use std::fs;
 #[path = "external_acquisition_tests.rs"]
 mod acquisition;
 
+#[cfg(windows)]
+#[path = "stk_cycle_test.rs"]
+mod stk_cycle;
+
 #[test]
 fn external_program_plan_uses_pinned_descriptor_acquisition() {
     let mut value = serde_json::to_value(manifest()).unwrap();

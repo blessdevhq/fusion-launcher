@@ -1,0 +1,462 @@
+[
+  {
+    "path": "stk-code/build-aarch64/bin/OpenAL32.dll",
+    "blake3": "2586adc6f30ce67471147bc8e1c56aedf2e6d1a51407f97169e61d54a8fd9024",
+    "role": "core_library"
+  },
+  {
+    "path": "stk-code/build-aarch64/bin/SDL2.dll",
+    "blake3": "fc2e4e7c4cde8fd65f8ba46a12a7e5a5ab2e62cb312333b88a8092c857aca640",
+    "role": "core_library"
+  },
+  {
+    "path": "stk-code/build-aarch64/bin/libastcenc.dll",
+    "blake3": "df1477fe4edd47ee6d54800b48cd91cb99127e17ff144d58bdb4e5d30be5914b",
+    "role": "core_library"
+  },
+  {
+    "path": "stk-code/build-aarch64/bin/libcurl.dll",
+    "blake3": "86afb159bc7bad8bacf8cf39c21e3c4d405ce438c9eb0d561ebe17e9ef845357",
+    "role": "core_library"
+  },
+  {
+    "path": "stk-code/build-aarch64/bin/libfreetype.dll",
+    "blake3": "4fdf808421e15ec1a54b3537343caa6feb206fd5c7a4dbb0f646f5661f3898d4",
+    "role": "core_library"
+  },
+  {
+    "path": "stk-code/build-aarch64/bin/libharfbuzz.dll",
+    "blake3": "11773d7671f7baf81199eca87a0c7a48cca7ce74012a73a0b93e169fb5867885",
+    "role": "core_library"
+  },
+  {
+    "path": "stk-code/build-aarch64/bin/libjpeg-62.dll",
+    "blake3": "0c73e4be55e8af70c15390f17c81c85800ce6a84197c2384454fafa50e94203e",
+    "role": "core_library"
+  },
+  {
+    "path": "stk-code/build-aarch64/bin/libmbedcrypto.dll",
+    "blake3": "c080a5e3b90936a179a8e0c5e942a9cbcdbba7de0f049bdd5dab03db1327f527",
+    "role": "core_library"
+  },
+  {
+    "path": "stk-code/build-aarch64/bin/libmbedtls.dll",
+    "blake3": "a090694ffe62cdf201328060e1a975e54e20afea9365c174a9ce94dbd4314a1b",
+    "role": "core_library"
+  },
+  {
+    "path": "stk-code/build-aarch64/bin/libmbedx509.dll",
+    "blake3": "6c749ba7fc207e88af34966d069952173d572a63ba6e16a459808cd88da0a558",
+    "role": "core_library"
+  },
+  {
+    "path": "stk-code/build-aarch64/bin/libogg.dll",
+    "blake3": "2fb7a12904150cc45e5c0dddd7e57270bb130ad416fe0738c99ac4eab1e2c9c1",
+    "role": "core_library"
+  },
+  {
+    "path": "stk-code/build-aarch64/bin/libopenglrecorder.dll",
+    "blake3": "3eb3805aba1d75d9a20a10b8dd9502f386c8964e938588a3f09bbfe94c1fd30f",
+    "role": "core_library"
+  },
+  {
+    "path": "stk-code/build-aarch64/bin/libpng16.dll",
+    "blake3": "cb20d53d061cedb103b33bf5d20f4f667eaccb6b6fa86b5e393bf728b34f084f",
+    "role": "core_library"
+  },
+  {
+    "path": "stk-code/build-aarch64/bin/libsamplerate-0.dll",
+    "blake3": "16817528b0117d32d373f6d1adf23738d2f258afd792455dc24043ffd388a37a",
+    "role": "core_library"
+  },
+  {
+    "path": "stk-code/build-aarch64/bin/libshaderc_shared.dll",
+    "blake3": "91ef77f3b88136b235570b3350c0dfa71290d67e94e9516e717354bf0f7e96fe",
+    "role": "core_library"
+  },
+  {
+    "path": "stk-code/build-aarch64/bin/libsqlite3.dll",
+    "blake3": "2261d84fafcdb3d244a7ba66431642437a3230f18b0ccaaac576b1eeb3dbdb8b",
+    "role": "core_library"
+  },
+  {
+    "path": "stk-code/build-aarch64/bin/libturbojpeg.dll",
+    "blake3": "5372c1373cbc8525e476aa078b39eb04f2e8971ff55d50ae8b5eb73a2b5aeaab",
+    "role": "core_library"
+  },
+  {
+    "path": "stk-code/build-aarch64/bin/libvorbis.dll",
+    "blake3": "8efa20180c00a60542c82885101f185761509d49ea3e5486f2a75d5616c1257a",
+    "role": "core_library"
+  },
+  {
+    "path": "stk-code/build-aarch64/bin/libvorbisenc.dll",
+    "blake3": "9291803226a2cb8370b8030f050e677b7e5e733d7deac818968cff1c35f8d6af",
+    "role": "core_library"
+  },
+  {
+    "path": "stk-code/build-aarch64/bin/libvorbisfile.dll",
+    "blake3": "3a07a672a92c238db2fc4a0887683bb4e06b2a7fc2e53a83bebbafff074b4830",
+    "role": "core_library"
+  },
+  {
+    "path": "stk-code/build-aarch64/bin/libvpx.dll",
+    "blake3": "44f51a6722139e643df44dbc4fb6eef48bb982c24d5d6a8e5e24a6257c22a98f",
+    "role": "core_library"
+  },
+  {
+    "path": "stk-code/build-aarch64/bin/libzlib.dll",
+    "blake3": "85079226f931b09b188d6b5c6950af9dd4f9b6780b35dadc6ec1eff97d3c4259",
+    "role": "core_library"
+  },
+  {
+    "path": "stk-code/build-aarch64/bin/supertuxkart.exe",
+    "blake3": "e371f92d0c2eb2d8151ffdbbd49f95a596f3bdfcfc8f916560c8ed671729adb0",
+    "role": "core_library"
+  },
+  {
+    "path": "stk-code/build-armv7/bin/OpenAL32.dll",
+    "blake3": "e55ebd53c1927b03776bb122616f21b2ea220752cb737ff8f4d3f5f4f843d3f7",
+    "role": "core_library"
+  },
+  {
+    "path": "stk-code/build-armv7/bin/SDL2.dll",
+    "blake3": "8b1e9e2137218a9df75b4637b1ae415ac1a7b6e9e5dd300d09293a48cb0d2e5e",
+    "role": "core_library"
+  },
+  {
+    "path": "stk-code/build-armv7/bin/libastcenc.dll",
+    "blake3": "313e2edf610fc3b466921bb70e807c43a78cb904149d08e053cb066f00f95d62",
+    "role": "core_library"
+  },
+  {
+    "path": "stk-code/build-armv7/bin/libcurl.dll",
+    "blake3": "0a7028c6b879a4b0768e3ada450ae4d6209211c5a11f4e9b031661e4357c9ec2",
+    "role": "core_library"
+  },
+  {
+    "path": "stk-code/build-armv7/bin/libfreetype.dll",
+    "blake3": "06ee8b352cd6ab2f616f5cf6bd7c476acc8d44394cb37a557ae8a16258a8502c",
+    "role": "core_library"
+  },
+  {
+    "path": "stk-code/build-armv7/bin/libharfbuzz.dll",
+    "blake3": "f02fe12ea0665826fd7e4a907a230554e9a01855c4f2e7fe4ff97db6507dfcee",
+    "role": "core_library"
+  },
+  {
+    "path": "stk-code/build-armv7/bin/libjpeg-62.dll",
+    "blake3": "d5bf2592d5b6dc53892878c0875e06a15edf9ffd528645a6dbd083b2d01b3931",
+    "role": "core_library"
+  },
+  {
+    "path": "stk-code/build-armv7/bin/libmbedcrypto.dll",
+    "blake3": "8c1a1d27e34d90e5d21963c8172e0df2b9605fe911e45b49777d4617200fb493",
+    "role": "core_library"
+  },
+  {
+    "path": "stk-code/build-armv7/bin/libmbedtls.dll",
+    "blake3": "e2e6c5691d449405dd58ac81c859d4e0ae2abfefd637194ac8f77050484062d9",
+    "role": "core_library"
+  },
+  {
+    "path": "stk-code/build-armv7/bin/libmbedx509.dll",
+    "blake3": "a2378feb4b53b30a0607781aee058c9e92b2441a4dec7a9471588aa479cc422b",
+    "role": "core_library"
+  },
+  {
+    "path": "stk-code/build-armv7/bin/libogg.dll",
+    "blake3": "7e33ec5695ad80ac8605a8c2b7e5474615f3ec5b5ecfe66eba45ba007ccf8d4f",
+    "role": "core_library"
+  },
+  {
+    "path": "stk-code/build-armv7/bin/libopenglrecorder.dll",
+    "blake3": "fa56ad72be6dfd51c8bcb506072f887f2598a168fbe4d7ed26192a44bbccdf82",
+    "role": "core_library"
+  },
+  {
+    "path": "stk-code/build-armv7/bin/libpng16.dll",
+    "blake3": "d5dff4ceb480619d23a6091b8ec70bcda5c362692d7c7ad68bd7a658ca245083",
+    "role": "core_library"
+  },
+  {
+    "path": "stk-code/build-armv7/bin/libsamplerate-0.dll",
+    "blake3": "46b67035fabdb2cbd10f54de0bb59487998930eaa836caf5ba70dfc835715420",
+    "role": "core_library"
+  },
+  {
+    "path": "stk-code/build-armv7/bin/libshaderc_shared.dll",
+    "blake3": "0f729701b43048cc2e36ece4bfdf8f6e1d9b819363a429efc252e8cc6a751ded",
+    "role": "core_library"
+  },
+  {
+    "path": "stk-code/build-armv7/bin/libsqlite3.dll",
+    "blake3": "4361e514917ede59d09d6f2d88defa4c0da5b2da6c7c7aed54b939c27266e399",
+    "role": "core_library"
+  },
+  {
+    "path": "stk-code/build-armv7/bin/libturbojpeg.dll",
+    "blake3": "8a862b637f2cdad275108fc8f0c92b709dffe3f1a99c53007a9649debac9f54b",
+    "role": "core_library"
+  },
+  {
+    "path": "stk-code/build-armv7/bin/libvorbis.dll",
+    "blake3": "90dd6230018689ff5cff3c76e580185655c6291b9b70dbf398616d6956f3e4b0",
+    "role": "core_library"
+  },
+  {
+    "path": "stk-code/build-armv7/bin/libvorbisenc.dll",
+    "blake3": "e74ed7dffd01407ea8c3f3043a7cda4b6afcc832d2f4798f0cf7bf6eb6f5cd87",
+    "role": "core_library"
+  },
+  {
+    "path": "stk-code/build-armv7/bin/libvorbisfile.dll",
+    "blake3": "f248bad2e86fe114e2151cbe688c00169e92a9d99513ce3dd11125c860a49691",
+    "role": "core_library"
+  },
+  {
+    "path": "stk-code/build-armv7/bin/libvpx.dll",
+    "blake3": "0c2c740af7e4d314a3fe3663aa124a8f08d771378250ec1235fc6533c02e46d3",
+    "role": "core_library"
+  },
+  {
+    "path": "stk-code/build-armv7/bin/libzlib.dll",
+    "blake3": "bd481ccf76fb81427aa1ead017478834816292f1398e14b7ba6091a8c81a5438",
+    "role": "core_library"
+  },
+  {
+    "path": "stk-code/build-armv7/bin/supertuxkart.exe",
+    "blake3": "ddc6d5f987a98049a99fb9782c131d0ddbaf4f60b98b4884bd10058e135271b0",
+    "role": "core_library"
+  },
+  {
+    "path": "stk-code/build-i686/bin/OpenAL32.dll",
+    "blake3": "d69dd5c8f064041970eff7523ca66365f0324a312024aa10fa0229ed98f7e1e4",
+    "role": "core_library"
+  },
+  {
+    "path": "stk-code/build-i686/bin/SDL2.dll",
+    "blake3": "6553b33f0b78aea78f68f34fe075069e88f5daad4504be4820ad5076ed7270ad",
+    "role": "core_library"
+  },
+  {
+    "path": "stk-code/build-i686/bin/libastcenc.dll",
+    "blake3": "2e6e6136f63bab61caebf6b16fddaf9c448e513588610e0102aca0938e779fad",
+    "role": "core_library"
+  },
+  {
+    "path": "stk-code/build-i686/bin/libcurl.dll",
+    "blake3": "5ac6479470a3cb015f6373c05beb6a99a7ab384ed104254d92eee8c5ae5bae58",
+    "role": "core_library"
+  },
+  {
+    "path": "stk-code/build-i686/bin/libfreetype.dll",
+    "blake3": "8688d20c69de0532d5ea49395efa7cd225888130881044f1f664631576da12ce",
+    "role": "core_library"
+  },
+  {
+    "path": "stk-code/build-i686/bin/libharfbuzz.dll",
+    "blake3": "2e3c175ed541f5865445f9a30f07491de14498bb218bbdc69343c3d56025f227",
+    "role": "core_library"
+  },
+  {
+    "path": "stk-code/build-i686/bin/libjpeg-62.dll",
+    "blake3": "d1f7ad56f7fe739968e1f06dcd45e9391c3c20f1dfa525984e95889da48f128a",
+    "role": "core_library"
+  },
+  {
+    "path": "stk-code/build-i686/bin/libmbedcrypto.dll",
+    "blake3": "5ae28071c6588790c755cdbe4715136ce88d0a97204c53b3e797344b46b6c1f2",
+    "role": "core_library"
+  },
+  {
+    "path": "stk-code/build-i686/bin/libmbedtls.dll",
+    "blake3": "d4517af1a7a6e90119e77d9272d8c76f31f46e91de063488b806c9c52fd644ba",
+    "role": "core_library"
+  },
+  {
+    "path": "stk-code/build-i686/bin/libmbedx509.dll",
+    "blake3": "01fd3de7671b4a825ec6e235bf84c50f1f196481544c54958125465e74fd6be5",
+    "role": "core_library"
+  },
+  {
+    "path": "stk-code/build-i686/bin/libogg.dll",
+    "blake3": "17ff94c7c73f310820e8f17041b202d7251a8bbc4e0311361718b124149ac312",
+    "role": "core_library"
+  },
+  {
+    "path": "stk-code/build-i686/bin/libopenglrecorder.dll",
+    "blake3": "2926deb90b8fbc4fd05ed4b244e1dd1477cfa10e5b802683a5e3c9e385a6fd38",
+    "role": "core_library"
+  },
+  {
+    "path": "stk-code/build-i686/bin/libpng16.dll",
+    "blake3": "30a6550ac02252d63e6ae7e151a39e12f6f9fcffc0cd5e96436b0d1dd04e6fdf",
+    "role": "core_library"
+  },
+  {
+    "path": "stk-code/build-i686/bin/libsamplerate-0.dll",
+    "blake3": "4986c07a08d376f3faf4c0ebbfc170ec4464819604479661d1aa588bb25fa95b",
+    "role": "core_library"
+  },
+  {
+    "path": "stk-code/build-i686/bin/libshaderc_shared.dll",
+    "blake3": "880fc0c7b8c3437ba520211b1a1f087907fb8bce10a9866096d7d373f148b712",
+    "role": "core_library"
+  },
+  {
+    "path": "stk-code/build-i686/bin/libsqlite3.dll",
+    "blake3": "d1fa036b072753a0a5a46edb1abd512f7c52b3d662f4947a0a2aad5b9e8c4164",
+    "role": "core_library"
+  },
+  {
+    "path": "stk-code/build-i686/bin/libturbojpeg.dll",
+    "blake3": "57a506f8b1a5631ecc4677448f3d2568243d0c3bb8eab794f85c8de9aabc68ab",
+    "role": "core_library"
+  },
+  {
+    "path": "stk-code/build-i686/bin/libvorbis.dll",
+    "blake3": "3488ae7ed809d5e87edb4e36109b476f5a54ed17fc1015f473d3423c2e3426bc",
+    "role": "core_library"
+  },
+  {
+    "path": "stk-code/build-i686/bin/libvorbisenc.dll",
+    "blake3": "1773e7364c3fe67a9e62da4139a49401adf67e2b85cf8fec2090e1e93473a809",
+    "role": "core_library"
+  },
+  {
+    "path": "stk-code/build-i686/bin/libvorbisfile.dll",
+    "blake3": "596a269823a3673a57e36cb6eff8f44cb9ace2484e25e6bcb7610b9cff152002",
+    "role": "core_library"
+  },
+  {
+    "path": "stk-code/build-i686/bin/libvpx.dll",
+    "blake3": "c76f24e8e6237be90154d6ffe01d60065ab88f5df8740d0d21359f2e3d3f9a5f",
+    "role": "core_library"
+  },
+  {
+    "path": "stk-code/build-i686/bin/libzlib.dll",
+    "blake3": "09d738c19ba181c688654cf17255e93ea39156d625ac9fe45d27c45795af13c1",
+    "role": "core_library"
+  },
+  {
+    "path": "stk-code/build-i686/bin/supertuxkart.exe",
+    "blake3": "3a04877553d885f9463a8af794d0ef8d4561d603026c392924703ec329e71fcd",
+    "role": "core_library"
+  },
+  {
+    "path": "stk-code/build-x86_64/bin/OpenAL32.dll",
+    "blake3": "38c6925886e7965344dc57fc5bc90db2a7049b8c7a5b253c693904e255a22c6f",
+    "role": "core_library"
+  },
+  {
+    "path": "stk-code/build-x86_64/bin/SDL2.dll",
+    "blake3": "77d21c339ec538dd69dbf5326ba9723049539313b68ac0f73be56eb524e37763",
+    "role": "core_library"
+  },
+  {
+    "path": "stk-code/build-x86_64/bin/libastcenc.dll",
+    "blake3": "b01611bed6f4dd80036110903c541164e71956846db34e31ad8bb4de0ac831a0",
+    "role": "core_library"
+  },
+  {
+    "path": "stk-code/build-x86_64/bin/libcurl.dll",
+    "blake3": "9b6ca8172c90f53a0ce286ee2eda1d0046de79122ea7a020d18d46b4bab57c36",
+    "role": "core_library"
+  },
+  {
+    "path": "stk-code/build-x86_64/bin/libfreetype.dll",
+    "blake3": "b23e15f7c98cc14c292384e84f3e54a4bee664914b626090a80f54c4821298cb",
+    "role": "core_library"
+  },
+  {
+    "path": "stk-code/build-x86_64/bin/libharfbuzz.dll",
+    "blake3": "819689f08c87c51f72eb6b330008415c204699c8c22a66582cc36acd0f5ed337",
+    "role": "core_library"
+  },
+  {
+    "path": "stk-code/build-x86_64/bin/libjpeg-62.dll",
+    "blake3": "b181f2e4d3c7414bd5ba4b7ee11fed233442c91eb75bba489209a430714c02da",
+    "role": "core_library"
+  },
+  {
+    "path": "stk-code/build-x86_64/bin/libmbedcrypto.dll",
+    "blake3": "8ed55b7195b48a5e7dbbb1e928f3ba23e10cefd7332718c7e9c213f743916087",
+    "role": "core_library"
+  },
+  {
+    "path": "stk-code/build-x86_64/bin/libmbedtls.dll",
+    "blake3": "f5ca47dbeac5bb2dfb1d59b66a885ba3c757fd38719c3a6516dab63a671d2a3a",
+    "role": "core_library"
+  },
+  {
+    "path": "stk-code/build-x86_64/bin/libmbedx509.dll",
+    "blake3": "b8521e440f94a64605a963ea995d67ea9753ce6484b025c0fd3b13debdbd04e6",
+    "role": "core_library"
+  },
+  {
+    "path": "stk-code/build-x86_64/bin/libogg.dll",
+    "blake3": "b457ce84673d282c525c5e641b8e0d8892e5a232d70e871c4a255da3e73b0401",
+    "role": "core_library"
+  },
+  {
+    "path": "stk-code/build-x86_64/bin/libopenglrecorder.dll",
+    "blake3": "418b203e1a3761f125cb95dbca788d606657699f08229d1dfcaa9226044d6a61",
+    "role": "core_library"
+  },
+  {
+    "path": "stk-code/build-x86_64/bin/libpng16.dll",
+    "blake3": "3dff4ff71159f7c48ce6d705590944489f8423add3e3396b21687342c29cfbd6",
+    "role": "core_library"
+  },
+  {
+    "path": "stk-code/build-x86_64/bin/libsamplerate-0.dll",
+    "blake3": "95dea8362d5ba3151de5f972b543c76f958ca5a0fefd6d63ddbe02730538c650",
+    "role": "core_library"
+  },
+  {
+    "path": "stk-code/build-x86_64/bin/libshaderc_shared.dll",
+    "blake3": "889c880b672017e30f15958f7c8d2cbfd317e73dcb25b51c752a2cb98f6b80c9",
+    "role": "core_library"
+  },
+  {
+    "path": "stk-code/build-x86_64/bin/libsqlite3.dll",
+    "blake3": "83119d1a188273e10d5e683ca9d3f52f52ee10b7cf7d295144b5a3124f784db2",
+    "role": "core_library"
+  },
+  {
+    "path": "stk-code/build-x86_64/bin/libturbojpeg.dll",
+    "blake3": "e6359091800e5a3a917bd64584a8828fabac46970a8c03b86533c335a1210a09",
+    "role": "core_library"
+  },
+  {
+    "path": "stk-code/build-x86_64/bin/libvorbis.dll",
+    "blake3": "75d2d047a7cc84d27f69cc9afd264541688e3534f47fc5f16c5d02ca63e1e373",
+    "role": "core_library"
+  },
+  {
+    "path": "stk-code/build-x86_64/bin/libvorbisenc.dll",
+    "blake3": "e83515f678d97d5495f201e50b539d80cde6a6aed52b05181460c15b0ba3ed80",
+    "role": "core_library"
+  },
+  {
+    "path": "stk-code/build-x86_64/bin/libvorbisfile.dll",
+    "blake3": "39b39f0b40543cf103e0ef5ed92b06e88ebb9577dec6fe196d603f11331bc9de",
+    "role": "core_library"
+  },
+  {
+    "path": "stk-code/build-x86_64/bin/libvpx.dll",
+    "blake3": "5414f5ebaebd0612044f40d66982091b6c65c9f884248b048b5106a30a70ebb7",
+    "role": "core_library"
+  },
+  {
+    "path": "stk-code/build-x86_64/bin/libzlib.dll",
+    "blake3": "53db617dc79698d6fbfceb52c3f1a7304b05dc456d4ba422d58d1544b64c6668",
+    "role": "core_library"
+  },
+  {
+    "path": "stk-code/build-x86_64/bin/supertuxkart.exe",
+    "blake3": "1441790121499819360e697b0760b961e92fc709df132e6f318a2d82b7f2c0e6",
+    "role": "main_executable"
+  }
+]
