@@ -40,14 +40,19 @@ async fn blocking<T: Send + 'static>(
 macro_rules! creator_command {
     ($name:ident () -> $response:ty, |$runner:ident| $body:block) => {
         #[tauri::command]
-        pub async fn $name(bridge: tauri::State<'_, CreatorBridge>) -> Result<$response, FusionError> {
+        pub async fn $name(
+            bridge: tauri::State<'_, CreatorBridge>,
+        ) -> Result<$response, FusionError> {
             let $runner = bridge.runner.clone();
             blocking(move || $body).await
         }
     };
     ($name:ident ($request:ty) -> $response:ty, |$runner:ident, $value:ident| $body:block) => {
         #[tauri::command]
-        pub async fn $name(request: $request, bridge: tauri::State<'_, CreatorBridge>) -> Result<$response, FusionError> {
+        pub async fn $name(
+            request: $request,
+            bridge: tauri::State<'_, CreatorBridge>,
+        ) -> Result<$response, FusionError> {
             let $runner = bridge.runner.clone();
             let $value = request;
             blocking(move || $body).await
