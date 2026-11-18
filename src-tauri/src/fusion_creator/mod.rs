@@ -5,8 +5,8 @@ pub mod input;
 pub mod jobs;
 pub(crate) mod jobs_schema;
 pub mod profiles;
-pub(crate) mod project_storage;
 pub(crate) mod project_service;
+pub(crate) mod project_storage;
 pub mod projection;
 
 #[cfg(test)]
@@ -17,6 +17,9 @@ mod project_service_tests;
 
 #[cfg(test)]
 mod runner_tests;
+
+#[cfg(test)]
+mod recovery_tests;
 
 use std::collections::BTreeMap;
 

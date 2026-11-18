@@ -328,13 +328,9 @@ impl JobRunner {
         let handler = self.handler(&kind, &format!("fusion_creator_{}", key(&kind)))?;
         let (project, bindings) = self.inputs(&request.project_id)?;
         validate_request(&project, &request)?;
-        let stamp = self.stamp(&project, bindings.as_ref(), &*handler)?;
-        let workspace = self
-            .0
-            .root
-            .join("workspaces")
-            .join(digest(project.project_id.as_bytes()));
+        let workspace = self.workspace(&project.project_id);
         let lease = Lease::acquire(&workspace, "writer.lock")?;
+        let stamp = self.stamp(&project, bindings.as_ref(), &*handler)?;
         let token = id();
         let job_id = format!("job-{}", id());
         let job = CreatorJob {
@@ -404,6 +400,137 @@ impl JobRunner {
             let _ = context.finish(result);
         });
     }
+    fn workspace(&self, project_id: &str) -> PathBuf {
+        self.0
+            .root
+            .join("workspaces")
+            .join(digest(project_id.as_bytes()))
+    }
+
+    /// Resume only a recovered run with durable evidence. Audit the entire reused prefix:
+    /// a valid latest result does not make a missing earlier artifact safe to reuse.
+    pub fn resume(&self, job_id: &str) -> Result<CreatorJobReceipt, FusionError> {
+        let (previous, previous_token) = {
+            let store = lock(&self.0.store)?;
+            load(&store.conn, job_id)?
+        };
+        let handler = self.handler(&previous.progress.kind, "fusion_creator_job_resume")?;
+        if previous.progress.status != CreatorJobStatus::Interrupted {
+            return Err(conflict());
+        }
+        let workspace = self.workspace(&previous.progress.project_id);
+        let lease = Lease::acquire(&workspace, "writer.lock")?;
+        let (request_bytes, stamp_bytes, saved_workspace): (Vec<u8>, Vec<u8>, String) = {
+            let store = lock(&self.0.store)?;
+            store.conn.query_row(
+                "SELECT request_json,stamp_json,workspace FROM creator_jobs WHERE job_id=?1 AND run_token=?2",
+                params![job_id, previous_token],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            ).map_err(|_| conflict())?
+        };
+        let request: CreatorJobStartRequest =
+            serde_json::from_slice(&request_bytes).map_err(|_| invalid())?;
+        let saved_stamp: CreatorResumeStamp =
+            serde_json::from_slice(&stamp_bytes).map_err(|_| invalid())?;
+        if request.project_id != previous.progress.project_id
+            || request.project_revision != previous.progress.project_revision
+            || saved_stamp.project_revision != previous.progress.project_revision
+            || saved_workspace != workspace.to_string_lossy()
+            || previous.checkpoints.len() > 4096
+        {
+            return Err(invalid());
+        }
+        let last = previous.checkpoints.last().ok_or_else(conflict)?;
+        if previous.progress.checkpoint_id.as_deref() != Some(last.checkpoint_id.as_str()) {
+            return Err(invalid());
+        }
+        let (project, bindings) = self.inputs(&request.project_id)?;
+        validate_request(&project, &request)?;
+        let stamp = self.stamp(&project, bindings.as_ref(), &*handler)?;
+        let encoded_stamp = encode(&stamp)?;
+        if encode(&saved_stamp)? != encoded_stamp {
+            return Err(conflict());
+        }
+
+        let mut resume = None;
+        let mut checkpoint_ids = std::collections::BTreeSet::new();
+        for checkpoint in &previous.checkpoints {
+            if checkpoint.job_id != job_id
+                || !checkpoint_ids.insert(&checkpoint.checkpoint_id)
+                || encode(&checkpoint.stamp)? != encoded_stamp
+                || (checkpoint.boundary == CreatorCheckpointBoundary::ArtifactCommitted
+                    && checkpoint.artifact_id.as_ref().is_none_or(String::is_empty))
+            {
+                return Err(invalid());
+            }
+            let evidence: Vec<u8> = {
+                let store = lock(&self.0.store)?;
+                store.conn.query_row(
+                    "SELECT evidence FROM creator_checkpoint_results WHERE job_id=?1 AND checkpoint_id=?2",
+                    params![job_id, checkpoint.checkpoint_id],
+                    |row| row.get(0),
+                ).optional().map_err(|_| io())?.ok_or_else(invalid)?
+            };
+            if evidence.is_empty()
+                || evidence.len() > 2 * 1024 * 1024
+                || digest(&evidence) != checkpoint.result_blake3
+                || !handler.validate_checkpoint(checkpoint, &evidence)?
+            {
+                return Err(invalid());
+            }
+            resume = Some(ResumePoint {
+                checkpoint: checkpoint.clone(),
+                evidence,
+            });
+        }
+
+        let token = id();
+        {
+            let store = lock(&self.0.store)?;
+            let tx =
+                rusqlite::Transaction::new_unchecked(&store.conn, TransactionBehavior::Immediate)
+                    .map_err(|_| io())?;
+            let (mut job, db_token) = load(&tx, job_id)?;
+            if db_token != previous_token || job.progress.sequence != previous.progress.sequence {
+                return Err(conflict());
+            }
+            current(&store, &project, &stamp)?;
+            let count = tx.execute(
+                "UPDATE creator_jobs SET run_token=?1 WHERE job_id=?2 AND run_token=?3 AND status='interrupted'",
+                params![token, job_id, previous_token],
+            ).map_err(|_| io())?;
+            if count != 1 {
+                return Err(conflict());
+            }
+            job.progress.status = CreatorJobStatus::Queued;
+            job.progress.phase = "queued".into();
+            job.progress.error = None;
+            persist(&tx, &mut job, &token)?;
+            tx.commit().map_err(|_| io())?;
+            (self.0.sink)(job.progress);
+        }
+        let receipt = CreatorJobReceipt {
+            job_id: job_id.into(),
+            project_id: project.project_id.clone(),
+            project_revision: project.revision,
+        };
+        self.spawn(
+            JobContext {
+                runner: self.clone(),
+                job_id: job_id.into(),
+                token,
+                project,
+                request,
+                stamp,
+                workspace,
+                handler,
+            },
+            lease,
+            resume,
+        );
+        Ok(receipt)
+    }
+
     pub fn cancel(&self, job_id: &str) -> Result<CreatorJob, FusionError> {
         let store = lock(&self.0.store)?;
         let (mut job, token) = load(&store.conn, job_id)?;
@@ -570,10 +697,7 @@ impl JobContext {
         (self.runner.0.sink)(job.progress);
         Ok(())
     }
-    pub fn checkpoint(
-        &self,
-        output: CheckpointOutput,
-    ) -> Result<CreatorCheckpoint, FusionError> {
+    pub fn checkpoint(&self, output: CheckpointOutput) -> Result<CreatorCheckpoint, FusionError> {
         self.check_cancelled()?;
         self.recheck_stamp()?;
         if output.evidence.is_empty()

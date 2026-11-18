@@ -931,6 +931,31 @@ async fn resume_revalidates_real_output_and_does_not_promote_a_partial_replaceme
 }
 
 #[tokio::test]
+async fn resume_rejects_missing_earlier_output_even_if_latest_checkpoint_is_valid() {
+    let killed = kill_after_checkpoint(1);
+    let (runner, events) = killed.fixture.open_runner();
+    let interrupted = assert_interrupted(&killed, &runner, &events);
+    let handler = Arc::new(FileHandler::new(killed.fixture.root()));
+    runner
+        .register(CreatorJobKind::Scan, handler.clone())
+        .unwrap();
+    fs::remove_file(workspace(killed.fixture.root()).join("classification.json")).unwrap();
+    assert!(handler
+        .validate_checkpoint(interrupted.checkpoints.last().unwrap(), &killed.evidence)
+        .unwrap());
+
+    let error = runner.resume(&interrupted.progress.job_id).unwrap_err();
+    assert_eq!(error.code, ErrorCode::IntegrityViolation);
+    assert_eq!(handler.runs.load(Ordering::SeqCst), 0);
+    assert_eq!(events.lock().unwrap().len(), 1);
+    assert_eq!(
+        serde_json::to_vec(&runner.get(&interrupted.progress.job_id).unwrap()).unwrap(),
+        serde_json::to_vec(&interrupted).unwrap(),
+    );
+    killed.fixture.assert_old_unchanged();
+}
+
+#[tokio::test]
 async fn partial_files_and_scan_without_classification_never_become_checkpoints() {
     for mode in ["partial", "scan-only"] {
         let fixture = Fixture::new();
