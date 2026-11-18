@@ -3,7 +3,7 @@ use std::sync::Mutex;
 
 // SDL process-global ownership is intentional; unrelated callers are rejected,
 // not serialized silently. Only these independent test cases share this lock.
-static TEST_OWNER: Mutex<()> = Mutex::new(());
+pub(super) static TEST_OWNER: Mutex<()> = Mutex::new(());
 
 #[test]
 fn virtual_controller_reads_real_sdl_and_acknowledges_release() {

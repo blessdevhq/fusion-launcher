@@ -101,6 +101,12 @@ pub fn run() {
                 .map_err(|error| setup_error(error.to_string()))?;
             std::fs::create_dir_all(&local_data_dir)
                 .map_err(|error| setup_error(error.to_string()))?;
+            #[cfg(windows)]
+            input::ipc::initialize(
+                app.handle().clone(),
+                local_data_dir.join("fusion-input-private"),
+            )
+            .map_err(|error| setup_error(error.to_string()))?;
             let database_path = prepare_database_path(&data_dir).map_err(setup_error)?;
             logging::initialize(&data_dir);
             let mut repository_store =
