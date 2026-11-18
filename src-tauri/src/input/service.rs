@@ -1,6 +1,6 @@
 //! Production input service. SDL values travel through one native owner thread.
 //! All identities, mapping sources and calibration are PRIVATE local data.
-use super::{eden, ControllerState, DeviceInfo, InputWorker};
+use super::{eden, ControllerState, DeviceInfo, InputWorker, Lease};
 use crate::fusion_creator::input::*;
 use crate::fusion_source::creator_schema::LogicalBinding;
 use crate::fusion_source::errors::{ErrorCode, FusionError};
@@ -393,8 +393,9 @@ impl InputService {
         }
     }
     /// B/D: mandatory atomic pre-spawn barrier, including application_defaults.
-    /// Holds the command gate through launch() so another capture cannot start
-    /// between ACK and spawn. Propagate any error; NEVER fallback to launching.
+    /// Holds the command gate and the process-wide SDL lease through launch().
+    /// Propagate any error; NEVER fallback to launching. Do not reenter the
+    /// command gate from the callback or schedule an asynchronous spawn.
     pub fn with_released_for_launch<T>(
         &self,
         launch: impl FnOnce() -> Result<T, FusionError>,
@@ -421,6 +422,16 @@ impl InputService {
             }
             runtime.catalog.clear();
         }
+        // A fresh service may have no client while a different worker owns SDL;
+        // after our own ACK and join another owner could also have won the lease.
+        // Never infer that SDL is free from the absence of a client.
+        let _spawn_lease = Lease::acquire().map_err(|message| {
+            let error = unavailable(format!(
+                "SDL release unconfirmed; launch blocked, restart Fusion: {message}"
+            ));
+            runtime.release_error = Some(error.clone());
+            error
+        })?;
         launch()
     }
 }

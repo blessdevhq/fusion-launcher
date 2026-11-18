@@ -6,6 +6,30 @@ use std::collections::BTreeMap;
 use std::sync::atomic::Ordering;
 
 #[test]
+fn unused_service_cannot_launch_while_another_worker_owns_sdl() {
+    let _test = tests::TEST_OWNER.lock().unwrap();
+    let owner = InputWorker::start().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let service = service::InputService::new(dir.path().into(), |_| {});
+    let mut launched = false;
+    let result = service.with_released_for_launch(|| {
+        launched = true;
+        Ok(())
+    });
+    owner.stop().unwrap();
+    assert!(!launched, "no client does not prove SDL is unowned");
+    let error = result.unwrap_err();
+    assert!(error.message.contains("SDL input worker already owned"));
+    assert_eq!(service.devices().unwrap_err(), error);
+    assert_eq!(
+        service
+            .with_released_for_launch::<()>(|| panic!("release failure must stay sticky"))
+            .unwrap_err(),
+        error
+    );
+}
+
+#[test]
 fn failed_worker_start_blocks_launch_until_service_restart() {
     let _test = tests::TEST_OWNER.lock().unwrap();
     let owner = InputWorker::start().expect("real SDL owner must initialize");
@@ -69,7 +93,7 @@ fn failed_start_tears_down_open_handles_before_retry() {
         .start(InputSessionStartRequest { device_id: id })
         .is_err());
     assert!(
-        !WORKER_OWNED.load(Ordering::Acquire),
+        !SDL_LEASED.load(Ordering::Acquire),
         "failed open/read must close the worker"
     );
     let fresh = service.fixture_attach().unwrap();
@@ -147,7 +171,7 @@ fn sequence_exhaustion_still_closes_handles_and_blocks_launch() {
         })
         .is_err());
     assert!(
-        !WORKER_OWNED.load(Ordering::Acquire),
+        !SDL_LEASED.load(Ordering::Acquire),
         "overflow must not orphan SDL handles"
     );
     assert!(service.with_released_for_launch(|| Ok(())).is_err());

@@ -26,21 +26,23 @@ mod service_tests;
 #[cfg(test)]
 mod tests;
 
-static WORKER_OWNED: AtomicBool = AtomicBool::new(false);
+// A worker owns this lease for its entire lifetime. The launch barrier takes
+// the same lease once its worker has stopped to exclude any new SDL owner.
+static SDL_LEASED: AtomicBool = AtomicBool::new(false);
 const REPLY_TIMEOUT: Duration = Duration::from_secs(10);
 
 struct Lease;
 impl Lease {
     fn acquire() -> Result<Self, String> {
-        WORKER_OWNED
+        SDL_LEASED
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
             .map(|_| Self)
-            .map_err(|_| "SDL input worker already owned".into())
+            .map_err(|_| "SDL input worker already owned or launch in progress".into())
     }
 }
 impl Drop for Lease {
     fn drop(&mut self) {
-        WORKER_OWNED.store(false, Ordering::Release);
+        SDL_LEASED.store(false, Ordering::Release);
     }
 }
 

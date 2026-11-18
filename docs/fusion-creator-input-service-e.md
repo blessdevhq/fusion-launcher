@@ -85,8 +85,13 @@ in the private original mapping for D; E does not serialize ParamPackage strings
 `InputService::with_released_for_launch` is the synchronous host pre-spawn
 barrier, including for `application_defaults`: it closes any session/discovery
 worker and invokes the launch callback only after checked handle closure, SDL
-teardown acknowledgement and join. The command gate stays held through the
-callback to prevent capture starting between the barrier and the actual spawn.
+teardown acknowledgement and join. The service command gate stays held and the
+barrier acquires the same process-wide lease used by all native SDL workers.
+It holds both through the synchronous callback. A missing worker client does not
+prove SDL is free: another worker (including a diagnostic worker) or a competing
+launch may hold the lease. Failed lease acquisition latches `action_unavailable`
+instead of running the callback; release/discovery/launch on that service stay
+blocked until restart. Do not reenter the service command gate from the callback.
 The callback must perform the real synchronous spawn operation, not merely
 return an unpolled future or schedule a future launch. A cached IPC receipt is
 not a substitute for using the barrier at the actual launch boundary.
@@ -180,6 +185,35 @@ was needed after the post-fix run, and the original failure log is preserved.
 A process-preflight refusal and a waiting runner killed before invoking npm are
 not additional QA attempts. Complete logs must distinguish actual QA execution
 from those guards.
+
+## E spawn-barrier WIP checkpoint after `0de983d`
+
+This checkpoint changes only E's native input module, tests and this handoff.
+It does not connect a production spawn path. The SDL lease covers Fusion's
+in-process input workers and the synchronous callback, not other applications
+or the lifetime of the launched process.
+
+- Recovered local Windows fixture run: `RUST_TEST_THREADS=4 cargo test --manifest-path src-tauri/Cargo.toml --locked --offline --lib input:: -- --nocapture`,
+  **exit 0: 19 passed, 0 failed, 0 ignored, 587 filtered out**. See
+  `.tmp/input-service-e/barrier-input-green.log` and `barrier-input-green-result.json`.
+  The runner recorded base HEAD `0de983d` with uncommitted barrier changes, not a
+  commit of the tested tree. No Rust source was changed during recovery.
+- The new fixtures verify that a fresh service refuses launch under an existing
+  SDL owner and retains the diagnostic after that owner stops; that active
+  virtual capture is stopped, SDL is deinitialized and reacquisition is denied
+  inside the callback that spawns a Windows child; and that an old IPC release
+  receipt cannot bypass a newer discovery worker's missing acknowledgement.
+  The child is the Rust test executable in `--list` mode, not Eden or a game.
+- `barrier-red.log` is an **E0282 compile failure** (exit 101), not a reproduced
+  behavioral regression. The `barrier-no-worker-red` and `barrier-regression-red`
+  guards report that the command never started. `barrier-review.json` could
+  not inspect the diff and is not independent approval. The recovery review
+  inspected the actual diff and callers; `git diff --check` passed.
+- The earlier [hosted Windows pass](https://github.com/blessdevhq/fusion-launcher/actions/runs/43304943672)
+  is for `0de983d` only (16 focused input fixtures). A fresh local run and the
+  complete `RUST_TEST_THREADS=4 npm run qa` were not started for this checkpoint:
+  the shared QA lock was owned by STK. Hosted checks for the WIP must be read
+  against its own SHA; the baseline's green result does not carry over.
 
 ## NOT TESTED / remaining acceptance
 
