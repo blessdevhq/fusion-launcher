@@ -23,12 +23,12 @@ const demoSourceUrl = 'https://demo.fusion.invalid/index.json';
  * Uses the production-default Creator bridge: unavailable is not an empty success.
  * The existing Fusion source preview is used ONLY to reach Fusion game details via
  * real settings interactions, never to synthesize Creator projects/devices/jobs.
- * Entry may have Settings open. Exit is Home, English, original viewport, no dialogs.
+ * Use a disposable browser context for the preview source fixture. The helper
+ * also verifies Home/en and dialog restoration before the context is closed.
  * No baselines, visual roles, global API injection or native capture are approved here.
  */
 export async function runCreatorVisual(page, { screenshot, assertNoHorizontalOverflow, expectVisible, clickNav }) {
   const originalViewport = page.viewportSize();
-  let addedDemoSource = false;
   let failure;
   try {
     await setLocale(page, 'en');
@@ -122,11 +122,10 @@ export async function runCreatorVisual(page, { screenshot, assertNoHorizontalOve
       await page.getByTestId('add-source-check').click();
       await expect(page.getByTestId('add-source-preview')).toContainText('Fusion Source v1.0');
       await page.getByTestId('add-source-add').click();
-      addedDemoSource = true;
       await expect(source).toBeVisible();
     }
     await closeSettings(page);
-    await openLibrary(page, clickNav, 'Orbit Runtime');
+    await openLibrary(page, clickNav, 'Orbit Runtime Demo');
     await page.getByTestId('fusion-catalog-runtime-demo').click();
     await assertContextEntry(page, 'fusion-game-modal', 'en', expectVisible);
     await assertNoHorizontalOverflow(page, 'Creator context from Fusion details');
@@ -138,15 +137,6 @@ export async function runCreatorVisual(page, { screenshot, assertNoHorizontalOve
   try {
     await closeKnownDialogs(page);
     await setLocale(page, 'en');
-    if (addedDemoSource) {
-      await openSettings(page);
-      await page.getByTestId('settings-tab-sources').click();
-      const source = demoSourceCard(page);
-      page.once('dialog', (dialog) => dialog.accept());
-      await source.getByTestId('fusion-source-remove').click();
-      await expect(source).toHaveCount(0);
-      await closeSettings(page);
-    }
     await clickNav(page, 'home');
     await expectVisible(page.getByTestId('home-screen'), 'Home restored after Creator visual helper');
     if (originalViewport) await page.setViewportSize(originalViewport);

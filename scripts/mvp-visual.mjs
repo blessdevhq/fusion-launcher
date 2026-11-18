@@ -41,7 +41,16 @@ async function main() {
   await assertNoHorizontalOverflow(page, 'home');
   await assertHomeHintBarClearance(page, 'home');
   await assertHomeViewports(page);
-  await runCreatorVisual(page, { screenshot, assertNoHorizontalOverflow, expectVisible, clickNav });
+  // The Creator context-entry check connects a fixture that carries installed
+  // games. Use a separate browser context instead of uninstalling or sharing it.
+  const creatorPage = await browser.newPage({ viewport: page.viewportSize() });
+  try {
+    await creatorPage.goto(baseUrl);
+    await creatorPage.waitForLoadState('networkidle', { timeout: timeoutMs });
+    await runCreatorVisual(creatorPage, { screenshot, assertNoHorizontalOverflow, expectVisible, clickNav });
+  } finally {
+    await creatorPage.close();
+  }
 
   await clickNav(page, 'library');
   await page.waitForTimeout(250);
@@ -477,6 +486,9 @@ try {
 } catch (error) {
   console.error('MVP visual smoke failed.');
   console.error(error instanceof Error ? error.message : String(error));
+  if (error instanceof AggregateError) {
+    for (const cause of error.errors) console.error(cause);
+  }
   const tail = serverLogTail();
   if (tail) {
     console.error('\nServer log tail:');
