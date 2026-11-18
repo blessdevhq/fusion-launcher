@@ -19,8 +19,10 @@ import { ACTIVE_DOWNLOAD_STATUSES } from '@/components/dashboard/constants';
 import type { BusyAction, UpdatePanelState } from '@/components/dashboard/types';
 import { composeHomeRails, cssEscape, normalizeUpdateCheckError, safeDecodeURIComponent } from '@/components/dashboard/utils';
 import { AppShell } from '@/components/shell/AppShell';
+import { CreatorScreen } from '@/components/creator/CreatorScreen';
 import { collectionTargetForId, type CollectionTarget } from '@/components/shell/CockpitPanels';
 import { useGamepad } from '@/hooks/useGamepad';
+import { useCreatorEvents } from '@/hooks/useCreatorEvents';
 import { buildGameLibraryItems, type GameLibraryItem, type LibraryFilter, type LibrarySort } from '@/lib/libraryStatus';
 import { api } from '@/lib/api';
 import { fusionPreviewApi } from '@/lib/fusionPreviewData';
@@ -63,6 +65,7 @@ export function Dashboard({
   onDisconnectRepository,
   onRefresh
 }: DashboardProps) {
+  useCreatorEvents();
   const storeCatalog = useLauncherStore((state) => state.catalog);
   const storeRepositories = useLauncherStore((state) => state.repositories);
   const fusionSources = useFusionSourceStore((state) => state.sources);
@@ -98,6 +101,7 @@ export function Dashboard({
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [selectedFusionKey, setSelectedFusionKey] = useState<string | null>(null);
   const [portingStudioOpen, setPortingStudioOpen] = useState(false);
+  const [creatorContextTitle, setCreatorContextTitle] = useState<string | null>(null);
   const [portingStudioInitialFile, setPortingStudioInitialFile] = useState<string | undefined>(undefined);
   const [settingsMessage, setSettingsMessage] = useState<string | null>(null);
   const [launcherMessage, setLauncherMessage] = useState<string | null>(null);
@@ -734,7 +738,10 @@ export function Dashboard({
   useGamepad({
     focusedItemId,
     setFocusedItemId,
-    onActivate: focusActivate,
+    onActivate: (id) => {
+      if (id.startsWith('creator:')) document.querySelector<HTMLElement>(`[data-focus-id="${cssEscape(id)}"]`)?.click();
+      else focusActivate(id);
+    },
     onBack: () => {
       if (selectedFusionKey) setSelectedFusionKey(null);
       else if (notificationsOpen) setNotificationsOpen(false);
@@ -800,6 +807,8 @@ export function Dashboard({
           }}
         />
         {bannerMessage && <div className="rh-banner select-text break-words">{bannerMessage}</div>}
+
+        {activeView === 'creator' && <CreatorScreen contextTitle={creatorContextTitle} onFocus={setFocusedItemId} />}
 
         {activeView === 'home' && (
           <HomeScreen
@@ -867,11 +876,21 @@ export function Dashboard({
           />
         )}
 
-        {selectedFusionGame && <FusionGameDetailsModal game={selectedFusionGame} onClose={() => setSelectedFusionKey(null)} onRefresh={refreshLauncherData} />}
+        {selectedFusionGame && <FusionGameDetailsModal game={selectedFusionGame} onClose={() => setSelectedFusionKey(null)} onRefresh={refreshLauncherData} onCreateBuild={() => {
+          setCreatorContextTitle(selectedFusionGame.title);
+          setSelectedFusionKey(null);
+          setSelectedGameId(null);
+          setActiveView('creator');
+        }} />}
 
         {selectedGame && !selectedFusionGame && (
           <GameDetailsModal
             game={selectedGame}
+            onCreateBuild={() => {
+              setCreatorContextTitle(selectedGame.title);
+              setSelectedGameId(null);
+              setActiveView('creator');
+            }}
             settings={settings}
             onOpenSettings={() => {
               setSelectedGameId(null);

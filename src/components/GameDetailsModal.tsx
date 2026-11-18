@@ -51,6 +51,7 @@ interface GameDetailsModalProps {
   onClose: () => void;
   onOpenSettings: () => void;
   onRefresh: () => Promise<void>;
+  onCreateBuild?: () => void;
 }
 
 export function GameDetailsModal({
@@ -58,7 +59,8 @@ export function GameDetailsModal({
   settings,
   onClose,
   onOpenSettings,
-  onRefresh
+  onRefresh,
+  onCreateBuild
 }: GameDetailsModalProps) {
   const { t } = useI18n();
   const [requirements, setRequirements] = useState<RequirementsReport | null>(null);
@@ -582,6 +584,7 @@ export function GameDetailsModal({
           <div className="min-w-0 flex-1">
             <h2 className="text-2xl font-bold">{displayProductText(game.title)}</h2>
             <div className="mt-1 text-sm text-white/46">{game.platform} / {displayProductText(game.repositoryName)}</div>
+            {onCreateBuild && <button type="button" data-testid="creator-context-action" onClick={onCreateBuild} className="rh-filter-chip rh-focusable mt-3">{t.creator.ui.create}</button>}
           </div>
           <button
             onClick={onClose}

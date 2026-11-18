@@ -6,6 +6,7 @@ import path from 'node:path';
 
 import { chromium } from '@playwright/test';
 import { runFusionVisual } from './fusion-visual.mjs';
+import { runCreatorVisual } from './creator-visual.mjs';
 
 const root = process.cwd();
 const screenshotsDir = path.join(root, '.tmp', 'mvp-visual');
@@ -40,6 +41,7 @@ async function main() {
   await assertNoHorizontalOverflow(page, 'home');
   await assertHomeHintBarClearance(page, 'home');
   await assertHomeViewports(page);
+  await runCreatorVisual(page, { screenshot, assertNoHorizontalOverflow, expectVisible, clickNav });
 
   await clickNav(page, 'library');
   await page.waitForTimeout(250);

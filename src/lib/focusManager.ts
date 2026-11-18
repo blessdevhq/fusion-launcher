@@ -1,8 +1,35 @@
 export type FocusDirection = 'left' | 'right' | 'up' | 'down';
 
+export type InputOwner = symbol;
+
+const inputOwners: { owner: InputOwner; scope?: HTMLElement }[] = [];
+
+/** Claim keyboard/controller navigation until released. Claims nest; cleanup is idempotent. */
+export function acquireInputOwner(owner: InputOwner = Symbol('input-owner'), scope?: HTMLElement): () => void {
+  const claim = { owner, scope };
+  // React layout effects mount children first. An ancestor must never cover its child.
+  const childIndex = scope ? inputOwners.findIndex((entry) => entry.scope && scope.contains(entry.scope)) : -1;
+  if (childIndex === -1) inputOwners.push(claim);
+  else inputOwners.splice(childIndex, 0, claim);
+  return () => {
+    const index = inputOwners.indexOf(claim);
+    if (index !== -1) inputOwners.splice(index, 1);
+  };
+}
+
+/** An omitted owner is the shell, active only when no dialog/capture owns input. */
+export function isInputOwnerActive(owner?: InputOwner): boolean {
+  return inputOwners.at(-1)?.owner === owner;
+}
+
+export function getActiveInputScope(): HTMLElement | undefined {
+  return inputOwners.at(-1)?.scope;
+}
+
 export interface FocusTarget {
   id: string;
   zone: string;
+  scope?: InputOwner;
   rect: {
     left: number;
     top: number;
@@ -26,8 +53,10 @@ export const DEFAULT_FOCUS_ACTIONS: FocusActionMap = {
 export function nextFocusTarget(
   targets: FocusTarget[],
   currentId: string | null,
-  direction: FocusDirection
+  direction: FocusDirection,
+  scope?: InputOwner
 ): FocusTarget | null {
+  if (scope !== undefined) targets = targets.filter((target) => target.scope === scope);
   if (targets.length === 0) return null;
   if (!currentId) return targets[0] ?? null;
 

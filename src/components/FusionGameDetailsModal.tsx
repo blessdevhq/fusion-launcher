@@ -11,12 +11,13 @@ import { isTauriRuntime } from '@/lib/runtime';
 import { useFusionSourceStore, isFusionOperationTerminal } from '@/stores/fusionSourceStore';
 import { fusionErrorMessage, fusionGameKey, type FusionCatalogEntry, type FusionCrashReport, type FusionError, type FusionGameOptions, type FusionGameState, type FusionInstallInput, type FusionOperationProgress } from '@/types/fusionSource';
 
-export function FusionGameDetailsModal({ game, onClose, onRefresh }: {
+export function FusionGameDetailsModal({ game, onClose, onRefresh, onCreateBuild }: {
   game: FusionCatalogEntry;
   onClose: () => void;
   onRefresh: () => Promise<void>;
+  onCreateBuild?: () => void;
 }) {
-  const { locale } = useI18n();
+  const { locale, t } = useI18n();
   const text = fusionText(locale);
   const [state, setState] = useState<FusionGameState | null>(null);
   const [options, setOptions] = useState<FusionGameOptions>({ enabledAddons: null, runtimeChannel: null });
@@ -168,6 +169,7 @@ export function FusionGameDetailsModal({ game, onClose, onRefresh }: {
           <div className="min-w-0 flex-1">
             <h2 id="fusion-game-title" className="break-words text-2xl font-bold">{game.title}</h2>
             <p className="mt-1 text-sm text-white/50">{state?.platform?.toUpperCase() ?? text.noPlatform} · {game.sourceName}</p>
+            {onCreateBuild && <button type="button" data-testid="creator-context-action" onClick={onCreateBuild} className="rh-filter-chip rh-focusable mt-3">{t.creator.ui.create}</button>}
           </div>
           <button ref={closeRef} type="button" onClick={onClose} className="rh-icon-button rh-focusable" aria-label={text.close} data-testid="fusion-game-close"><X className="h-4 w-4" /></button>
         </header>
