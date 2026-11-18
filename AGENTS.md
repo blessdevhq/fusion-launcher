@@ -23,6 +23,12 @@ The canonical product name is **Fusion Launcher** and the canonical repository i
 - `npm run tauri:build`: production app.
 - `npm run mvp:smoke` / `npm run mvp:visual`: release smoke checks.
 
+Run Windows native QA/builds from the Visual Studio Native Tools environment
+with both **MSVC** and **CMake** on `PATH` (the bundled SDL build needs both).
+On the shared `F:\MVP` checkout host, acquire `F:\MVP\.qa.lock` exclusively
+before running `RUST_TEST_THREADS=4 npm run qa` or `npm run mvp:visual`.
+Release only your own lock after the run; do not delete a lock held by another process.
+
 ## Architecture Notes
 
 - Emulator registry data is intentionally duplicated across platform types,
