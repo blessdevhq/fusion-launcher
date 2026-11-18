@@ -3,6 +3,21 @@ import { it } from 'node:test';
 import { acquireInputOwner } from './focusManager.ts';
 import * as input from './gamepadInput.ts';
 
+it('leaves Enter and Space to the focused native control, never a stale shell target', () => {
+  for (const [code, key] of [['Enter', 'Enter'], ['Space', ' '], ['', 'Enter'], ['', ' ']]) {
+    assert.equal(input.gamepadCommandForKey({ code, key, nativeActivation: 'enter-space' }), null);
+  }
+  assert.equal(input.gamepadCommandForKey({ code: 'GamepadA', key: '', nativeActivation: 'enter-space' }), 'activate');
+  assert.equal(input.gamepadCommandForKey({ code: 'ArrowDown', key: 'ArrowDown', nativeActivation: 'enter-space' }), 'down');
+});
+
+it('leaves Enter to a native link and routes Space only to the focused link itself', () => {
+  assert.equal(input.gamepadCommandForKey({ code: 'Enter', key: 'Enter', nativeActivation: 'link', nativeControlIsShellTarget: true }), null);
+  const space = { code: 'Space', key: ' ', nativeActivation: 'link' } as const;
+  assert.equal(input.gamepadCommandForKey({ ...space, nativeControlIsShellTarget: true }), 'activate');
+  assert.equal(input.gamepadCommandForKey({ ...space, nativeControlIsShellTarget: false }), null);
+});
+
 it('routes shell keys only while no nested input owner exists', () => {
   const event = { code: 'Enter', key: 'Enter' };
   assert.equal(input.gamepadCommandForKey(event), 'activate');

@@ -29,11 +29,16 @@ export function useGamepad({
 }: UseGamepadOptions) {
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      const command = gamepadCommandForKey(event, { inputOwner, enabled });
+      const target = event.target;
+      const control = target instanceof Element ? target.closest('button, a[href], summary') : null;
+      const command = gamepadCommandForKey({
+        code: event.code, key: event.key, defaultPrevented: event.defaultPrevented, isComposing: event.isComposing,
+        nativeActivation: control ? (control.matches('a[href]') ? 'link' : 'enter-space') : undefined,
+        nativeControlIsShellTarget: !!focusedItemId && control?.getAttribute('data-focus-id') === focusedItemId
+      }, { inputOwner, enabled });
       if (!command) return;
       const root = focusRoot ? focusRoot.current : document;
       if (!root) return;
-      const target = event.target;
       // Native selects own arrows, activation and Escape; do not route them to the shell.
       if (target instanceof HTMLElement && target.tagName === 'SELECT') return;
       const isEditable = target instanceof HTMLElement && (

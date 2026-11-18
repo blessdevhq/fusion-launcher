@@ -75,7 +75,7 @@ export function CreatorScreen({ contextTitle, onFocus }: { contextTitle: string 
           <button type="submit" data-testid="creator-job-load" data-focus-id="creator:job-load" disabled={!state.currentProject || !jobId.trim()} className="rh-filter-chip rh-focusable disabled:opacity-40">{t.creator.ui.loadJob}</button>
         </form>
         {state.jobError && <CreatorStatus status={state.jobError.code === 'action_unavailable' ? 'unavailable' : 'error'} error={state.jobError} />}
-        {jobs.length === 0 && <p data-testid="creator-jobs-state" data-state="idle" className="text-sm text-[var(--rh-muted)]">{t.creator.ui.noJobs}</p>}
+        {jobs.length === 0 && <p data-testid="creator-jobs-state" data-state="idle" className="text-sm text-[var(--rh-muted)]">{t.creator.common.idle} · {t.creator.ui.noJobs}</p>}
         {jobs.map((entry) => <article key={entry.receipt.jobId} className="border-b border-fusion-line py-3" data-testid="creator-job-row">
           <p className="break-all font-mono text-xs">{entry.receipt.jobId} · {t.creator.ui.revision} {entry.receipt.projectRevision}</p>
           <CreatorStatus status={entry.status} error={entry.error} />

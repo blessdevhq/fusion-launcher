@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { z } from 'zod';
 import { creatorApi, fusionInputApi } from '../lib/creatorApi.ts';
 import { creatorJobProgressSchema, creatorProjectOpenResponseSchema, creatorProjectListResponseSchema, inputStateSchema } from '../types/fusionCreator.ts';
 import type { CreatorApi, FusionInputApi, CreatorProjectSummary, CreatorProjectOpenResponse,
@@ -63,6 +64,10 @@ export function creatorError(error: unknown): FusionError {
 }
 const errorStatus = (error: FusionError): CreatorLoadStatus => error.code === 'action_unavailable' ? 'unavailable' : 'error';
 const invalid = (message: string): FusionError => ({ code: 'invalid_response', message, details: {} });
+const inputDevicesSchema: z.ZodType<InputDevice[]> = z.array(z.object({
+  deviceId: inputStateSchema.shape.sessionId, name: z.string(), connected: z.boolean(), mappingKnown: z.boolean()
+}).strict()).refine((devices) => new Set(devices.map((device) => device.deviceId)).size === devices.length,
+  'Input device identities must be unique.');
 const terminalJob = (progress: CreatorJobProgress) => ['cancelled', 'interrupted', 'completed', 'failed'].includes(progress.status);
 const sameIdentity = (receipt: CreatorJobReceipt, value: CreatorJobReceipt) => receipt.jobId === value.jobId
   && receipt.projectId === value.projectId && receipt.projectRevision === value.projectRevision;
@@ -82,6 +87,8 @@ function canAdvance(previous: CreatorJobProgress | null, incoming: CreatorJobPro
 const inputRank: Record<InputState['status'], number> = { active: 0, disconnected: 0, stopping: 1, stopped: 2, failed: 2 };
 const canAdvanceInput = (previous: InputState | null, incoming: InputState) => !previous
   || (incoming.sequence > previous.sequence && inputRank[incoming.status] >= inputRank[previous.status]);
+const INPUT_HISTORY_LIMIT = 120;
+const rememberInput = (history: InputState[], incoming: InputState) => [...history.slice(1 - INPUT_HISTORY_LIMIT), incoming];
 
 /** Each factory has independent state; use only explicit injected APIs for preview/test fixtures. */
 export function createCreatorStore(dependencies: Partial<CreatorStoreDependencies> = {}) {
@@ -90,15 +97,18 @@ export function createCreatorStore(dependencies: Partial<CreatorStoreDependencie
   let listGeneration = 0;
   let projectGeneration = 0;
   const jobGenerations = new Map<string, number>();
+  const pendingJobs = new Map<string, CreatorJobProgress[]>();
   let devicesGeneration = 0;
   let inputGeneration = 0;
-  let inputOwnerGeneration = 0;
+
+  let pendingInput: { sessionId: string; events: InputState[] } | null = null;
   return create<CreatorState>((set, get) => {
     const releaseInput = async (forLaunch: boolean): Promise<InputReleaseReceipt> => {
       const { inputSessionId: sessionId, inputOwnership } = get();
       if (!sessionId || inputOwnership === 'starting' || inputOwnership === 'releasing') throw invalid('Input release requires an owned session and no other release in flight.');
       ++inputGeneration;
-      ++inputOwnerGeneration;
+
+      pendingInput = null;
       set({ inputOwnership: 'releasing', inputHandlesClosed: false, inputAcceptingEvents: false, inputError: null, inputStatus: 'loading' });
       try {
         const receipt = await (forLaunch ? input.releaseForLaunch({ sessionId }) : input.sessionStop({ sessionId }));
@@ -134,6 +144,7 @@ export function createCreatorStore(dependencies: Partial<CreatorStoreDependencie
     },
     async openProject(projectId) {
       const generation = ++projectGeneration;
+      pendingJobs.clear();
       for (const [id, previous] of jobGenerations) jobGenerations.set(id, previous + 1);
       set((state) => ({ currentProject: null, projectStatus: 'loading', projectError: null, selectedJobId: null,
         jobs: Object.fromEntries(Object.entries(state.jobs).map(([id, entry]) => [id, { ...entry, acceptingEvents: false }])) }));
@@ -154,17 +165,20 @@ export function createCreatorStore(dependencies: Partial<CreatorStoreDependencie
       }
     },
     async startJob(kind, request) {
+      const generation = projectGeneration;
       try {
         if (!currentOwns(get().currentProject, request)) throw invalid('Job must target the current project revision.');
         const method = kind === 'verify_https' ? 'verifyHttps' : kind;
         const receipt = await api[method](request);
         if (!receipt.jobId || receipt.projectId !== request.projectId || receipt.projectRevision !== request.projectRevision) throw invalid('Job receipt differs from the requested identity.');
+        // Creation may have succeeded natively, but a stale receipt cannot reacquire UI ownership.
+        if (generation !== projectGeneration || !currentOwns(get().currentProject, receipt)) return receipt;
         const existing = ownJob(get().jobs, receipt.jobId);
         if (existing && !sameIdentity(existing.receipt, receipt)) throw invalid('Job ID already belongs to another project revision.');
         set((state) => ({ jobs: { ...state.jobs, [receipt.jobId]: existing ?? { ...emptyJob(receipt), kind, status: 'ready', acceptingEvents: true } }, selectedJobId: receipt.jobId, jobError: null }));
         return receipt;
       } catch (error) {
-        set({ jobError: creatorError(error) });
+        if (generation === projectGeneration) set({ jobError: creatorError(error) });
         throw error;
       }
     },
@@ -176,21 +190,33 @@ export function createCreatorStore(dependencies: Partial<CreatorStoreDependencie
       if (existing && !sameIdentity(existing.receipt, receipt)) throw invalid('Job is not owned by this project revision.');
       const generation = (jobGenerations.get(jobId) ?? 0) + 1;
       jobGenerations.set(jobId, generation);
+      const pending = pendingJobs.get(jobId) ?? [];
+      pendingJobs.set(jobId, pending);
       set((state) => ({ jobs: { ...state.jobs, [jobId]: { ...(existing ?? emptyJob(receipt)), status: 'loading', error: null, acceptingEvents: false } }, selectedJobId: jobId, jobError: null }));
       try {
         const snapshot = await api.jobGet({ jobId });
         const progress = creatorJobProgressSchema.parse(snapshot.progress);
-        if (!sameIdentity(receipt, progress)) throw invalid('Reopened job differs from its requested identity.');
+        if (!sameIdentity(receipt, progress) || (existing?.kind != null && existing.kind !== progress.kind)) {
+          throw invalid('Reopened job differs from its requested identity or known kind.');
+        }
         if (jobGenerations.get(jobId) === generation) {
           set((state) => {
             const entry = state.jobs[jobId];
-            const advanced = canAdvance(entry.progress, progress) ? withProgress(entry, progress) : entry;
-            return { jobs: { ...state.jobs, [jobId]: { ...advanced, job: advanced.progress === progress ? { ...snapshot, progress } : entry.job, status: 'ready', acceptingEvents: true } } };
+            let advanced = canAdvance(entry.progress, progress) ? withProgress(entry, progress) : entry;
+            if (advanced !== entry || !entry.job) {
+              advanced = { ...advanced, job: { ...snapshot, progress: advanced.progress ?? progress } };
+            }
+            for (const event of pending) {
+              if (canAdvance(advanced.progress, event)) advanced = withProgress(advanced, event);
+            }
+            pendingJobs.delete(jobId);
+            return { jobs: { ...state.jobs, [jobId]: { ...advanced, status: 'ready', acceptingEvents: true } } };
           });
         }
         return snapshot;
       } catch (error) {
         if (jobGenerations.get(jobId) === generation) {
+          pendingJobs.delete(jobId);
           const failure = creatorError(error);
           set((state) => ({ jobs: { ...state.jobs, [jobId]: { ...state.jobs[jobId], status: errorStatus(failure), error: failure, acceptingEvents: false } }, jobError: failure }));
         }
@@ -202,8 +228,14 @@ export function createCreatorStore(dependencies: Partial<CreatorStoreDependencie
       if (!parsed.success) return false;
       const progress = parsed.data;
       const entry = ownJob(get().jobs, progress.jobId);
-      if (!entry?.acceptingEvents || (entry.kind !== null && entry.kind !== progress.kind) || !sameIdentity(entry.receipt, progress)
-        || !currentOwns(get().currentProject, progress) || !canAdvance(entry.progress, progress)) return false;
+      if (!entry || (entry.kind !== null && entry.kind !== progress.kind) || !sameIdentity(entry.receipt, progress)
+        || !currentOwns(get().currentProject, progress)) return false;
+      const pending = pendingJobs.get(progress.jobId);
+      if (pending) {
+        pending.push(progress);
+        return false; // Buffered, not applied until the snapshot has validated ownership.
+      }
+      if (!entry.acceptingEvents || !canAdvance(entry.progress, progress)) return false;
       set((state) => ({ jobs: { ...state.jobs, [progress.jobId]: withProgress(entry, progress) } }));
       return true;
     },
@@ -211,7 +243,9 @@ export function createCreatorStore(dependencies: Partial<CreatorStoreDependencie
       const generation = ++devicesGeneration;
       set({ inputDevicesStatus: 'loading', inputDevicesError: null });
       try {
-        const devices = await input.devices();
+        const parsed = inputDevicesSchema.safeParse(await input.devices());
+        if (!parsed.success) throw invalid('Input devices response is malformed or contains duplicate identities.');
+        const devices = parsed.data;
         if (generation === devicesGeneration) set({ inputDevices: devices, inputDevicesStatus: 'ready' });
       } catch (error) {
         if (generation === devicesGeneration) {
@@ -223,40 +257,50 @@ export function createCreatorStore(dependencies: Partial<CreatorStoreDependencie
     },
     async startInputSession(deviceId) {
       if (!['none', 'released'].includes(get().inputOwnership)) throw invalid('Prior input ownership has not been released by the native worker.');
-      const ownerGeneration = ++inputOwnerGeneration;
       set({ inputOwnership: 'starting', inputHandlesClosed: false, inputStatus: 'loading', inputError: null, inputState: null, inputHistory: [], inputAcceptingEvents: false, inputDeviceId: deviceId });
+      let receipt: InputSessionReceipt;
       try {
-        const receipt = await input.sessionStart({ deviceId });
-        if (typeof receipt.sessionId !== 'string' || !receipt.sessionId) throw invalid('Input start returned no session identity.');
-        set({ inputSessionId: receipt.sessionId, inputOwnership: 'owned' });
-        await get().refreshInputSession();
-        return receipt;
+        receipt = await input.sessionStart({ deviceId });
+        if (!inputStateSchema.shape.sessionId.safeParse(receipt?.sessionId).success) throw invalid('Input start returned no valid session identity.');
       } catch (error) {
         const failure = creatorError(error);
-        // The frozen exact start denial guarantees no session was created. No other
-        // error (including a failed sessionGet after receipt) proves non-acquisition.
-        const deniedBeforeAcquisition = !get().inputSessionId && failure.code === 'action_unavailable'
+        // Only an exact start denial proves non-acquisition. Snapshot errors are
+        // handled by refreshInputSession, which owns the read generation.
+        const deniedBeforeAcquisition = failure.code === 'action_unavailable'
           && failure.details.command === 'fusion_input_session_start';
-        if (ownerGeneration === inputOwnerGeneration) set({ inputOwnership: deniedBeforeAcquisition ? 'none' : 'uncertain', inputDeviceId: deniedBeforeAcquisition ? null : get().inputDeviceId, inputStatus: errorStatus(failure), inputError: failure, inputHandlesClosed: false });
+        set({ inputOwnership: deniedBeforeAcquisition ? 'none' : 'uncertain', inputDeviceId: deniedBeforeAcquisition ? null : deviceId, inputStatus: errorStatus(failure), inputError: failure, inputHandlesClosed: false });
         throw error;
       }
+      set({ inputSessionId: receipt.sessionId, inputOwnership: 'owned' });
+      await get().refreshInputSession();
+      return receipt;
     },
     async refreshInputSession() {
       const { inputSessionId: sessionId, inputDeviceId: deviceId, inputOwnership } = get();
       if (!sessionId || inputOwnership === 'releasing') throw invalid('No input session is available to query.');
       const generation = ++inputGeneration;
+      const pending = { sessionId, events: pendingInput?.sessionId === sessionId ? pendingInput.events : [] };
+      pendingInput = pending;
       set({ inputAcceptingEvents: false, inputStatus: 'loading', inputError: null });
       try {
         const snapshot = inputStateSchema.parse(await input.sessionGet({ sessionId }));
         if (snapshot.sessionId !== sessionId || (snapshot.deviceId !== null && snapshot.deviceId !== deviceId)) throw invalid('Input snapshot identity differs from its owner.');
         if (generation === inputGeneration && get().inputSessionId === sessionId) {
-          const previous = get().inputState;
-          const advanced = canAdvanceInput(previous, snapshot);
-          set({ inputState: advanced ? snapshot : previous, inputHistory: advanced ? [...get().inputHistory, snapshot] : get().inputHistory, inputStatus: 'ready', inputAcceptingEvents: true });
+          let previous = get().inputState;
+          const history = [...get().inputHistory];
+          for (const incoming of [snapshot, ...pending.events]) {
+            if (canAdvanceInput(previous, incoming)) {
+              previous = incoming;
+              history.push(incoming);
+            }
+          }
+          pendingInput = null;
+          set({ inputState: previous, inputHistory: history.slice(-INPUT_HISTORY_LIMIT), inputStatus: 'ready', inputAcceptingEvents: true });
         }
         return snapshot;
       } catch (error) {
         if (generation === inputGeneration && get().inputSessionId === sessionId) {
+          pendingInput = null;
           const failure = creatorError(error);
           set({ inputStatus: errorStatus(failure), inputError: failure, inputOwnership: 'uncertain', inputAcceptingEvents: false });
         }
@@ -268,10 +312,15 @@ export function createCreatorStore(dependencies: Partial<CreatorStoreDependencie
       if (!parsed.success) return false;
       const incoming = parsed.data;
       const state = get();
-      if (!state.inputAcceptingEvents || incoming.sessionId !== state.inputSessionId
-        || (incoming.deviceId !== null && incoming.deviceId !== state.inputDeviceId)
-        || !canAdvanceInput(state.inputState, incoming)) return false;
-      set({ inputState: incoming, inputHistory: [...state.inputHistory, incoming] });
+      if (incoming.sessionId !== state.inputSessionId
+        || (incoming.deviceId !== null && incoming.deviceId !== state.inputDeviceId)) return false;
+      if (pendingInput?.sessionId === incoming.sessionId) {
+        // Only the validated snapshot establishes the status baseline for replay.
+        pendingInput.events = rememberInput(pendingInput.events, incoming);
+        return false;
+      }
+      if (!state.inputAcceptingEvents || !canAdvanceInput(state.inputState, incoming)) return false;
+      set({ inputState: incoming, inputHistory: rememberInput(state.inputHistory, incoming) });
       return true;
     },
     stopInputSession: () => releaseInput(false),

@@ -89,6 +89,26 @@ test('job receipts establish ownership; events reject unknown IDs, revision mism
   assert.deepEqual(store.getState().jobs['job-1'].history.map((item) => item.sequence), [1, 2]);
 });
 
+test('late start receipts cannot select jobs after any project selection generation change', async () => {
+  for (const change of ['other', 'revision', 'same'] as const) {
+    const pending = deferred<{ jobId: string; projectId: string; projectRevision: number }>();
+    let response = opened;
+    const store = createCreatorStore({ creatorApi: apiWith({ projectOpen: async () => response, scan: () => pending.promise }) });
+    await store.getState().openProject(opened.project.project_id);
+    const starting = store.getState().startJob('scan', fixtures.jobStart);
+    response = { ...opened, privateBindings: null, project: { ...opened.project,
+      project_id: change === 'other' ? 'other' : opened.project.project_id,
+      revision: change === 'revision' ? 2 : opened.project.revision } };
+    await store.getState().openProject(response.project.project_id);
+    const receipt = { jobId: 'job-1', projectId: opened.project.project_id, projectRevision: 1 };
+    pending.resolve(receipt);
+    assert.deepEqual(await starting, receipt); // Backend creation is real; no invented cancellation.
+    assert.equal(store.getState().selectedJobId, null, change);
+    assert.equal(store.getState().jobs['job-1']?.acceptingEvents ?? false, false, change);
+    assert.equal(store.getState().mergeJobProgress(progress()), false, change);
+  }
+});
+
 test('reopening gates events until jobGet, preserving snapshot history and refusing identity spoofing', async () => {
   const pending = deferred<CreatorJob>();
   const store = createCreatorStore({ creatorApi: apiWith({ projectOpen: async () => opened, jobGet: () => pending.promise }) });
@@ -106,6 +126,32 @@ test('reopening gates events until jobGet, preserving snapshot history and refus
   assert.equal(invalid.getState().mergeJobProgress(progress()), false);
 });
 
+test('jobGet replays matching buffered events after its snapshot without terminal regression', async () => {
+  const pending = deferred<CreatorJob>();
+  const store = createCreatorStore({ creatorApi: apiWith({ projectOpen: async () => opened, jobGet: () => pending.promise }) });
+  await store.getState().openProject(opened.project.project_id);
+  const loading = store.getState().reopenJob('job-1');
+  for (const event of [progress({ sequence: 4 }), progress({ sequence: 6 }),
+    progress({ sequence: 7, kind: 'build' }), progress({ sequence: 7, status: 'completed' }), progress({ sequence: 8 }),
+    progress({ sequence: 9, projectRevision: 2 })]) store.getState().mergeJobProgress(event);
+  assert.equal(store.getState().jobs['job-1'].progress, null);
+  pending.resolve(job({ sequence: 5 }));
+  await loading;
+  assert.deepEqual(store.getState().jobs['job-1'].history.map((event) => event.sequence), [5, 6, 7]);
+  assert.equal(store.getState().jobs['job-1'].job?.progress.status, 'completed');
+});
+
+test('reopening with an older job snapshot preserves cached report metadata and progress', async () => {
+  let response = { ...job({ sequence: 5 }), reportIds: ['report-1'] };
+  const store = createCreatorStore({ creatorApi: apiWith({ projectOpen: async () => opened, jobGet: async () => response }) });
+  await store.getState().openProject(opened.project.project_id);
+  await store.getState().reopenJob('job-1');
+  response = job({ sequence: 4 });
+  await store.getState().reopenJob('job-1');
+  assert.deepEqual(store.getState().jobs['job-1'].job?.reportIds, ['report-1']);
+  assert.equal(store.getState().jobs['job-1'].job?.progress.sequence, 5);
+});
+
 test('input devices expose unavailable rather than a successful fake empty list', async () => {
   const store = createCreatorStore({ fusionInputApi: inputApi });
   await assert.rejects(store.getState().loadInputDevices(), { code: 'action_unavailable' });
@@ -113,6 +159,22 @@ test('input devices expose unavailable rather than a successful fake empty list'
   const ready = createCreatorStore({ fusionInputApi: inputWith({ devices: async () => [] }) });
   await ready.getState().loadInputDevices();
   assert.equal(ready.getState().inputDevicesStatus, 'ready');
+});
+
+test('input device responses require valid fields and unique device identities before ready', async () => {
+  const device = { deviceId: 'device-1', name: 'Controller', connected: true, mappingKnown: false };
+  for (const malformed of [null, {}, [null], [{ ...device, deviceId: '' }],
+    [{ ...device, name: null }], [{ ...device, connected: 1 }],
+    [{ ...device, mappingKnown: 'yes' }], [{ deviceId: 'device-1' }], [device, device]]) {
+    const store = createCreatorStore({ fusionInputApi: inputWith({ devices: async () => malformed as never }) });
+    await assert.rejects(store.getState().loadInputDevices(), { code: 'invalid_response' });
+    assert.equal(store.getState().inputDevicesStatus, 'error');
+    assert.deepEqual(store.getState().inputDevices, []);
+  }
+  const store = createCreatorStore({ fusionInputApi: inputWith({ devices: async () => [device] }) });
+  await store.getState().loadInputDevices();
+  assert.equal(store.getState().inputDevicesStatus, 'ready');
+  assert.deepEqual(store.getState().inputDevices, [device]);
 });
 
 test('input ownership is exclusive, snapshots precede events, and terminal events never prove release', async () => {
@@ -143,6 +205,43 @@ test('input ownership is exclusive, snapshots precede events, and terminal event
   assert.equal(store.getState().inputSessionId, 'session-1');
   assert.equal(store.getState().inputHandlesClosed, false);
   await assert.rejects(store.getState().startInputSession('device-1'));
+});
+
+test('sessionGet replays buffered input only after validation and obeys terminal ordering', async () => {
+  const pending = deferred<InputState>();
+  const store = createCreatorStore({ fusionInputApi: inputWith({
+    sessionStart: async () => ({ sessionId: 'session-1' }), sessionGet: () => pending.promise
+  }) });
+  const loading = store.getState().startInputSession('device-1');
+  await Promise.resolve();
+  for (const event of [
+    { ...fixtures.input, sequence: 4 }, { ...fixtures.input, sequence: 6 },
+    { ...fixtures.input, sequence: 7, status: 'stopped' },
+    { ...fixtures.input, sequence: 8 },
+    { ...fixtures.input, sequence: 9, sessionId: 'other' },
+    { ...fixtures.input, sequence: 10, deviceId: 'other' }
+  ]) store.getState().mergeInputState(event);
+  assert.equal(store.getState().inputState, null);
+  pending.resolve({ ...fixtures.input, sequence: 5 });
+  await loading;
+  assert.deepEqual(store.getState().inputHistory.map((event) => event.sequence), [5, 6, 7]);
+  assert.equal(store.getState().inputState?.status, 'stopped');
+  assert.equal(store.getState().inputHandlesClosed, false);
+});
+
+test('a buffered input status older than sessionGet cannot suppress a newer valid event', async () => {
+  const pending = deferred<InputState>();
+  const store = createCreatorStore({ fusionInputApi: inputWith({
+    sessionStart: async () => ({ sessionId: 'session-1' }), sessionGet: () => pending.promise
+  }) });
+  const loading = store.getState().startInputSession('device-1');
+  await Promise.resolve();
+  store.getState().mergeInputState({ ...fixtures.input, sequence: 4, status: 'stopped' });
+  store.getState().mergeInputState({ ...fixtures.input, sequence: 6 });
+  pending.resolve({ ...fixtures.input, sequence: 5 });
+  await loading;
+  assert.deepEqual(store.getState().inputHistory.map(({ sequence }) => sequence), [5, 6]);
+  assert.equal(store.getState().inputHandlesClosed, false);
 });
 
 test('stop never releases optimistically and requires matching handlesClosed true ACK', async () => {
@@ -210,6 +309,46 @@ test('a started job rejects a different kind even for its first event', async ()
   await store.getState().openProject(opened.project.project_id);
   await store.getState().startJob('scan', fixtures.jobStart);
   assert.equal(store.getState().mergeJobProgress(progress({ kind: 'build' })), false);
+});
+
+test('a job snapshot cannot replace the kind established by its start receipt', async () => {
+  const store = createCreatorStore({ creatorApi: apiWith({ projectOpen: async () => opened,
+    scan: async () => ({ jobId: 'job-1', projectId: opened.project.project_id, projectRevision: 1 }),
+    jobGet: async () => job({ kind: 'build' }) }) });
+  await store.getState().openProject(opened.project.project_id);
+  await store.getState().startJob('scan', fixtures.jobStart);
+  await assert.rejects(store.getState().reopenJob('job-1'), { code: 'invalid_response' });
+  assert.equal(store.getState().jobs['job-1'].kind, 'scan');
+  assert.equal(store.getState().jobs['job-1'].acceptingEvents, false);
+});
+
+test('input diagnostics retain only the last 120 snapshots across buffered and live events', async () => {
+  const snapshot = deferred<InputState>();
+  const store = createCreatorStore({ fusionInputApi: inputWith({ sessionStart: async () => ({ sessionId: 'session-1' }),
+    sessionGet: () => snapshot.promise }) });
+  const starting = store.getState().startInputSession('device-1');
+  await Promise.resolve();
+  for (let sequence = 2; sequence <= 140; sequence++) store.getState().mergeInputState({ ...fixtures.input, sequence });
+  snapshot.resolve(fixtures.input);
+  await starting;
+  assert.deepEqual(store.getState().inputHistory.map(({ sequence }) => sequence), Array.from({ length: 120 }, (_, i) => i + 21));
+  assert.equal(store.getState().mergeInputState({ ...fixtures.input, sequence: 141 }), true);
+  assert.deepEqual(store.getState().inputHistory.map(({ sequence }) => sequence), Array.from({ length: 120 }, (_, i) => i + 22));
+});
+
+test('late initial sessionGet failure cannot overwrite a newer successful read', async () => {
+  const snapshot = deferred<InputState>();
+  let reads = 0;
+  const store = createCreatorStore({ fusionInputApi: inputWith({ sessionStart: async () => ({ sessionId: 'session-1' }),
+    sessionGet: async () => ++reads === 1 ? snapshot.promise : fixtures.input }) });
+  const starting = store.getState().startInputSession('device-1');
+  await Promise.resolve();
+  await store.getState().refreshInputSession();
+  snapshot.reject(new Error('late snapshot error'));
+  await assert.rejects(starting);
+  assert.equal(store.getState().inputOwnership, 'owned');
+  assert.equal(store.getState().inputStatus, 'ready');
+  assert.equal(store.getState().inputAcceptingEvents, true);
 });
 
 test('late initial sessionGet failure cannot undo a successful stop ACK', async () => {
