@@ -312,6 +312,8 @@ async fn release_receipt_survives_scratch_and_pins_selection_for_handler() {
             #[cfg(windows)]
             {
                 let mut writable = original.clone();
+                // Windows clears FILE_ATTRIBUTE_READONLY without changing the ACL.
+                #[allow(clippy::permissions_set_readonly_false)]
                 writable.set_readonly(false);
                 std::fs::set_permissions(&path, writable)?;
             }
