@@ -351,6 +351,23 @@ fn create_private_key(path: &Path) -> std::io::Result<std::fs::File> {
     windows_key_file::create(path)
 }
 
+pub(super) fn create_private_directory(path: &Path) -> std::io::Result<()> {
+    #[cfg(windows)]
+    {
+        windows_key_file::create_directory(path)
+    }
+    #[cfg(not(windows))]
+    {
+        let mut builder = std::fs::DirBuilder::new();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::DirBuilderExt;
+            builder.mode(0o700);
+        }
+        builder.create(path)
+    }
+}
+
 #[cfg(windows)]
 mod windows_key_file {
     use std::ffi::c_void;
@@ -376,6 +393,7 @@ mod windows_key_file {
     }
     #[link(name = "kernel32")]
     unsafe extern "system" {
+        fn CreateDirectoryW(name: *const u16, attrs: *const SecurityAttributes) -> i32;
         fn CreateFileW(
             name: *const u16,
             desired_access: u32,
@@ -388,7 +406,11 @@ mod windows_key_file {
         fn LocalFree(memory: *mut c_void) -> *mut c_void;
     }
 
-    pub(super) fn create(path: &Path) -> std::io::Result<File> {
+    fn with_private_attributes<T>(
+        path: &Path,
+        dacl: &str,
+        create: impl FnOnce(*const u16, &SecurityAttributes) -> std::io::Result<T>,
+    ) -> std::io::Result<T> {
         let mut name: Vec<_> = path.as_os_str().encode_wide().collect();
         if name.contains(&0) {
             return Err(std::io::Error::new(
@@ -399,7 +421,7 @@ mod windows_key_file {
         name.push(0);
         // Create the file with its final protected DACL. No inherited user or
         // group ACE can read the private material, even during creation.
-        let descriptor_text: Vec<_> = "D:P(A;;FA;;;OW)(A;;FA;;;SY)\0".encode_utf16().collect();
+        let descriptor_text: Vec<_> = dacl.encode_utf16().chain(Some(0)).collect();
         let mut descriptor = std::ptr::null_mut();
         // SAFETY: NUL-terminated UTF-16 input and writable descriptor output.
         if unsafe {
@@ -418,30 +440,48 @@ mod windows_key_file {
             descriptor,
             inherit_handle: 0,
         };
-        // SAFETY: The parent directory is held by the caller's no-reparse
-        // guard. CREATE_NEW refuses an existing leaf; the descriptor outlives
-        // creation. The resulting non-inheritable handle has exclusive access.
-        let handle = unsafe {
-            CreateFileW(
-                name.as_ptr(),
-                0x4000_0000,
-                0,
-                &attributes,
-                1,
-                0x0020_0080,
-                std::ptr::null_mut(),
-            )
-        };
-        let error = (handle as isize == -1).then(std::io::Error::last_os_error);
+        let result = create(name.as_ptr(), &attributes);
         // SAFETY: Windows allocated this descriptor with LocalAlloc.
-        unsafe {
-            LocalFree(descriptor);
-        }
-        if let Some(error) = error {
-            return Err(error);
-        }
-        // SAFETY: This newly created valid handle is transferred exactly once.
-        Ok(unsafe { File::from_raw_handle(handle) })
+        unsafe { LocalFree(descriptor) };
+        result
+    }
+
+    pub(super) fn create_directory(path: &Path) -> std::io::Result<()> {
+        with_private_attributes(
+            path,
+            "D:P(A;OICI;FA;;;OW)(A;OICI;FA;;;SY)",
+            |name, attributes| {
+                // SAFETY: the caller holds the guarded parent; the path and DACL are live for this call.
+                if unsafe { CreateDirectoryW(name, attributes) } == 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            },
+        )
+    }
+
+    pub(super) fn create(path: &Path) -> std::io::Result<File> {
+        with_private_attributes(path, "D:P(A;;FA;;;OW)(A;;FA;;;SY)", |name, attributes| {
+            // SAFETY: The parent directory is held by the caller's no-reparse
+            // guard. CREATE_NEW refuses an existing leaf; the descriptor outlives
+            // creation. The resulting non-inheritable handle has exclusive access.
+            let handle = unsafe {
+                CreateFileW(
+                    name,
+                    0x4000_0000,
+                    0,
+                    attributes,
+                    1,
+                    0x0020_0080,
+                    std::ptr::null_mut(),
+                )
+            };
+            if handle as isize == -1 {
+                return Err(std::io::Error::last_os_error());
+            }
+            // SAFETY: This newly created valid handle is transferred exactly once.
+            Ok(unsafe { File::from_raw_handle(handle) })
+        })
     }
 
     #[cfg(test)]

@@ -116,6 +116,34 @@ fn inline_program_rejects_signing_key_in_component() {
 }
 
 #[test]
+fn inline_program_rejects_prebuilt_archive_and_key_in_output() {
+    use crate::fusion_source::{signatures, ErrorCode};
+    let author = Fixture::new(false);
+    let root = author.temporary.path();
+    let key = root.join("local-test-key.pem");
+    signatures::keygen(&key).unwrap();
+    let engine = PackerEngine::new();
+    let mut input = recipe();
+    input["games"][0]["layers"][0]["local_path"] = json!("runtime.zip");
+    let archive_recipe = serde_json::from_value::<PackerRecipe>(input).unwrap();
+    let err = engine
+        .build_with_signing_key(&archive_recipe, root, &author.dist, Some(&key))
+        .unwrap_err();
+    assert_eq!(err.code, ErrorCode::ActionUnavailable);
+    assert!(!author.dist.join("source-index.json").exists());
+    fs::create_dir_all(&author.dist).unwrap();
+    let output_key = author.dist.join("local-test-key.pem");
+    fs::rename(&key, &output_key).unwrap();
+    let directory_recipe = serde_json::from_value::<PackerRecipe>(recipe()).unwrap();
+    let err = engine
+        .build_with_signing_key(&directory_recipe, root, &author.dist, Some(&output_key))
+        .unwrap_err();
+    assert_eq!(err.code, ErrorCode::InvalidPath);
+    assert!(err.details.is_empty());
+    assert!(!author.dist.join("source-index.json").exists());
+}
+
+#[test]
 fn inline_program_verify_refuses_unsigned_source() {
     use crate::fusion_source::{signatures, ErrorCode};
     let author = Fixture::new(false);
@@ -138,6 +166,19 @@ fn inline_program_verify_refuses_unsigned_source() {
     assert_eq!(
         engine.verify(&author.dist).unwrap_err().code,
         ErrorCode::InvalidSourceSignature
+    );
+    let before = crate::fusion_source::test_support::publication_hashes(&author.dist);
+    let mut legacy = author.recipe.clone();
+    legacy["source_info"]["id"] = json!(SOURCE);
+    legacy["base_url"] = json!(SOURCE_URL);
+    let legacy = serde_json::from_value::<PackerRecipe>(legacy).unwrap();
+    assert_eq!(
+        engine.build(&legacy, root, &author.dist).unwrap_err().code,
+        ErrorCode::InvalidSourceSignature
+    );
+    assert_eq!(
+        crate::fusion_source::test_support::publication_hashes(&author.dist),
+        before
     );
 }
 

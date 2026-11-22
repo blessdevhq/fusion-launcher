@@ -385,7 +385,8 @@ impl PackerEngine {
         for game in &recipe.games {
             validate_program_recipe(game)?;
         }
-        let signing_material = signing_key
+        let signing_key_path = signing_key;
+        let signing_material = signing_key_path
             .map(signatures::read_signing_key_with_digest)
             .transpose()?;
         let signing_key = signing_material.as_ref().map(|(key, _)| key);
@@ -418,8 +419,17 @@ impl PackerEngine {
         let _recipe_root = fs_safety::guard(&recipe_dir)?;
         let out = absolute(out)?;
         let _out = fs_safety::ensure_directory(&out)?;
+        if let Some(key_path) = signing_key_path {
+            if path_within(&out, &absolute(key_path)?)? {
+                return Err(signing_key_payload_error());
+            }
+        }
         let _lock = RepositoryLock::acquire(&out)?;
-        let scratch = Scratch::new_in(&out)?;
+        let scratch = if signing_key.is_some() {
+            Scratch::new_outside(&out)?
+        } else {
+            Scratch::new_in(&out)?
+        };
         let cache = LayerCache::open(&scratch.0.join("inspection"))?;
         let index_path = out.join("source-index.json");
         let mut index = if index_path
@@ -549,12 +559,17 @@ impl PackerEngine {
                             infer_archive(&input)
                         }
                     });
-                    if program.is_some() && format != ArchiveFormat::Zip {
+                    if program.is_some() && (!metadata.is_dir() || format != ArchiveFormat::Zip) {
                         return Err(program_recipe_unavailable());
                     }
                     let staged = scratch.0.join(fs_safety::unique_name("artifact"));
                     if metadata.is_dir() {
                         reject_output_inside_source(&input, &out)?;
+                        if path_within(&input, &scratch.0)? {
+                            return Err(invalid_path(
+                                "Authoring staging cannot be inside a layer input directory.",
+                            ));
+                        }
                         let object = cache.object(&cache.prepare_directory(&input)?)?;
                         reject_signing_key_payload(signing_digest, &object.files)?;
                         match format {
@@ -872,6 +887,20 @@ impl PackerEngine {
         index.signature = None;
         if let Some(key) = signing_key {
             signatures::sign_index(&mut index, key)?;
+        } else if index.games.iter().any(|entry| {
+            parents
+                .get(&QualifiedGameId {
+                    source_id: index.source_info.id.clone(),
+                    game_id: entry.id.clone(),
+                })
+                .is_some_and(|manifest| {
+                    manifest
+                        .creator
+                        .as_ref()
+                        .is_some_and(|creator| creator.as_program().is_some())
+                })
+        }) {
+            return Err(unsigned_program_source());
         }
         let index_bytes = canonical_bytes(&index)?;
         SchemaUpcaster::upcast_source_index(
@@ -907,7 +936,7 @@ impl PackerEngine {
         let canonical_index = SchemaUpcaster::upcast_source_index(&text)?;
         let index: SourceIndex = parse_json(&text)?;
         let mut parents = load_index_manifests(&root, &index)?;
-        let scratch = Scratch::new_in(&root)?;
+        let scratch = Scratch::new_outside(&root)?;
         let cache = LayerCache::open(&scratch.0)?;
         let mut report = VerifyReport {
             source_id: canonical_index.source_info.id.clone(),
@@ -953,10 +982,7 @@ impl PackerEngine {
             if !signature_verified
                 && crate::fusion_creator::declarative::runtime::descriptor(&manifest).is_some()
             {
-                return Err(FusionError::new(
-                    ErrorCode::InvalidSourceSignature,
-                    "A ProgramDescriptor release requires a signed Source index.",
-                ));
+                return Err(unsigned_program_source());
             }
             let mut seen = BTreeSet::new();
             let mut physical = BTreeMap::new();
@@ -1146,18 +1172,26 @@ fn game_manifest(game: &PackerGameRecipe, layers: Vec<LayerSpec>) -> GameManifes
     }
 }
 
+fn unsigned_program_source() -> FusionError {
+    FusionError::new(
+        ErrorCode::InvalidSourceSignature,
+        "A ProgramDescriptor release requires a signed Source index.",
+    )
+}
+
+fn signing_key_payload_error() -> FusionError {
+    invalid_path("Keep the Source signing key outside publication output and published inputs.")
+}
+
 fn reject_signing_key_payload(digest: Option<&str>, files: &[CasFile]) -> Result<(), FusionError> {
     if digest.is_some_and(|digest| files.iter().any(|file| file.blake3 == digest)) {
-        return Err(FusionError::new(
-            ErrorCode::InvalidPath,
-            "A publishing input contains the Source signing key. Keep it outside published inputs.",
-        ));
+        return Err(signing_key_payload_error());
     }
     Ok(())
 }
 
 fn program_recipe_unavailable() -> FusionError {
-    FusionError::new(ErrorCode::ActionUnavailable, "Program authoring currently supports only signed standalone, redistributable managed ZIP components rooted at the archive root.")
+    FusionError::new(ErrorCode::ActionUnavailable, "Program authoring currently supports only signed standalone, redistributable managed directories packaged by Packer as ZIP.")
 }
 
 fn validate_program_recipe(game: &PackerGameRecipe) -> Result<(), FusionError> {
@@ -2271,6 +2305,15 @@ fn invalid_path(message: &str) -> FusionError {
     FusionError::new(ErrorCode::InvalidPath, message)
 }
 fn reject_output_inside_source(source: &Path, out: &Path) -> Result<(), FusionError> {
+    if path_within(source, out)? {
+        return Err(invalid_path(
+            "Repository output cannot be inside a layer input directory.",
+        ));
+    }
+    Ok(())
+}
+
+fn path_within(source: &Path, out: &Path) -> Result<bool, FusionError> {
     let source = source
         .canonicalize()
         .map_err(|e| io_error("Resolve source root", source, e))?;
@@ -2279,12 +2322,7 @@ fn reject_output_inside_source(source: &Path, out: &Path) -> Result<(), FusionEr
         .map_err(|e| io_error("Resolve output root", out, e))?;
     let source = source.to_string_lossy().replace('\\', "/").to_lowercase();
     let out = out.to_string_lossy().replace('\\', "/").to_lowercase();
-    if out == source || out.starts_with(&format!("{}/", source.trim_end_matches('/'))) {
-        return Err(invalid_path(
-            "Repository output cannot be inside a layer input directory.",
-        ));
-    }
-    Ok(())
+    Ok(out == source || out.starts_with(&format!("{}/", source.trim_end_matches('/'))))
 }
 
 fn publish_immutable_bytes(root: &Path, relative: &str, bytes: &[u8]) -> Result<(), FusionError> {
@@ -2341,11 +2379,22 @@ impl Scratch {
         Self::new_in(&parent)
     }
 
-    /// Large archive/CAS staging stays on the author's selected repository volume.
+    fn new_outside(publication: &Path) -> Result<Self, FusionError> {
+        let parent = absolute(&std::env::temp_dir())?;
+        let _parent = fs_safety::guard(&parent)?;
+        if path_within(publication, &parent)? {
+            return Err(invalid_path(
+                "The temporary directory must be outside the publication tree.",
+            ));
+        }
+        Self::new_in(&parent)
+    }
+
     fn new_in(parent: &Path) -> Result<Self, FusionError> {
         let _parent = fs_safety::guard(parent)?;
         let root = parent.join(fs_safety::unique_name(".packer"));
-        fs::create_dir(&root).map_err(|e| io_error("Create authoring staging", &root, e))?;
+        signatures::create_private_directory(&root)
+            .map_err(|e| io_error("Create authoring staging", &root, e))?;
         Ok(Self(root))
     }
 }
