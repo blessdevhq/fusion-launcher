@@ -368,6 +368,70 @@ fn history_reopens_old_release_and_later_report() {
 }
 
 #[test]
+fn history_rejects_out_of_bounds_profile_ids_on_old_reports() {
+    for (build, controls) in [
+        (String::new(), "native".into()),
+        ("windowed".into(), "é".repeat(129)),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = open_store(&dir.path().join("library.db")).unwrap();
+        let initial = project("project", 0);
+        save(&mut store, initial.clone(), None);
+        evidence(
+            &store,
+            &initial,
+            "old",
+            CreatorReportKind::StructureIntegrity,
+            CreatorReportStatus::Passed,
+        );
+        let bytes: Vec<u8> = store
+            .conn
+            .query_row(
+                "SELECT report_json FROM creator_reports WHERE report_id='old'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let mut report: CreatorReport = serde_json::from_slice(&bytes).unwrap();
+        report.report_id = "invalid".into();
+        report.build_profile_id = build;
+        report.controls_profile_id = controls;
+        store.conn.execute("INSERT INTO creator_reports(report_id,project_id,project_revision,report_json) VALUES('invalid','project',0,?1)", [serde_json::to_vec(&report).unwrap()]).unwrap();
+        save(&mut store, project("project", 1), Some(0));
+        assert_eq!(
+            project_service::report_get(&store, "invalid")
+                .unwrap_err()
+                .code,
+            ErrorCode::IntegrityViolation
+        );
+        assert_eq!(
+            project_service::release_list(&store, "project")
+                .unwrap_err()
+                .code,
+            ErrorCode::IntegrityViolation
+        );
+    }
+}
+
+#[test]
+fn history_rejects_non_blob_report_payload_as_corrupt() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = open_store(&dir.path().join("library.db")).unwrap();
+    save(&mut store, project("project", 0), None);
+    store.conn.execute("INSERT INTO creator_reports(report_id,project_id,project_revision,report_json) VALUES('bad','project',0,42)", []).unwrap();
+    assert_eq!(
+        project_service::report_get(&store, "bad").unwrap_err().code,
+        ErrorCode::IntegrityViolation
+    );
+    assert_eq!(
+        project_service::release_list(&store, "project")
+            .unwrap_err()
+            .code,
+        ErrorCode::IntegrityViolation
+    );
+}
+
+#[test]
 fn service_list_rejects_a_report_bound_to_different_manifest_bytes() {
     let dir = tempfile::tempdir().unwrap();
     let mut store = open_store(&dir.path().join("library.db")).unwrap();

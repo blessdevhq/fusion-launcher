@@ -13,7 +13,7 @@ use crate::fusion_source::program_schema::{
     parse_unique_json, CreatorProgramProject, MAX_PROGRAM_BYTES, MAX_REVISION,
 };
 use crate::storage::RepositoryStore;
-use rusqlite::{params, OptionalExtension};
+use rusqlite::params;
 use serde::de::DeserializeOwned;
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -218,11 +218,21 @@ pub(crate) fn release_list(
 
 pub(crate) fn report_get(store: &RepositoryStore, id: &str) -> Result<CreatorReport, FusionError> {
     let snapshot = store.conn.unchecked_transaction().map_err(sql_error)?;
-    let row: Option<(String, u64, Vec<u8>)> = store.conn.query_row(
-        "SELECT project_id,project_revision,report_json FROM creator_reports WHERE report_id=?1",
-        [id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-    ).optional().map_err(sql_error)?;
-    let (project_id, revision, bytes) = row.ok_or_else(history_not_found)?;
+    let (project_id, revision, bytes): (String, u64, Vec<u8>) = {
+        let mut statement = store.conn.prepare(
+            "SELECT project_id,project_revision,report_json FROM creator_reports WHERE report_id=?1",
+        ).map_err(sql_error)?;
+        let mut rows = statement.query([id]).map_err(sql_error)?;
+        let row = rows
+            .next()
+            .map_err(sql_error)?
+            .ok_or_else(history_not_found)?;
+        (
+            row.get(0).map_err(|_| invalid_stored())?,
+            row.get(1).map_err(|_| invalid_stored())?,
+            row.get(2).map_err(|_| invalid_stored())?,
+        )
+    };
     let report: CreatorReport = stored_json(&bytes)?;
     let project = project_storage::open_project(store, &project_id)?.ok_or_else(invalid_stored)?;
     validate_stored_project(&project)?;
@@ -268,6 +278,10 @@ fn valid_hash(hash: &str) -> bool {
         && hash
             .bytes()
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
+fn valid_history_id(id: &str) -> bool {
+    !id.is_empty() && id.chars().nth(128).is_none()
 }
 
 fn verification_status(
@@ -324,8 +338,10 @@ fn validate_history_report(
     release: &CreatorRelease,
     project: &CreatorProgramProject,
 ) -> Result<(), FusionError> {
-    if id.is_empty()
+    if !valid_history_id(id)
         || report.report_id != id
+        || !valid_history_id(&report.build_profile_id)
+        || !valid_history_id(&report.controls_profile_id)
         || report.release_id != release.release_id
         || report.project_revision != revision
         || revision != release.project_revision
@@ -360,11 +376,15 @@ fn report_release(
     release_id: &str,
     revision: u64,
 ) -> Result<CreatorRelease, FusionError> {
-    let bytes: Option<Vec<u8>> = store.conn.query_row(
+    let mut statement = store.conn.prepare(
         "SELECT release_json FROM creator_releases WHERE release_id=?1 AND project_id=?2 AND project_revision=?3",
-        params![release_id, project.project_id, revision], |row| row.get(0),
-    ).optional().map_err(sql_error)?;
-    let release: CreatorRelease = stored_json(&bytes.ok_or_else(invalid_stored)?)?;
+    ).map_err(sql_error)?;
+    let mut rows = statement
+        .query(params![release_id, project.project_id, revision])
+        .map_err(sql_error)?;
+    let row = rows.next().map_err(sql_error)?.ok_or_else(invalid_stored)?;
+    let bytes: Vec<u8> = row.get(0).map_err(|_| invalid_stored())?;
+    let release: CreatorRelease = stored_json(&bytes)?;
     validate_release_row(
         &release,
         release_id,
@@ -382,7 +402,7 @@ fn validate_release_row(
     revision: u64,
     current_revision: u64,
 ) -> Result<(), FusionError> {
-    if id.is_empty()
+    if !valid_history_id(id)
         || revision > current_revision
         || release.release_id != id
         || release.project_id != project_id
