@@ -46,7 +46,23 @@ macro_rules! input_command {
     };
 }
 
+macro_rules! history_command {
+    ($name:ident, $request:ty, $response:ty, $method:ident, $field:ident) => {
+        creator_command!($name($request) -> $response, |runner, request| {
+            let shared = runner.store();
+            let store = shared.lock().map_err(|_| crate::fusion_creator::jobs::io())?;
+            project_service::$method(&store, &request.$field)
+        });
+    };
+}
+
 macro_rules! unavailable_command {
+    (fusion_creator_release_list ($request:ty) -> $response:ty) => {
+        history_command!(fusion_creator_release_list, $request, $response, release_list, project_id);
+    };
+    (fusion_creator_report_get ($request:ty) -> $response:ty) => {
+        history_command!(fusion_creator_report_get, $request, $response, report_get, report_id);
+    };
     (fusion_input_devices () -> $response:ty) => { input_command!(fusion_input_devices() -> $response, devices); };
     (fusion_input_session_start ($request:ty) -> $response:ty) => { input_command!(fusion_input_session_start($request) -> $response, start); };
     (fusion_input_session_get ($request:ty) -> $response:ty) => { input_command!(fusion_input_session_get($request) -> $response, state); };
@@ -155,10 +171,6 @@ mod tests {
         }
         let fixture: serde_json::Value =
             serde_json::from_str(include_str!("../../../fixtures/creator/contracts.json")).unwrap();
-        let project = CreatorProjectRequest {
-            project_id: "fixture-project".into(),
-        };
-
         let start: CreatorJobStartRequest =
             serde_json::from_value(fixture["jobStart"].clone()).unwrap();
         rejects!(fusion_creator_scan, start.clone());
@@ -171,13 +183,6 @@ mod tests {
             job_id: "job-1".into(),
         };
         rejects!(fusion_creator_job_resume, job);
-        rejects!(fusion_creator_release_list, project);
-        rejects!(
-            fusion_creator_report_get,
-            CreatorReportRequest {
-                report_id: "report-1".into()
-            }
-        );
         rejects!(
             fusion_input_session_start,
             InputSessionStartRequest {

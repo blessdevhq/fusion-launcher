@@ -291,6 +291,83 @@ fn service_list_never_borrows_another_projects_evidence() {
 }
 
 #[test]
+fn history_reopens_old_release_and_later_report() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("library.db");
+    let mut store = open_store(&db).unwrap();
+    let initial = project("project", 0);
+    save(&mut store, initial.clone(), None);
+    save(&mut store, project("other", 0), None);
+    evidence(
+        &store,
+        &initial,
+        "old",
+        CreatorReportKind::StructureIntegrity,
+        CreatorReportStatus::Passed,
+    );
+    let original: Vec<u8> = store
+        .conn
+        .query_row(
+            "SELECT release_json FROM creator_releases WHERE release_id='release-old'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let bytes: Vec<u8> = store
+        .conn
+        .query_row(
+            "SELECT report_json FROM creator_reports WHERE report_id='old'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let mut report: CreatorReport = serde_json::from_slice(&bytes).unwrap();
+    report.report_id = "later".into();
+    store.conn.execute(
+        "INSERT INTO creator_reports(report_id,project_id,project_revision,report_json) VALUES(?1,?2,?3,?4)",
+        params![report.report_id, initial.project_id, initial.revision, serde_json::to_vec(&report).unwrap()],
+    ).unwrap();
+    save(&mut store, project("project", 1), Some(0));
+    drop(store);
+    let store = open_store(&db).unwrap();
+    let rows = project_service::release_list(&store, "project").unwrap();
+    let mut expected: CreatorRelease = serde_json::from_slice(&original).unwrap();
+    expected.report_ids = vec!["later".into(), "old".into()];
+    assert_eq!(
+        serde_json::to_value(rows).unwrap(),
+        serde_json::to_value([expected]).unwrap()
+    );
+    assert_eq!(
+        serde_json::to_value(project_service::report_get(&store, "later").unwrap()).unwrap(),
+        serde_json::to_value(report).unwrap()
+    );
+    let after: Vec<u8> = store
+        .conn
+        .query_row(
+            "SELECT release_json FROM creator_releases WHERE release_id='release-old'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(original, after);
+    assert!(project_service::release_list(&store, "other")
+        .unwrap()
+        .is_empty());
+    assert_eq!(
+        project_service::report_get(&store, "absent")
+            .unwrap_err()
+            .code,
+        ErrorCode::SnapshotNotFound
+    );
+    assert_eq!(
+        project_service::release_list(&store, "absent")
+            .unwrap_err()
+            .code,
+        ErrorCode::SnapshotNotFound
+    );
+}
+
+#[test]
 fn service_list_rejects_a_report_bound_to_different_manifest_bytes() {
     let dir = tempfile::tempdir().unwrap();
     let mut store = open_store(&dir.path().join("library.db")).unwrap();
@@ -316,6 +393,18 @@ fn service_list_rejects_a_report_bound_to_different_manifest_bytes() {
         "INSERT INTO creator_reports(report_id,project_id,project_revision,report_json) VALUES(?1,?2,?3,?4)",
         params![report.report_id, target.project_id, target.revision, serde_json::to_vec(&report).unwrap()],
     ).unwrap();
+    assert_eq!(
+        project_service::release_list(&store, "target")
+            .unwrap_err()
+            .code,
+        ErrorCode::IntegrityViolation
+    );
+    assert_eq!(
+        project_service::report_get(&store, "wrong-manifest")
+            .unwrap_err()
+            .code,
+        ErrorCode::IntegrityViolation
+    );
     assert_eq!(
         project_service::list(&store).unwrap_err().code,
         ErrorCode::IntegrityViolation
