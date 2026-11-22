@@ -247,6 +247,13 @@ pub fn sign_index(index: &mut SourceIndex, key: &SigningKey) -> Result<(), Fusio
 }
 
 pub fn read_signing_key(path: &Path) -> Result<SigningKey, FusionError> {
+    read_signing_key_with_digest(path).map(|(key, _)| key)
+}
+
+/// The digest is local-only and identifies the exact file read for signing.
+pub(super) fn read_signing_key_with_digest(
+    path: &Path,
+) -> Result<(SigningKey, String), FusionError> {
     use std::io::Read;
     let path = absolute_key_path(path)?;
     let file = fs_safety::open_read(&path)?;
@@ -257,8 +264,9 @@ pub fn read_signing_key(path: &Path) -> Result<SigningKey, FusionError> {
     if pem.len() as u64 > PRIVATE_KEY_LIMIT {
         return Err(invalid("The PKCS#8 signing key exceeds its size limit."));
     }
-    SigningKey::from_pkcs8_pem(&pem)
-        .map_err(|_| invalid("Expected an Ed25519 PKCS#8 PEM signing key."))
+    let key = SigningKey::from_pkcs8_pem(&pem)
+        .map_err(|_| invalid("Expected an Ed25519 PKCS#8 PEM signing key."))?;
+    Ok((key, blake3::hash(pem.as_bytes()).to_hex().to_string()))
 }
 
 #[derive(Debug, Serialize)]

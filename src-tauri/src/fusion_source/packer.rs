@@ -385,9 +385,13 @@ impl PackerEngine {
         for game in &recipe.games {
             validate_program_recipe(game)?;
         }
-        let signing_key = signing_key.map(signatures::read_signing_key).transpose()?;
+        let signing_material = signing_key
+            .map(signatures::read_signing_key_with_digest)
+            .transpose()?;
+        let signing_key = signing_material.as_ref().map(|(key, _)| key);
+        let signing_digest = signing_material.as_ref().map(|(_, hash)| hash.as_str());
         let mut effective_recipe = recipe.clone();
-        if let Some(key) = &signing_key {
+        if let Some(key) = signing_key {
             let public =
                 base64::engine::general_purpose::STANDARD.encode(key.verifying_key().as_bytes());
             if recipe
@@ -552,6 +556,7 @@ impl PackerEngine {
                     if metadata.is_dir() {
                         reject_output_inside_source(&input, &out)?;
                         let object = cache.object(&cache.prepare_directory(&input)?)?;
+                        reject_signing_key_payload(signing_digest, &object.files)?;
                         match format {
                             ArchiveFormat::Zip => write_deterministic_zip(&object, &staged)?,
                             ArchiveFormat::Raw => {
@@ -581,6 +586,7 @@ impl PackerEngine {
                     };
                     let (inspection, object) =
                         inspect_with_cache(&cache, &staged, &options, layer.kind)?;
+                    reject_signing_key_payload(signing_digest, &object.files)?;
                     let filename = format!(
                         "{}.{}",
                         inspection.transport_digest.value,
@@ -864,7 +870,7 @@ impl PackerEngine {
         index.source_info = recipe.source_info.clone();
         index.games.sort_by(|a, b| a.id.cmp(&b.id));
         index.signature = None;
-        if let Some(key) = &signing_key {
+        if let Some(key) = signing_key {
             signatures::sign_index(&mut index, key)?;
         }
         let index_bytes = canonical_bytes(&index)?;
@@ -944,6 +950,14 @@ impl PackerEngine {
                 &parents,
                 &inventory.target_capabilities,
             )?;
+            if !signature_verified
+                && crate::fusion_creator::declarative::runtime::descriptor(&manifest).is_some()
+            {
+                return Err(FusionError::new(
+                    ErrorCode::InvalidSourceSignature,
+                    "A ProgramDescriptor release requires a signed Source index.",
+                ));
+            }
             let mut seen = BTreeSet::new();
             let mut physical = BTreeMap::new();
             for binding in inventory.artifacts {
@@ -1130,6 +1144,16 @@ fn game_manifest(game: &PackerGameRecipe, layers: Vec<LayerSpec>) -> GameManifes
         post_setup_steps: game.post_setup_steps.clone(),
         local_placement: game.local_placement,
     }
+}
+
+fn reject_signing_key_payload(digest: Option<&str>, files: &[CasFile]) -> Result<(), FusionError> {
+    if digest.is_some_and(|digest| files.iter().any(|file| file.blake3 == digest)) {
+        return Err(FusionError::new(
+            ErrorCode::InvalidPath,
+            "A publishing input contains the Source signing key. Keep it outside published inputs.",
+        ));
+    }
+    Ok(())
 }
 
 fn program_recipe_unavailable() -> FusionError {

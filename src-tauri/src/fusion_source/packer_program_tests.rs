@@ -85,6 +85,62 @@ fn inline_program_authoring_rejects_unsigned_unsupported_and_unbuildable_inputs(
     }
 }
 
+#[test]
+fn inline_program_rejects_signing_key_in_component() {
+    use crate::fusion_source::{signatures, ErrorCode};
+    let author = Fixture::new(false);
+    let root = author.temporary.path();
+    let key = root.join("local-test-key.pem");
+    signatures::keygen(&key).unwrap();
+    let recipe = serde_json::from_value::<PackerRecipe>(recipe()).unwrap();
+    let engine = PackerEngine::new();
+    engine
+        .build_with_signing_key(&recipe, root, &author.dist, Some(&key))
+        .unwrap();
+    let previous = crate::fusion_source::test_support::publication_hashes(&author.dist);
+    let nested = root.join("runtime/private-input");
+    fs::create_dir(&nested).unwrap();
+    let copied_key = nested.join("local-test-key.pem");
+    fs::copy(&key, &copied_key).unwrap();
+    for selected_key in [&copied_key, &key] {
+        let error = engine
+            .build_with_signing_key(&recipe, root, &author.dist, Some(selected_key))
+            .unwrap_err();
+        assert_eq!(error.code, ErrorCode::InvalidPath);
+        assert!(error.details.is_empty());
+        assert_eq!(
+            crate::fusion_source::test_support::publication_hashes(&author.dist),
+            previous
+        );
+    }
+}
+
+#[test]
+fn inline_program_verify_refuses_unsigned_source() {
+    use crate::fusion_source::{signatures, ErrorCode};
+    let author = Fixture::new(false);
+    let root = author.temporary.path();
+    let key = root.join("local-test-key.pem");
+    signatures::keygen(&key).unwrap();
+    let recipe = serde_json::from_value::<PackerRecipe>(recipe()).unwrap();
+    let engine = PackerEngine::new();
+    engine
+        .build_with_signing_key(&recipe, root, &author.dist, Some(&key))
+        .unwrap();
+    let mut index = author.index();
+    index.signature = None;
+    index.source_info.public_key = None;
+    fs::write(
+        author.dist.join("source-index.json"),
+        serde_json::to_vec(&index).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        engine.verify(&author.dist).unwrap_err().code,
+        ErrorCode::InvalidSourceSignature
+    );
+}
+
 fn recipe() -> Value {
     json!({
         "source_info":{"id":SOURCE,"name":"Owned inline program test"},
