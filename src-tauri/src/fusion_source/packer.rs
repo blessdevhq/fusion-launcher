@@ -10,6 +10,10 @@ use std::path::{Component, Path, PathBuf};
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 
+use crate::fusion_creator::declarative::candidate::is_loadable;
+use crate::fusion_creator::declarative::compiler::{
+    compile_descriptor, validate_descriptor_metadata,
+};
 use crate::fusion_creator::projection::{
     resolve_projection, ProjectionLayer, ProjectionRequest, ProjectionSemantics,
 };
@@ -18,11 +22,13 @@ use super::canonical::{CanonicalGameManifest, CanonicalLayer, QualifiedGameId};
 use super::capabilities::{CapabilityNegotiator, CapabilityRegistry};
 use super::cas::{hash_file, CasFile, CasObject};
 use super::config_templates::{ConfigTemplateEngine, TemplateContext};
+use super::creator_schema::{ComponentOrigin, CreatorExtension};
 use super::errors::{ErrorCode, FusionError};
 use super::evolution::SchemaUpcaster;
 use super::fs_safety::{self, io_error};
 use super::layers::LayerCache;
 use super::plan::{PlanBuilder, PlanOptions};
+use super::program_schema::{ProgramCreatorManifest, ProgramDescriptor};
 use super::resolver::DynamicAssetAttestation;
 use super::schema::*;
 use super::signatures;
@@ -87,6 +93,8 @@ pub struct PackerGameRecipe {
     pub post_setup_steps: Vec<PostSetupStep>,
     #[serde(default)]
     pub local_placement: LocalPlacementPolicy,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub program_descriptor: Option<ProgramDescriptor>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -363,6 +371,20 @@ impl PackerEngine {
         signing_key: Option<&Path>,
     ) -> Result<BuildReport, FusionError> {
         use base64::Engine;
+        if signing_key.is_none()
+            && recipe
+                .games
+                .iter()
+                .any(|game| game.program_descriptor.is_some())
+        {
+            return Err(FusionError::new(
+                ErrorCode::InvalidSourceSignature,
+                "Publishing a ProgramDescriptor requires a Source signing key.",
+            ));
+        }
+        for game in &recipe.games {
+            validate_program_recipe(game)?;
+        }
         let signing_key = signing_key.map(signatures::read_signing_key).transpose()?;
         let mut effective_recipe = recipe.clone();
         if let Some(key) = &signing_key {
@@ -461,6 +483,15 @@ impl PackerEngine {
             let mut bindings = Vec::new();
             for layer in &game.layers {
                 let mut spec = layer_spec(layer);
+                let program = game.program_descriptor.as_ref();
+                if let Some(program) = program {
+                    let component = program
+                        .components
+                        .iter()
+                        .find(|c| c.layer_id == layer.id)
+                        .ok_or_else(program_recipe_unavailable)?;
+                    spec.mount_path = component.mount_path.clone();
+                }
                 if let Some(patch) = &layer.patch {
                     spec.patch = Some(author_patch(patch, &recipe_dir)?);
                 }
@@ -514,6 +545,9 @@ impl PackerEngine {
                             infer_archive(&input)
                         }
                     });
+                    if program.is_some() && format != ArchiveFormat::Zip {
+                        return Err(program_recipe_unavailable());
+                    }
                     let staged = scratch.0.join(fs_safety::unique_name("artifact"));
                     if metadata.is_dir() {
                         reject_output_inside_source(&input, &out)?;
@@ -561,6 +595,10 @@ impl PackerEngine {
                     spec.transport_digest = Some(inspection.transport_digest.clone());
                     spec.size_bytes = Some(inspection.size_bytes);
                     spec.critical_files = inspection.critical_files.clone();
+                    if let Some(program) = program {
+                        spec.critical_files =
+                            program_critical_files(program, &spec.mount_path, &object.files);
+                    }
                     if let Some(patch) = &spec.patch {
                         if object.files.len() != 1 {
                             return Err(FusionError::new(
@@ -1064,9 +1102,17 @@ fn layer_spec(recipe: &PackerLayerRecipe) -> LayerSpec {
 }
 
 fn game_manifest(game: &PackerGameRecipe, layers: Vec<LayerSpec>) -> GameManifest {
+    let creator = game.program_descriptor.clone().map(|program_descriptor| {
+        CreatorExtension::Program(Box::new(ProgramCreatorManifest { program_descriptor }))
+    });
     GameManifest {
-        schema_version: SCHEMA_VERSION.into(),
-        creator: None,
+        schema_version: if creator.is_some() {
+            "1.1"
+        } else {
+            SCHEMA_VERSION
+        }
+        .into(),
+        creator,
         id: game.id.clone(),
         title: game.title.clone(),
         version: game.version.clone(),
@@ -1084,6 +1130,86 @@ fn game_manifest(game: &PackerGameRecipe, layers: Vec<LayerSpec>) -> GameManifes
         post_setup_steps: game.post_setup_steps.clone(),
         local_placement: game.local_placement,
     }
+}
+
+fn program_recipe_unavailable() -> FusionError {
+    FusionError::new(ErrorCode::ActionUnavailable, "Program authoring currently supports only signed standalone, redistributable managed ZIP components rooted at the archive root.")
+}
+
+fn validate_program_recipe(game: &PackerGameRecipe) -> Result<(), FusionError> {
+    let Some(program) = &game.program_descriptor else {
+        return Ok(());
+    };
+    validate_descriptor_metadata(program)?;
+    if game.extends.is_some()
+        || program.components.iter().any(|component| {
+            !component.source_root.is_empty()
+                || !matches!(
+                    component.origin,
+                    ComponentOrigin::Managed {
+                        redistribution_allowed: true,
+                        ..
+                    }
+                )
+        })
+    {
+        return Err(program_recipe_unavailable());
+    }
+    if game.layers.len() != program.components.len() {
+        return Err(FusionError::new(
+            ErrorCode::InvalidManifest,
+            "Recipe layers do not match descriptor components.",
+        ));
+    }
+    for layer in &game.layers {
+        let component = program
+            .components
+            .iter()
+            .find(|component| component.layer_id == layer.id)
+            .ok_or_else(|| {
+                FusionError::new(
+                    ErrorCode::InvalidManifest,
+                    "Recipe layer is absent from the descriptor.",
+                )
+            })?;
+        if !layer.mount_path.is_empty() && layer.mount_path != component.mount_path {
+            return Err(FusionError::new(
+                ErrorCode::InvalidManifest,
+                "Recipe mount path differs from the descriptor.",
+            ));
+        }
+        if layer.local_locator.is_some()
+            || layer.patch.is_some()
+            || layer.dynamic_provider.is_some()
+            || layer.attestation.is_some()
+            || layer.raw_path.is_some()
+            || !layer.critical_files.is_empty()
+            || layer.auto_main_executable
+        {
+            return Err(program_recipe_unavailable());
+        }
+    }
+    Ok(())
+}
+
+fn program_critical_files(
+    program: &ProgramDescriptor,
+    mount: &str,
+    files: &[CasFile],
+) -> Vec<CriticalFileSpec> {
+    files
+        .iter()
+        .filter(|file| is_loadable(&file.path))
+        .map(|file| CriticalFileSpec {
+            path: file.path.clone(),
+            blake3: file.blake3.clone(),
+            role: if mounted_path(mount, &file.path) == program.entrypoint.executable {
+                CriticalFileRole::MainExecutable
+            } else {
+                CriticalFileRole::CoreLibrary
+            },
+        })
+        .collect()
 }
 
 fn author_patch(recipe: &PackerPatchRecipe, recipe_dir: &Path) -> Result<PatchSpec, FusionError> {
@@ -1363,6 +1489,23 @@ fn self_check(
     if let Some(error) = negotiation.blockers.first() {
         return Err(error.clone());
     }
+    if let Some(program) = crate::fusion_creator::declarative::runtime::descriptor(&manifest) {
+        validate_descriptor_metadata(program)?;
+        for build in &program.build_profiles {
+            for controls in &build.controls_profile_ids {
+                PlanBuilder::build(
+                    &manifest,
+                    &PlanOptions {
+                        build_profile_id: Some(build.id.clone()),
+                        controls_profile_id: Some(controls.clone()),
+                        ..Default::default()
+                    },
+                    &registry,
+                )?;
+            }
+        }
+        return Ok(manifest);
+    }
     PlanBuilder::build(&manifest, &PlanOptions::default(), &registry)?;
     let all_addons = manifest
         .layers
@@ -1559,6 +1702,27 @@ fn validate_layer_inventory(
     manifest: &CanonicalGameManifest,
     inventories: &BTreeMap<(String, String), Vec<CasFile>>,
 ) -> Result<(), FusionError> {
+    if let Some(program) = crate::fusion_creator::declarative::runtime::descriptor(manifest) {
+        let mut verified = Vec::new();
+        for layer in manifest.layers.values() {
+            let files = inventories
+                .get(&(manifest.id.clone(), layer.id.clone()))
+                .ok_or_else(program_recipe_unavailable)?;
+            if layer.critical_files != program_critical_files(program, &layer.mount_path, files) {
+                return Err(FusionError::new(
+                    ErrorCode::InvalidManifest,
+                    "Published loadable inventory differs from the descriptor and verified files.",
+                ));
+            }
+            verified.push(ProjectionLayer {
+                layer_id: layer.id.clone(),
+                mount_path: layer.mount_path.clone(),
+                verified_inventory: files.clone(),
+            });
+        }
+        compile_descriptor(program, &verified)?;
+        return Ok(());
+    }
     if manifest.creator.is_some() {
         let verified: Vec<ProjectionLayer> = manifest
             .layers
