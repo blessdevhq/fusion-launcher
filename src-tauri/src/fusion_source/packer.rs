@@ -10,6 +10,10 @@ use std::path::{Component, Path, PathBuf};
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 
+use crate::fusion_creator::declarative::candidate::is_loadable;
+use crate::fusion_creator::declarative::compiler::{
+    compile_descriptor, validate_descriptor_metadata,
+};
 use crate::fusion_creator::projection::{
     resolve_projection, ProjectionLayer, ProjectionRequest, ProjectionSemantics,
 };
@@ -18,11 +22,13 @@ use super::canonical::{CanonicalGameManifest, CanonicalLayer, QualifiedGameId};
 use super::capabilities::{CapabilityNegotiator, CapabilityRegistry};
 use super::cas::{hash_file, CasFile, CasObject};
 use super::config_templates::{ConfigTemplateEngine, TemplateContext};
+use super::creator_schema::{ComponentOrigin, CreatorExtension};
 use super::errors::{ErrorCode, FusionError};
 use super::evolution::SchemaUpcaster;
 use super::fs_safety::{self, io_error};
 use super::layers::LayerCache;
 use super::plan::{PlanBuilder, PlanOptions};
+use super::program_schema::{ProgramCreatorManifest, ProgramDescriptor};
 use super::resolver::DynamicAssetAttestation;
 use super::schema::*;
 use super::signatures;
@@ -87,6 +93,8 @@ pub struct PackerGameRecipe {
     pub post_setup_steps: Vec<PostSetupStep>,
     #[serde(default)]
     pub local_placement: LocalPlacementPolicy,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub program_descriptor: Option<ProgramDescriptor>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -363,9 +371,28 @@ impl PackerEngine {
         signing_key: Option<&Path>,
     ) -> Result<BuildReport, FusionError> {
         use base64::Engine;
-        let signing_key = signing_key.map(signatures::read_signing_key).transpose()?;
+        if signing_key.is_none()
+            && recipe
+                .games
+                .iter()
+                .any(|game| game.program_descriptor.is_some())
+        {
+            return Err(FusionError::new(
+                ErrorCode::InvalidSourceSignature,
+                "Publishing a ProgramDescriptor requires a Source signing key.",
+            ));
+        }
+        for game in &recipe.games {
+            validate_program_recipe(game)?;
+        }
+        let signing_key_path = signing_key;
+        let signing_material = signing_key_path
+            .map(signatures::read_signing_key_with_digest)
+            .transpose()?;
+        let signing_key = signing_material.as_ref().map(|(key, _)| key);
+        let signing_digest = signing_material.as_ref().map(|(_, hash)| hash.as_str());
         let mut effective_recipe = recipe.clone();
-        if let Some(key) = &signing_key {
+        if let Some(key) = signing_key {
             let public =
                 base64::engine::general_purpose::STANDARD.encode(key.verifying_key().as_bytes());
             if recipe
@@ -392,8 +419,17 @@ impl PackerEngine {
         let _recipe_root = fs_safety::guard(&recipe_dir)?;
         let out = absolute(out)?;
         let _out = fs_safety::ensure_directory(&out)?;
+        if let Some(key_path) = signing_key_path {
+            if path_within(&out, &absolute(key_path)?)? {
+                return Err(signing_key_payload_error());
+            }
+        }
         let _lock = RepositoryLock::acquire(&out)?;
-        let scratch = Scratch::new_in(&out)?;
+        let scratch = if signing_key.is_some() {
+            Scratch::new_outside(&out)?
+        } else {
+            Scratch::new_in(&out)?
+        };
         let cache = LayerCache::open(&scratch.0.join("inspection"))?;
         let index_path = out.join("source-index.json");
         let mut index = if index_path
@@ -461,6 +497,15 @@ impl PackerEngine {
             let mut bindings = Vec::new();
             for layer in &game.layers {
                 let mut spec = layer_spec(layer);
+                let program = game.program_descriptor.as_ref();
+                if let Some(program) = program {
+                    let component = program
+                        .components
+                        .iter()
+                        .find(|c| c.layer_id == layer.id)
+                        .ok_or_else(program_recipe_unavailable)?;
+                    spec.mount_path = component.mount_path.clone();
+                }
                 if let Some(patch) = &layer.patch {
                     spec.patch = Some(author_patch(patch, &recipe_dir)?);
                 }
@@ -514,10 +559,19 @@ impl PackerEngine {
                             infer_archive(&input)
                         }
                     });
+                    if program.is_some() && (!metadata.is_dir() || format != ArchiveFormat::Zip) {
+                        return Err(program_recipe_unavailable());
+                    }
                     let staged = scratch.0.join(fs_safety::unique_name("artifact"));
                     if metadata.is_dir() {
                         reject_output_inside_source(&input, &out)?;
+                        if path_within(&input, &scratch.0)? {
+                            return Err(invalid_path(
+                                "Authoring staging cannot be inside a layer input directory.",
+                            ));
+                        }
                         let object = cache.object(&cache.prepare_directory(&input)?)?;
+                        reject_signing_key_payload(signing_digest, &object.files)?;
                         match format {
                             ArchiveFormat::Zip => write_deterministic_zip(&object, &staged)?,
                             ArchiveFormat::Raw => {
@@ -547,6 +601,7 @@ impl PackerEngine {
                     };
                     let (inspection, object) =
                         inspect_with_cache(&cache, &staged, &options, layer.kind)?;
+                    reject_signing_key_payload(signing_digest, &object.files)?;
                     let filename = format!(
                         "{}.{}",
                         inspection.transport_digest.value,
@@ -561,6 +616,10 @@ impl PackerEngine {
                     spec.transport_digest = Some(inspection.transport_digest.clone());
                     spec.size_bytes = Some(inspection.size_bytes);
                     spec.critical_files = inspection.critical_files.clone();
+                    if let Some(program) = program {
+                        spec.critical_files =
+                            program_critical_files(program, &spec.mount_path, &object.files);
+                    }
                     if let Some(patch) = &spec.patch {
                         if object.files.len() != 1 {
                             return Err(FusionError::new(
@@ -826,8 +885,22 @@ impl PackerEngine {
         index.source_info = recipe.source_info.clone();
         index.games.sort_by(|a, b| a.id.cmp(&b.id));
         index.signature = None;
-        if let Some(key) = &signing_key {
+        if let Some(key) = signing_key {
             signatures::sign_index(&mut index, key)?;
+        } else if index.games.iter().any(|entry| {
+            parents
+                .get(&QualifiedGameId {
+                    source_id: index.source_info.id.clone(),
+                    game_id: entry.id.clone(),
+                })
+                .is_some_and(|manifest| {
+                    manifest
+                        .creator
+                        .as_ref()
+                        .is_some_and(|creator| creator.as_program().is_some())
+                })
+        }) {
+            return Err(unsigned_program_source());
         }
         let index_bytes = canonical_bytes(&index)?;
         SchemaUpcaster::upcast_source_index(
@@ -863,7 +936,7 @@ impl PackerEngine {
         let canonical_index = SchemaUpcaster::upcast_source_index(&text)?;
         let index: SourceIndex = parse_json(&text)?;
         let mut parents = load_index_manifests(&root, &index)?;
-        let scratch = Scratch::new_in(&root)?;
+        let scratch = Scratch::new_outside(&root)?;
         let cache = LayerCache::open(&scratch.0)?;
         let mut report = VerifyReport {
             source_id: canonical_index.source_info.id.clone(),
@@ -906,6 +979,11 @@ impl PackerEngine {
                 &parents,
                 &inventory.target_capabilities,
             )?;
+            if !signature_verified
+                && crate::fusion_creator::declarative::runtime::descriptor(&manifest).is_some()
+            {
+                return Err(unsigned_program_source());
+            }
             let mut seen = BTreeSet::new();
             let mut physical = BTreeMap::new();
             for binding in inventory.artifacts {
@@ -1064,9 +1142,17 @@ fn layer_spec(recipe: &PackerLayerRecipe) -> LayerSpec {
 }
 
 fn game_manifest(game: &PackerGameRecipe, layers: Vec<LayerSpec>) -> GameManifest {
+    let creator = game.program_descriptor.clone().map(|program_descriptor| {
+        CreatorExtension::Program(Box::new(ProgramCreatorManifest { program_descriptor }))
+    });
     GameManifest {
-        schema_version: SCHEMA_VERSION.into(),
-        creator: None,
+        schema_version: if creator.is_some() {
+            "1.1"
+        } else {
+            SCHEMA_VERSION
+        }
+        .into(),
+        creator,
         id: game.id.clone(),
         title: game.title.clone(),
         version: game.version.clone(),
@@ -1084,6 +1170,104 @@ fn game_manifest(game: &PackerGameRecipe, layers: Vec<LayerSpec>) -> GameManifes
         post_setup_steps: game.post_setup_steps.clone(),
         local_placement: game.local_placement,
     }
+}
+
+fn unsigned_program_source() -> FusionError {
+    FusionError::new(
+        ErrorCode::InvalidSourceSignature,
+        "A ProgramDescriptor release requires a signed Source index.",
+    )
+}
+
+fn signing_key_payload_error() -> FusionError {
+    invalid_path("Keep the Source signing key outside publication output and published inputs.")
+}
+
+fn reject_signing_key_payload(digest: Option<&str>, files: &[CasFile]) -> Result<(), FusionError> {
+    if digest.is_some_and(|digest| files.iter().any(|file| file.blake3 == digest)) {
+        return Err(signing_key_payload_error());
+    }
+    Ok(())
+}
+
+fn program_recipe_unavailable() -> FusionError {
+    FusionError::new(ErrorCode::ActionUnavailable, "Program authoring currently supports only signed standalone, redistributable managed directories packaged by Packer as ZIP.")
+}
+
+fn validate_program_recipe(game: &PackerGameRecipe) -> Result<(), FusionError> {
+    let Some(program) = &game.program_descriptor else {
+        return Ok(());
+    };
+    validate_descriptor_metadata(program)?;
+    if game.extends.is_some()
+        || program.components.iter().any(|component| {
+            !component.source_root.is_empty()
+                || !matches!(
+                    component.origin,
+                    ComponentOrigin::Managed {
+                        redistribution_allowed: true,
+                        ..
+                    }
+                )
+        })
+    {
+        return Err(program_recipe_unavailable());
+    }
+    if game.layers.len() != program.components.len() {
+        return Err(FusionError::new(
+            ErrorCode::InvalidManifest,
+            "Recipe layers do not match descriptor components.",
+        ));
+    }
+    for layer in &game.layers {
+        let component = program
+            .components
+            .iter()
+            .find(|component| component.layer_id == layer.id)
+            .ok_or_else(|| {
+                FusionError::new(
+                    ErrorCode::InvalidManifest,
+                    "Recipe layer is absent from the descriptor.",
+                )
+            })?;
+        if !layer.mount_path.is_empty() && layer.mount_path != component.mount_path {
+            return Err(FusionError::new(
+                ErrorCode::InvalidManifest,
+                "Recipe mount path differs from the descriptor.",
+            ));
+        }
+        if layer.local_locator.is_some()
+            || layer.patch.is_some()
+            || layer.dynamic_provider.is_some()
+            || layer.attestation.is_some()
+            || layer.raw_path.is_some()
+            || !layer.critical_files.is_empty()
+            || layer.auto_main_executable
+        {
+            return Err(program_recipe_unavailable());
+        }
+    }
+    Ok(())
+}
+
+fn program_critical_files(
+    program: &ProgramDescriptor,
+    mount: &str,
+    files: &[CasFile],
+) -> Vec<CriticalFileSpec> {
+    files
+        .iter()
+        .filter(|file| is_loadable(&file.path))
+        .map(|file| CriticalFileSpec {
+            path: file.path.clone(),
+            blake3: file.blake3.clone(),
+            role: if mounted_path(mount, &file.path) == program.entrypoint.executable {
+                CriticalFileRole::MainExecutable
+            } else {
+                CriticalFileRole::CoreLibrary
+            },
+        })
+        .collect()
 }
 
 fn author_patch(recipe: &PackerPatchRecipe, recipe_dir: &Path) -> Result<PatchSpec, FusionError> {
@@ -1363,6 +1547,23 @@ fn self_check(
     if let Some(error) = negotiation.blockers.first() {
         return Err(error.clone());
     }
+    if let Some(program) = crate::fusion_creator::declarative::runtime::descriptor(&manifest) {
+        validate_descriptor_metadata(program)?;
+        for build in &program.build_profiles {
+            for controls in &build.controls_profile_ids {
+                PlanBuilder::build(
+                    &manifest,
+                    &PlanOptions {
+                        build_profile_id: Some(build.id.clone()),
+                        controls_profile_id: Some(controls.clone()),
+                        ..Default::default()
+                    },
+                    &registry,
+                )?;
+            }
+        }
+        return Ok(manifest);
+    }
     PlanBuilder::build(&manifest, &PlanOptions::default(), &registry)?;
     let all_addons = manifest
         .layers
@@ -1559,6 +1760,27 @@ fn validate_layer_inventory(
     manifest: &CanonicalGameManifest,
     inventories: &BTreeMap<(String, String), Vec<CasFile>>,
 ) -> Result<(), FusionError> {
+    if let Some(program) = crate::fusion_creator::declarative::runtime::descriptor(manifest) {
+        let mut verified = Vec::new();
+        for layer in manifest.layers.values() {
+            let files = inventories
+                .get(&(manifest.id.clone(), layer.id.clone()))
+                .ok_or_else(program_recipe_unavailable)?;
+            if layer.critical_files != program_critical_files(program, &layer.mount_path, files) {
+                return Err(FusionError::new(
+                    ErrorCode::InvalidManifest,
+                    "Published loadable inventory differs from the descriptor and verified files.",
+                ));
+            }
+            verified.push(ProjectionLayer {
+                layer_id: layer.id.clone(),
+                mount_path: layer.mount_path.clone(),
+                verified_inventory: files.clone(),
+            });
+        }
+        compile_descriptor(program, &verified)?;
+        return Ok(());
+    }
     if manifest.creator.is_some() {
         let verified: Vec<ProjectionLayer> = manifest
             .layers
@@ -2083,6 +2305,15 @@ fn invalid_path(message: &str) -> FusionError {
     FusionError::new(ErrorCode::InvalidPath, message)
 }
 fn reject_output_inside_source(source: &Path, out: &Path) -> Result<(), FusionError> {
+    if path_within(source, out)? {
+        return Err(invalid_path(
+            "Repository output cannot be inside a layer input directory.",
+        ));
+    }
+    Ok(())
+}
+
+fn path_within(source: &Path, out: &Path) -> Result<bool, FusionError> {
     let source = source
         .canonicalize()
         .map_err(|e| io_error("Resolve source root", source, e))?;
@@ -2091,12 +2322,7 @@ fn reject_output_inside_source(source: &Path, out: &Path) -> Result<(), FusionEr
         .map_err(|e| io_error("Resolve output root", out, e))?;
     let source = source.to_string_lossy().replace('\\', "/").to_lowercase();
     let out = out.to_string_lossy().replace('\\', "/").to_lowercase();
-    if out == source || out.starts_with(&format!("{}/", source.trim_end_matches('/'))) {
-        return Err(invalid_path(
-            "Repository output cannot be inside a layer input directory.",
-        ));
-    }
-    Ok(())
+    Ok(out == source || out.starts_with(&format!("{}/", source.trim_end_matches('/'))))
 }
 
 fn publish_immutable_bytes(root: &Path, relative: &str, bytes: &[u8]) -> Result<(), FusionError> {
@@ -2153,11 +2379,22 @@ impl Scratch {
         Self::new_in(&parent)
     }
 
-    /// Large archive/CAS staging stays on the author's selected repository volume.
+    fn new_outside(publication: &Path) -> Result<Self, FusionError> {
+        let parent = absolute(&std::env::temp_dir())?;
+        let _parent = fs_safety::guard(&parent)?;
+        if path_within(publication, &parent)? {
+            return Err(invalid_path(
+                "The temporary directory must be outside the publication tree.",
+            ));
+        }
+        Self::new_in(&parent)
+    }
+
     fn new_in(parent: &Path) -> Result<Self, FusionError> {
         let _parent = fs_safety::guard(parent)?;
         let root = parent.join(fs_safety::unique_name(".packer"));
-        fs::create_dir(&root).map_err(|e| io_error("Create authoring staging", &root, e))?;
+        signatures::create_private_directory(&root)
+            .map_err(|e| io_error("Create authoring staging", &root, e))?;
         Ok(Self(root))
     }
 }
