@@ -35,7 +35,8 @@ export interface CreatorState {
   jobError: FusionError | null;
   startJob(kind: CreatorJobKind, request: CreatorJobStartRequest): Promise<CreatorJobReceipt>;
   cancelJob(jobId: string): Promise<void>;
-  reopenJob(jobId: string): Promise<CreatorJob>;
+  reopenJob(jobId: string, select?: boolean): Promise<CreatorJob>;
+  refreshKnownJobs(): void;
   mergeJobProgress(progress: CreatorJobProgress): boolean;
   inputDevices: InputDevice[];
   inputDevicesStatus: CreatorLoadStatus;
@@ -105,6 +106,14 @@ export function createCreatorStore(dependencies: Partial<CreatorStoreDependencie
   let inputGeneration = 0;
 
   let pendingInput: { sessionId: string; events: InputState[] } | null = null;
+  async function readProject(projectId: string): Promise<CreatorProjectOpenResponse> {
+    const response = creatorProjectOpenResponseSchema.parse(await api.projectOpen({ projectId }));
+    if (response.project.project_id !== projectId) throw invalid('Opened project identity differs from the request.');
+    if (response.privateBindings && response.privateBindings.bindings.projectId !== projectId) throw invalid('Private bindings belong to a different project.');
+    const components = new Set(response.project.program_descriptor.components.map(component => component.id));
+    if (response.missingInputs.some(id => !components.has(id))) throw invalid('Missing input is not a descriptor component.');
+    return response;
+  }
   return create<CreatorState>((set, get) => {
     const releaseInput = async (forLaunch: boolean): Promise<InputReleaseReceipt> => {
       const { inputSessionId: sessionId, inputOwnership } = get();
@@ -152,12 +161,11 @@ export function createCreatorStore(dependencies: Partial<CreatorStoreDependencie
       set((state) => ({ currentProject: null, projectStatus: 'loading', projectError: null, selectedJobId: null,
         jobs: Object.fromEntries(Object.entries(state.jobs).map(([id, entry]) => [id, { ...entry, acceptingEvents: false }])) }));
       try {
-        const response = creatorProjectOpenResponseSchema.parse(await api.projectOpen({ projectId }));
-        if (response.project.project_id !== projectId) throw invalid('Opened project identity differs from the request.');
-        if (response.privateBindings && response.privateBindings.bindings.projectId !== projectId) throw invalid('Private bindings belong to a different project.');
-        const components = new Set(response.project.program_descriptor.components.map((component) => component.id));
-        if (response.missingInputs.some((id) => !components.has(id))) throw invalid('Missing input is not a descriptor component.');
-        if (generation === projectGeneration) set({ currentProject: response, projectStatus: 'ready' });
+        const response = await readProject(projectId);
+        if (generation === projectGeneration) {
+          set({ currentProject: response, projectStatus: 'ready' });
+          get().refreshKnownJobs();
+        }
         return response;
       } catch (error) {
         if (generation === projectGeneration) {
@@ -180,8 +188,15 @@ export function createCreatorStore(dependencies: Partial<CreatorStoreDependencie
         if (!receipt.success || receipt.data.revision !== (expectedBindingsRevision === null ? 0 : expectedBindingsRevision + 1)) {
           throw invalid('Unexpected private bindings revision.');
         }
-        if (get().currentProject === opened) {
-          set({ currentProject: { ...opened, privateBindings: { revision: receipt.data.revision, bindings } } });
+        if (get().currentProject !== opened) return;
+        const updated = { ...opened, privateBindings: { revision: receipt.data.revision, bindings } };
+        set({ currentProject: updated });
+        // Saving a path does not prove availability. Re-read the authoritative
+        // missing-input list without invalidating ownership of jobs on this revision.
+        const fresh = await readProject(bindings.projectId).catch(() => null);
+        if (get().currentProject === updated && fresh?.project.revision === opened.project.revision
+          && fresh.privateBindings?.revision === receipt.data.revision) {
+          set({ currentProject: { ...updated, missingInputs: fresh.missingInputs } });
         }
       } finally {
         savingBindings = false;
@@ -194,14 +209,18 @@ export function createCreatorStore(dependencies: Partial<CreatorStoreDependencie
         const method = kind === 'verify_https' ? 'verifyHttps' : kind;
         const receipt = await api[method](request);
         if (!inputStateSchema.shape.sessionId.safeParse(receipt?.jobId).success || receipt.projectId !== request.projectId || receipt.projectRevision !== request.projectRevision) throw invalid('Job receipt differs from the requested identity.');
-        // Creation may have succeeded natively, but a stale receipt cannot reacquire UI ownership.
-        if (generation !== projectGeneration || !currentOwns(get().currentProject, receipt)) return receipt;
         const existing = ownJob(get().jobs, receipt.jobId);
-        if (existing && !sameIdentity(existing.receipt, receipt)) throw invalid('Job ID already belongs to another project revision.');
-        set((state) => ({ jobs: { ...state.jobs, [receipt.jobId]: existing ?? { ...emptyJob(receipt), kind, status: 'ready', acceptingEvents: true } }, selectedJobId: receipt.jobId, jobError: null }));
+        if (existing && (!sameIdentity(existing.receipt, receipt) || (existing.kind !== null && existing.kind !== kind))) throw invalid('Job ID already belongs to another job.');
+        const current = currentOwns(get().currentProject, receipt);
+        const ownsSelection = current && generation === projectGeneration;
+        // Keep a valid receipt even if the project was changed while awaiting IPC.
+        set(state => ({
+          jobs: { ...state.jobs, [receipt.jobId]: existing ?? { ...emptyJob(receipt), kind, status: 'ready', acceptingEvents: ownsSelection && kind !== 'build' } },
+          ...(ownsSelection ? { selectedJobId: receipt.jobId, jobError: null } : {})
+        }));
         // A fast worker can finish before the receipt is delivered. Read durable state
         // instead of relying on a future event; a read failure isn't a failed start.
-        if (kind === 'build') await get().reopenJob(receipt.jobId).catch(() => {});
+        if (current && (kind === 'build' || !ownsSelection)) await get().reopenJob(receipt.jobId, ownsSelection).catch(() => {});
         return receipt;
       } catch (error) {
         if (generation === projectGeneration) set({ jobError: creatorError(error) });
@@ -221,7 +240,13 @@ export function createCreatorStore(dependencies: Partial<CreatorStoreDependencie
       }
       if (generation === projectGeneration) get().mergeJobProgress(parsed.data);
     },
-    async reopenJob(jobId) {
+    refreshKnownJobs() {
+      const { currentProject, jobs } = get();
+      for (const { receipt } of Object.values(jobs)) {
+        if (currentOwns(currentProject, receipt)) void get().reopenJob(receipt.jobId, false).catch(() => {});
+      }
+    },
+    async reopenJob(jobId, select = true) {
       const current = get().currentProject;
       if (!current) throw invalid('Open a project before reopening its job.');
       const receipt = { jobId, projectId: current.project.project_id, projectRevision: current.project.revision };
@@ -231,7 +256,8 @@ export function createCreatorStore(dependencies: Partial<CreatorStoreDependencie
       jobGenerations.set(jobId, generation);
       const pending = pendingJobs.get(jobId) ?? [];
       pendingJobs.set(jobId, pending);
-      set((state) => ({ jobs: { ...state.jobs, [jobId]: { ...(existing ?? emptyJob(receipt)), status: 'loading', error: null, acceptingEvents: false } }, selectedJobId: jobId, jobError: null }));
+      set((state) => ({ jobs: { ...state.jobs, [jobId]: { ...(existing ?? emptyJob(receipt)), status: 'loading', error: null, acceptingEvents: false } },
+        ...(select ? { selectedJobId: jobId, jobError: null } : {}) }));
       try {
         const snapshot = await api.jobGet({ jobId });
         const progress = creatorJobProgressSchema.parse(snapshot.progress);

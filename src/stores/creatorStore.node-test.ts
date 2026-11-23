@@ -338,14 +338,56 @@ test('failed input initialization remains fail closed even without a session ID'
   await assert.rejects(store.getState().startInputSession('device-1'));
 });
 
-test('opening a project again gates cached jobs until a fresh jobGet completes', async () => {
-  const store = createCreatorStore({ creatorApi: apiWith({ projectOpen: async () => opened, jobGet: async () => job() }) });
+test('opening a project again reloads cached jobs without losing the terminal state', async () => {
+  const pending = deferred<CreatorJob>();
+  let reads = 0;
+  const store = createCreatorStore({ creatorApi: apiWith({ projectOpen: async () => opened,
+    jobGet: async () => ++reads === 1 ? job() : pending.promise }) });
   await store.getState().openProject(opened.project.project_id);
   await store.getState().reopenJob('job-1');
   await store.getState().openProject(opened.project.project_id);
-  assert.equal(store.getState().mergeJobProgress(progress({ sequence: 2 })), false);
-  await store.getState().reopenJob('job-1');
-  assert.equal(store.getState().mergeJobProgress(progress({ sequence: 2 })), true);
+  assert.equal(reads, 2);
+  assert.equal(store.getState().mergeJobProgress(progress({ sequence: 3, status: 'completed' })), false);
+  pending.resolve(job({ sequence: 2 }));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(store.getState().jobs['job-1'].progress?.status, 'completed');
+  assert.equal(store.getState().selectedJobId, null);
+});
+
+test('late receipt survives leaving a project and is loaded when that revision is opened again', async () => {
+  const pending = deferred<typeof fixtures.jobReceipt>();
+  const projectId = opened.project.project_id;
+  const store = createCreatorStore({ creatorApi: apiWith({
+    projectOpen: async ({ projectId: id }) => id === projectId ? opened : {
+      ...opened, privateBindings: null, project: { ...opened.project, project_id: id }
+    },
+    build: () => pending.promise,
+    jobGet: async () => job({ kind: 'build', sequence: 2, status: 'completed' })
+  }) });
+  await store.getState().openProject(projectId);
+  const starting = store.getState().startJob('build', fixtures.jobStart);
+  await store.getState().openProject('other');
+  pending.resolve({ jobId: 'job-1', projectId, projectRevision: 1 });
+  await starting;
+  assert.equal(store.getState().jobs['job-1']?.acceptingEvents, false);
+  assert.equal(store.getState().selectedJobId, null);
+  await store.getState().openProject(projectId);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(store.getState().jobs['job-1'].progress?.status, 'completed');
+});
+
+test('binding save refreshes missing inputs from an authoritative matching open response', async () => {
+  const bindings = { projectId: opened.project.project_id, componentPaths: { [opened.missingInputs[0]]: 'C:/fixture/program' }, signingKeyRef: null };
+  let saved = false;
+  const store = createCreatorStore({ creatorApi: apiWith({
+    projectOpen: async () => saved ? { ...opened, privateBindings: { revision: 4, bindings }, missingInputs: [] } : opened,
+    privateBindingsSave: async () => { saved = true; return { revision: 4 }; }
+  }) });
+  const initial = await store.getState().openProject(bindings.projectId);
+  assert.notEqual(initial.missingInputs.length, 0);
+  await store.getState().savePrivateBindings(initial, bindings);
+  assert.deepEqual(store.getState().currentProject?.missingInputs, []);
+  assert.equal(store.getState().currentProject?.project, initial.project);
 });
 
 test('a started job rejects a different kind even for its first event', async () => {
