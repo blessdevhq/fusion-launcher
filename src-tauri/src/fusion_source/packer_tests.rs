@@ -33,6 +33,29 @@ const HELPER: &str = "fusion_source::packer_tests::packer_native_process_fixture
 #[path = "packer_program_tests.rs"]
 mod program;
 
+#[test]
+fn verify_audit_pins_raw_inventory_to_the_indexed_manifest() {
+    let fixture = Fixture::new(false);
+    fixture.build().unwrap();
+    let index = fixture.index();
+    let entry = &index.games[0];
+    let path = fixture.dist.join(format!(
+        "manifests/{}-{}.artifacts.json",
+        entry.id, entry.manifest_blake3
+    ));
+    let mut bytes = fs::read(&path).unwrap();
+    // Valid but not the emitted JSON encoding: the digest must cover the raw bytes.
+    bytes.extend_from_slice(b" \t\n");
+    fs::write(path, &bytes).unwrap();
+
+    let audit = PackerEngine::new().verify_audit(&fixture.dist).unwrap();
+    assert_eq!(
+        audit.inventory_blake3(&entry.id, &entry.manifest_blake3),
+        Some(blake3::hash(&bytes).to_hex().as_str())
+    );
+    assert!(audit.inventory_blake3(&entry.id, &"0".repeat(64)).is_none());
+}
+
 #[tokio::test]
 async fn signing_keygen_build_verify_fetch_and_incremental_resigning_round_trip() {
     let mut fixture = Fixture::new(false);

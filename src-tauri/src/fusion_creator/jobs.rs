@@ -26,6 +26,16 @@ pub trait JobHandler: Send + Sync {
     fn validate_request(&self, _request: &CreatorJobStartRequest) -> Result<(), FusionError> {
         Ok(())
     }
+    /// Read-only validation before the runner creates or acquires the workspace.
+    fn validate_write_roots(
+        &self,
+        _project: &CreatorProgramProject,
+        _bindings: Option<&SavedPrivateBindings>,
+        _workspace: &Path,
+        _release_cas: &Path,
+    ) -> Result<(), FusionError> {
+        Ok(())
+    }
     fn input_hashes(
         &self,
         project: &CreatorProgramProject,
@@ -182,6 +192,86 @@ fn unavailable(command: &str) -> FusionError {
 }
 fn lock<T>(mutex: &Mutex<T>) -> Result<MutexGuard<'_, T>, FusionError> {
     mutex.lock().map_err(|_| io())
+}
+
+/// Resolve existing aliases without creating missing workspace or CAS directories.
+fn prospective_root(path: &Path) -> std::io::Result<PathBuf> {
+    let mut existing = path;
+    let mut missing = Vec::new();
+    loop {
+        match std::fs::symlink_metadata(existing) {
+            Ok(_) => {
+                let mut canonical = existing.canonicalize()?;
+                canonical.extend(missing.into_iter().rev());
+                return Ok(canonical);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                let Some((name, parent)) = existing.file_name().zip(existing.parent()) else {
+                    return Err(error);
+                };
+                missing.push(name);
+                existing = parent;
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+fn path_contains(parent: &Path, child: &Path) -> bool {
+    #[cfg(windows)]
+    {
+        let mut child = child.components();
+        // Canonicalization resolves existing names. Also fold ASCII case in
+        // the as-yet-uncreated, host-generated root segments.
+        parent.components().all(|part| {
+            child
+                .next()
+                .is_some_and(|next| part.as_os_str().eq_ignore_ascii_case(next.as_os_str()))
+        })
+    }
+    #[cfg(not(windows))]
+    child.starts_with(parent)
+}
+
+pub(super) fn validate_build_write_roots<'a>(
+    components: impl Iterator<Item = (&'a str, &'a Path)>,
+    workspace: &Path,
+    release_cas: &Path,
+) -> Result<(), FusionError> {
+    let workspace = prospective_root(workspace);
+    let release_cas = prospective_root(release_cas);
+    let temp = std::env::temp_dir();
+    // Packer resolves parent segments lexically. Don't compare a different
+    // tree if the environment supplies a temp path containing them.
+    let packer_temp = (!temp
+        .components()
+        .any(|part| part == std::path::Component::ParentDir))
+    .then(|| temp.canonicalize().ok())
+    .flatten();
+    for (id, input) in components {
+        let unresolved = || {
+            FusionError::new(
+                ErrorCode::InvalidPath,
+                "Creator Build could not resolve its input and write directories.",
+            )
+            .with_detail("componentId", id)
+        };
+        let input = input.canonicalize().map_err(|_| unresolved())?;
+        let workspace = workspace.as_ref().map_err(|_| unresolved())?;
+        let release_cas = release_cas.as_ref().map_err(|_| unresolved())?;
+        let temp = packer_temp.as_ref().ok_or_else(unresolved)?;
+        let overlaps = |root: &Path| path_contains(&input, root) || path_contains(root, &input);
+        // Packer creates an exclusive child of the temp directory, never
+        // adopts an existing child. Ordinary inputs beneath temp are safe.
+        if overlaps(workspace) || overlaps(release_cas) || path_contains(&input, temp) {
+            return Err(FusionError::new(
+                ErrorCode::InvalidPath,
+                "The managed component directory overlaps a Creator Build write location.",
+            )
+            .with_detail("componentId", id));
+        }
+    }
+    Ok(())
 }
 
 fn load(conn: &Connection, job_id: &str) -> Result<(CreatorJob, String), FusionError> {
@@ -403,6 +493,12 @@ impl JobRunner {
         let (project, bindings) = self.inputs(&request.project_id)?;
         validate_request(&project, &request)?;
         let workspace = self.workspace(&project.project_id);
+        handler.validate_write_roots(
+            &project,
+            bindings.as_ref(),
+            &workspace,
+            &self.release_cas(),
+        )?;
         let lease = Lease::acquire(&workspace, "writer.lock")?;
         let release = self.selected_release(&request)?;
         let stamp = self.stamp(&project, bindings.as_ref(), &*handler, release.as_ref())?;
@@ -483,6 +579,12 @@ impl JobRunner {
             .join(digest(project_id.as_bytes()))
     }
 
+    fn release_cas(&self) -> PathBuf {
+        // Receipt capture opens CasStore with the runner root. Opening the
+        // store here would itself create directories before preflight.
+        self.0.root.join(".fusion-source").join("cas")
+    }
+
     /// Resume only a recovered run with durable evidence. Audit the entire reused prefix:
     /// a valid latest result does not make a missing earlier artifact safe to reuse.
     pub fn resume(&self, job_id: &str) -> Result<CreatorJobReceipt, FusionError> {
@@ -495,7 +597,6 @@ impl JobRunner {
             return Err(conflict());
         }
         let workspace = self.workspace(&previous.progress.project_id);
-        let lease = Lease::acquire(&workspace, "writer.lock")?;
         let (request_bytes, stamp_bytes, saved_workspace): (Vec<u8>, Vec<u8>, String) = {
             let store = lock(&self.0.store)?;
             store.conn.query_row(
@@ -523,6 +624,13 @@ impl JobRunner {
         }
         let (project, bindings) = self.inputs(&request.project_id)?;
         validate_request(&project, &request)?;
+        handler.validate_write_roots(
+            &project,
+            bindings.as_ref(),
+            &workspace,
+            &self.release_cas(),
+        )?;
+        let lease = Lease::acquire(&workspace, "writer.lock")?;
         let release = self.selected_release(&request)?;
         let stamp = self.stamp(&project, bindings.as_ref(), &*handler, release.as_ref())?;
         let encoded_stamp = encode(&stamp)?;

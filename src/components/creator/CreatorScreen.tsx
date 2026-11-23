@@ -17,15 +17,9 @@ export function CreatorScreen({ contextTitle, onFocus }: { contextTitle: string 
   const [jobId, setJobId] = useState('');
   useEffect(() => { void useCreatorStore.getState().loadProjects().catch(() => {}); }, []);
   // Reopen known jobs from durable state before accepting subsequent event updates.
-  useEffect(() => {
-    const store = useCreatorStore.getState();
-    for (const entry of Object.values(store.jobs)) {
-      if (store.currentProject?.project.project_id === entry.receipt.projectId && store.currentProject.project.revision === entry.receipt.projectRevision) {
-        void store.reopenJob(entry.receipt.jobId).catch(() => {});
-      }
-    }
-  }, []);
-  const jobs = Object.values(state.jobs);
+  useEffect(() => { useCreatorStore.getState().refreshKnownJobs(); }, []);
+  const jobs = Object.values(state.jobs).filter(({ receipt }) =>
+    state.currentProject?.project.project_id === receipt.projectId && state.currentProject.project.revision === receipt.projectRevision);
   return <section className="rh-screen rh-panel rh-screen-scroll" data-testid="creator-screen" onFocusCapture={(event) => {
     const id = (event.target as HTMLElement).dataset.focusId;
     if (id) onFocus(id);
@@ -82,6 +76,8 @@ export function CreatorScreen({ contextTitle, onFocus }: { contextTitle: string 
         {jobs.map((entry) => <article key={entry.receipt.jobId} className="border-b border-fusion-line py-3" data-testid="creator-job-row">
           <p className="break-all font-mono text-xs">{entry.receipt.jobId} · {t.creator.ui.revision} {entry.receipt.projectRevision}</p>
           <CreatorStatus status={entry.status} error={entry.error} />
+          {entry.error && <button type="button" className="rh-filter-chip rh-focusable mt-2"
+            data-focus-id={`creator:refresh-job-${entry.receipt.jobId}`} onClick={() => void state.reopenJob(entry.receipt.jobId).catch(() => {})}>{t.creator.ui.refresh}</button>}
           {entry.progress && <>
             <p className="mt-2 text-sm">{t.creator.ui.kinds[entry.progress.kind]} · {t.creator.ui.statuses[entry.progress.status]}</p>
             <p className="mt-1 break-words text-xs text-[var(--rh-muted)]">{t.creator.ui.phase}: {entry.progress.phase} · {t.creator.ui.sequence}: {entry.progress.sequence} · {entry.progress.completedUnits}{entry.progress.totalUnits === null ? '' : ` / ${entry.progress.totalUnits}`}</p>

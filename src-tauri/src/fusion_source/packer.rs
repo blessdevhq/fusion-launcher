@@ -269,6 +269,20 @@ pub struct VerifyReport {
     pub attestations_verified: usize,
 }
 
+/// In-process byte evidence, kept out of the public verification report.
+pub(crate) struct VerifyAudit {
+    pub(crate) report: VerifyReport,
+    inventory_digests: BTreeMap<String, String>,
+}
+
+impl VerifyAudit {
+    pub(crate) fn inventory_blake3(&self, game_id: &str, manifest_blake3: &str) -> Option<&str> {
+        self.inventory_digests
+            .get(&inventory_relative(game_id, manifest_blake3))
+            .map(String::as_str)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ArtifactBinding {
@@ -928,6 +942,10 @@ impl PackerEngine {
     }
 
     pub fn verify(&self, source_dir: &Path) -> Result<VerifyReport, FusionError> {
+        Ok(self.verify_audit(source_dir)?.report)
+    }
+
+    pub(crate) fn verify_audit(&self, source_dir: &Path) -> Result<VerifyAudit, FusionError> {
         let root = absolute(source_dir)?;
         let _root = fs_safety::guard(&root)?;
         let text = read_text(&root.join("source-index.json"))?;
@@ -945,9 +963,12 @@ impl PackerEngine {
             artifacts_verified: 0,
             attestations_verified: 0,
         };
+        let mut inventory_digests = BTreeMap::new();
         for entry in &index.games {
-            let inventory_path = root.join(inventory_relative(&entry.id, &entry.manifest_blake3));
-            let inventory: ManifestInventory = parse_json(&read_text(&inventory_path)?)?;
+            let relative = inventory_relative(&entry.id, &entry.manifest_blake3);
+            let bytes = read_bytes(&root.join(&relative))?;
+            let inventory: ManifestInventory = parse_json(utf8(&bytes)?)?;
+            inventory_digests.insert(relative, blake3::hash(&bytes).to_hex().to_string());
             for parent in &inventory.parents {
                 let path = root.join(fs_safety::validate_relative_path(&parent.path)?);
                 let bytes = read_bytes(&path)?;
@@ -970,9 +991,18 @@ impl PackerEngine {
             let manifest_path = indexed_manifest_path(&root, entry)?;
             let bytes = read_bytes(&manifest_path)?;
             verify_raw_manifest(&bytes, &entry.manifest_blake3)?;
-            let inventory: ManifestInventory = parse_json(&read_text(
-                &root.join(inventory_relative(&entry.id, &entry.manifest_blake3)),
-            )?)?;
+            let relative = inventory_relative(&entry.id, &entry.manifest_blake3);
+            let inventory_bytes = read_bytes(&root.join(&relative))?;
+            // Parent resolution and artifact checks must use the same raw sidecar.
+            if inventory_digests.get(&relative).map(String::as_str)
+                != Some(blake3::hash(&inventory_bytes).to_hex().as_str())
+            {
+                return Err(FusionError::new(
+                    ErrorCode::IntegrityViolation,
+                    "Published artifact inventory changed during verification.",
+                ));
+            }
+            let inventory: ManifestInventory = parse_json(utf8(&inventory_bytes)?)?;
             let manifest = self_check(
                 &index.source_info.id,
                 utf8(&bytes)?,
@@ -1103,7 +1133,10 @@ impl PackerEngine {
             validate_layer_inventory(&manifest, &physical)?;
             report.manifests_verified += 1;
         }
-        Ok(report)
+        Ok(VerifyAudit {
+            report,
+            inventory_digests,
+        })
     }
 }
 

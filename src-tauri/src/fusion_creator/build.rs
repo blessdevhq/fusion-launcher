@@ -11,6 +11,7 @@ use crate::fusion_source::program_schema::{
 use crate::fusion_source::schema::{DigestAlgorithm, SourceIndex};
 use crate::fusion_source::{fs_safety, signatures};
 use base64::Engine as _;
+use std::collections::btree_map::Entry;
 use std::collections::BTreeMap;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -187,6 +188,23 @@ impl JobHandler for ManagedDirectoryBuild {
     fn validate_request(&self, request: &CreatorJobStartRequest) -> Result<(), FusionError> {
         validate_request(request)
     }
+    fn validate_write_roots(
+        &self,
+        project: &CreatorProgramProject,
+        bindings: Option<&SavedPrivateBindings>,
+        workspace: &Path,
+        release_cas: &Path,
+    ) -> Result<(), FusionError> {
+        let inputs = Inputs::resolve(project, bindings)?;
+        super::jobs::validate_build_write_roots(
+            inputs
+                .paths
+                .into_iter()
+                .map(|(component, path)| (component.id.as_str(), path)),
+            workspace,
+            release_cas,
+        )
+    }
     fn input_hashes(
         &self,
         project: &CreatorProgramProject,
@@ -255,7 +273,9 @@ impl JobHandler for ManagedDirectoryBuild {
             }
         }
         context.progress("auditing", 0, None)?;
-        let verified = context.blocking_library(|_| packer.verify(&publication).map_err(redact))?;
+        let audit =
+            context.blocking_library(|_| packer.verify_audit(&publication).map_err(redact))?;
+        let verified = &audit.report;
         if !verified.signature_verified
             || verified.source_id != project.source_id
             || verified.manifests_verified != 1
@@ -284,16 +304,23 @@ impl JobHandler for ManagedDirectoryBuild {
             return Err(integrity());
         }
         let manifest_stem = format!("manifests/{}-{}", entry.id, entry.manifest_blake3);
-        let raw_manifest = metadata_bytes(&publication.join(format!("{manifest_stem}.json")))?;
-        if digest(&raw_manifest) != entry.manifest_blake3 {
-            return Err(integrity());
-        }
-        let inventory =
-            metadata_bytes(&publication.join(format!("{manifest_stem}.artifacts.json")))?;
-        let mut artifact_hashes = BTreeMap::new();
+        let raw_manifest = pinned_metadata_bytes(
+            &publication.join(format!("{manifest_stem}.json")),
+            &entry.manifest_blake3,
+        )?;
+        let inventory_blake3 = audit
+            .inventory_blake3(&entry.id, &entry.manifest_blake3)
+            .ok_or_else(integrity)?;
+        let inventory = pinned_metadata_bytes(
+            &publication.join(format!("{manifest_stem}.artifacts.json")),
+            inventory_blake3,
+        )?;
+        let mut artifact_hashes = BTreeMap::from([
+            (INDEX_ID.to_owned(), digest(&raw_index)),
+            (INVENTORY_ID.to_owned(), inventory_blake3.to_owned()),
+        ]);
         for (id, bytes) in [(INDEX_ID, raw_index), (INVENTORY_ID, inventory)] {
             fs_safety::atomic_write(&artifacts_dir.join(id), &bytes).map_err(redact)?;
-            artifact_hashes.insert(id.to_owned(), digest(&bytes));
         }
         fs_safety::atomic_write(&stage.path.join("manifest.json"), &raw_manifest)
             .map_err(redact)?;
@@ -312,10 +339,11 @@ impl JobHandler for ManagedDirectoryBuild {
             if artifact.path != publication.join("artifacts").join(&id) {
                 return Err(integrity());
             }
-            if !artifact_hashes.contains_key(&id) {
-                fs_safety::copy_file(&artifact.path, &artifacts_dir.join(&id)).map_err(redact)?;
+            if let Entry::Vacant(entry) = artifact_hashes.entry(id) {
+                fs_safety::copy_file(&artifact.path, &artifacts_dir.join(entry.key()))
+                    .map_err(redact)?;
                 // checkpoint_release audits the copied bytes against this expected hash.
-                artifact_hashes.insert(id, hash.clone());
+                entry.insert(hash.clone());
             }
         }
         context
@@ -356,6 +384,14 @@ fn metadata_bytes(path: &Path) -> Result<Vec<u8>, FusionError> {
     Ok(bytes)
 }
 
+fn pinned_metadata_bytes(path: &Path, expected_blake3: &str) -> Result<Vec<u8>, FusionError> {
+    let bytes = metadata_bytes(path)?;
+    if digest(&bytes) != expected_blake3 {
+        return Err(integrity());
+    }
+    Ok(bytes)
+}
+
 struct PrivateStage {
     name: String,
     path: PathBuf,
@@ -371,5 +407,30 @@ impl PrivateStage {
 impl Drop for PrivateStage {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.path);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn retaining_inventory_rejects_same_length_changed_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(INVENTORY_ID);
+        let checked = b"{\"artifacts\":[],\"parents\":[]}\n";
+        let pin = digest(checked);
+        std::fs::write(&path, checked).unwrap();
+        assert_eq!(
+            pinned_metadata_bytes(&path, &pin).unwrap().as_slice(),
+            checked
+        );
+
+        // Same length and same JSON, but not the bytes that were audited.
+        std::fs::write(&path, b"{\"artifacts\":[],\"parents\":[]} ").unwrap();
+        assert_eq!(
+            pinned_metadata_bytes(&path, &pin).unwrap_err().code,
+            ErrorCode::IntegrityViolation
+        );
     }
 }
