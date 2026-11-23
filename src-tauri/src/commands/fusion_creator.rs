@@ -131,6 +131,55 @@ creator_command!(fusion_creator_project_save(CreatorProjectSaveRequest) -> Creat
     project_service::save(&mut store, request)
 });
 unavailable_command!(fusion_creator_scan(CreatorJobStartRequest) -> CreatorJobReceipt);
+fn decode_private_bindings(
+    body: &serde_json::Value,
+) -> Result<CreatorPrivateBindingsSaveRequest, FusionError> {
+    let request = body
+        .as_object()
+        .filter(|body| body.len() == 1)
+        .and_then(|body| body.get("request"))
+        .filter(|request| {
+            request.is_object()
+                && request
+                    .get("bindings")
+                    .is_some_and(serde_json::Value::is_object)
+        })
+        .ok_or_else(invalid_private_bindings_request)?;
+    serde::Deserialize::deserialize(request).map_err(|_| invalid_private_bindings_request())
+}
+
+fn invalid_private_bindings_request() -> FusionError {
+    FusionError::new(
+        ErrorCode::InvalidManifest,
+        "Invalid Creator private bindings request.",
+    )
+}
+
+#[tauri::command]
+pub async fn fusion_creator_private_bindings_save(
+    ipc: tauri::ipc::Request<'_>,
+    bridge: tauri::State<'_, CreatorBridge>,
+) -> Result<CreatorPrivateBindingsSaveResponse, FusionError> {
+    let tauri::ipc::InvokeBody::Json(body) = ipc.body() else {
+        return Err(invalid_private_bindings_request());
+    };
+    let request = decode_private_bindings(body)?;
+    let runner = bridge.runner.clone();
+    blocking(move || {
+        let shared = runner.store();
+        let store = shared
+            .lock()
+            .map_err(|_| crate::fusion_creator::jobs::io())?;
+        let revision = crate::fusion_creator::project_storage::save_private_bindings(
+            &store,
+            request.project_revision,
+            request.expected_bindings_revision,
+            &request.bindings,
+        )?;
+        Ok(CreatorPrivateBindingsSaveResponse { revision })
+    })
+    .await
+}
 unavailable_command!(fusion_creator_classify(CreatorJobStartRequest) -> CreatorJobReceipt);
 unavailable_command!(fusion_creator_build(CreatorJobStartRequest) -> CreatorJobReceipt);
 unavailable_command!(fusion_creator_verify(CreatorJobStartRequest) -> CreatorJobReceipt);
@@ -156,6 +205,33 @@ unavailable_command!(fusion_input_release_for_launch(InputSessionRequest) -> Inp
 mod tests {
     use super::*;
     use crate::fusion_source::errors::ErrorCode;
+
+    #[test]
+    fn private_bindings_ipc_only_accepts_objects_and_redacts_bad_input() {
+        use serde_json::json;
+        let bindings = json!({"projectId":"project", "componentPaths":{}, "signingKeyRef":null});
+        let valid =
+            json!({"projectRevision":0, "expectedBindingsRevision":null, "bindings": bindings});
+        assert_eq!(
+            decode_private_bindings(&json!({"request": valid}))
+                .unwrap()
+                .project_revision,
+            0
+        );
+        for malformed in [
+            json!({"request":[0, null, bindings]}),
+            json!({"request":{"projectRevision":0,"expectedBindingsRevision":null,"bindings":["project",{},null]}}),
+            json!({"request":{"projectRevision":"synthetic-private-input","expectedBindingsRevision":null,"bindings":bindings}}),
+            json!({"request":{"projectRevision":0,"bindings":bindings}}),
+            json!({"request":valid,"synthetic-private-input":true}),
+            json!({"synthetic-private-input":valid}),
+        ] {
+            let error = decode_private_bindings(&malformed).unwrap_err();
+            assert_eq!(error.code, ErrorCode::InvalidManifest);
+            assert_eq!(error.message, "Invalid Creator private bindings request.");
+            assert!(error.details.is_empty());
+        }
+    }
 
     #[tokio::test]
     async fn unimplemented_commands_never_report_mock_success() {

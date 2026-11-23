@@ -121,6 +121,7 @@ test('every frozen Creator/input command is declared and registered in Rust', ()
   const registration = readFileSync(new URL('../../src-tauri/src/lib.rs', import.meta.url), 'utf8');
   const declared = [...handlers.matchAll(/unavailable_command!\((fusion_(?:creator|input)_\w+)/g)].map((match) => match[1]);
   declared.push(...[...handlers.matchAll(/creator_command!\((fusion_creator_\w+)/g)].map((match) => match[1]));
+  declared.push(...[...handlers.matchAll(/#\[tauri::command\]\s+pub async fn (fusion_creator_\w+)/g)].map((match) => match[1]));
   const registered = [...registration.matchAll(/commands::fusion_creator::(fusion_(?:creator|input)_\w+)/g)].map((match) => match[1]);
   const expected = [...CREATOR_COMMANDS, ...INPUT_COMMANDS].sort();
   assert.deepEqual(declared.sort(), expected);

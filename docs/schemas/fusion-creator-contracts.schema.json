@@ -379,6 +379,19 @@
       "properties": { "revision": { "$ref": "#/$defs/Revision" }, "bindings": { "$ref": "#/$defs/CreatorPrivateBindings" } },
       "description": "Same revision/bindings envelope as project_storage. Binding revision is independent of project revision."
     },
+    "CreatorPrivateBindingsSaveRequest": {
+      "type": "object", "additionalProperties": false, "required": ["projectRevision", "expectedBindingsRevision", "bindings"],
+      "properties": {
+        "projectRevision": { "$ref": "#/$defs/Revision" },
+        "expectedBindingsRevision": { "anyOf": [{ "$ref": "#/$defs/Revision" }, { "type": "null" }] },
+        "bindings": { "$ref": "#/$defs/CreatorPrivateBindings" }
+      },
+      "description": "Local IPC only; null inserts binding revision zero. The saved project revision must match. Never export."
+    },
+    "CreatorPrivateBindingsSaveResponse": {
+      "type": "object", "additionalProperties": false, "required": ["revision"],
+      "properties": { "revision": { "$ref": "#/$defs/Revision" } }
+    },
     "CreatorProjectOpenResponse": {
       "type": "object", "additionalProperties": false, "required": ["project", "privateBindings", "missingInputs"],
       "properties": {

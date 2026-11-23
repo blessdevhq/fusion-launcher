@@ -215,6 +215,84 @@ fn service_list_returns_all_pages_in_stable_order_and_safe_summary_only() {
 }
 
 #[test]
+fn private_binding_save_reopens_without_mutating_portable_project() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("library.db");
+    let mut store = open_store(&db).unwrap();
+    let initial = project("project", 0);
+    save(&mut store, initial.clone(), None);
+    let original = |store: &RepositoryStore| -> (Vec<u8>, String) {
+        store.conn.query_row(
+            "SELECT document,document_blake3 FROM creator_program_projects WHERE project_id='project'", [], |row| Ok((row.get(0)?, row.get(1)?)),
+        ).unwrap()
+    };
+    let before = original(&store);
+    let mut bindings = CreatorPrivateBindings {
+        project_id: "project".into(),
+        component_paths: BTreeMap::from([(
+            initial.program_descriptor.components[0].id.clone(),
+            dir.path().display().to_string(),
+        )]),
+        signing_key_ref: Some(dir.path().join("absent-test-key.pem").display().to_string()),
+    };
+    assert_eq!(
+        project_storage::save_private_bindings(&store, 0, None, &bindings).unwrap(),
+        0
+    );
+    assert_eq!(
+        project_storage::save_private_bindings(&store, 1, Some(0), &bindings)
+            .unwrap_err()
+            .code,
+        ErrorCode::SnapshotConflict
+    );
+    assert_eq!(
+        project_storage::save_private_bindings(&store, 0, None, &bindings)
+            .unwrap_err()
+            .code,
+        ErrorCode::SnapshotConflict
+    );
+    bindings
+        .component_paths
+        .insert("unknown".into(), dir.path().display().to_string());
+    assert_eq!(
+        project_storage::save_private_bindings(&store, 0, Some(0), &bindings)
+            .unwrap_err()
+            .code,
+        ErrorCode::InvalidManifest
+    );
+    bindings.component_paths.remove("unknown");
+    drop(store);
+    let store = open_store(&db).unwrap();
+    let opened = project_service::open(&store, "project").unwrap();
+    assert!(opened.missing_inputs.is_empty());
+    let private = opened.private_bindings.unwrap();
+    assert_eq!(private.revision, 0);
+    assert_eq!(private.bindings.component_paths, bindings.component_paths);
+    assert_eq!(private.bindings.signing_key_ref, bindings.signing_key_ref);
+    bindings.component_paths.clear();
+    bindings.signing_key_ref = Some("relative/key.pem".into());
+    let error = project_storage::save_private_bindings(&store, 0, Some(0), &bindings).unwrap_err();
+    assert_eq!(error.code, ErrorCode::InvalidPath);
+    assert!(error.details.is_empty());
+    bindings.signing_key_ref = None;
+    assert_eq!(
+        project_storage::save_private_bindings(&store, 0, Some(0), &bindings).unwrap(),
+        1
+    );
+    assert_eq!(original(&store), before);
+    let opened = project_service::open(&store, "project").unwrap();
+    assert_eq!(opened.project.revision, 0);
+    assert_eq!(
+        opened.missing_inputs,
+        vec![initial.program_descriptor.components[0].id.clone()]
+    );
+    let private = opened.private_bindings.unwrap();
+    assert_eq!(private.revision, 1);
+    assert!(private.bindings.component_paths.is_empty());
+    assert!(private.bindings.signing_key_ref.is_none());
+}
+
+#[test]
 fn service_list_aggregates_structure_only_and_failed_wins_for_current_revision() {
     let dir = tempfile::tempdir().unwrap();
     let mut store = open_store(&dir.path().join("library.db")).unwrap();
@@ -631,7 +709,7 @@ fn service_open_local_external_input_does_not_require_remote_probe() {
 }
 
 #[test]
-fn service_open_rejects_bindings_for_components_removed_by_project_save() {
+fn service_open_allows_repair_of_bindings_after_a_component_rename() {
     let dir = tempfile::tempdir().unwrap();
     let mut store = open_store(&dir.path().join("library.db")).unwrap();
     let initial = project("project", 0);
@@ -639,10 +717,102 @@ fn service_open_rejects_bindings_for_components_removed_by_project_save() {
     let mut next = project("project", 1);
     next.program_descriptor.components[0].id = "replacement-component".into();
     save(&mut store, next, Some(0));
+    let reopened = project_service::open(&store, "project").unwrap();
+    assert_eq!(reopened.missing_inputs, vec!["replacement-component"]);
+    let mut private = reopened.private_bindings.unwrap();
+    assert_eq!(private.revision, 7);
+    assert!(private.bindings.component_paths.is_empty());
     assert_eq!(
-        project_service::open(&store, "project").unwrap_err().code,
-        ErrorCode::IntegrityViolation
+        private.bindings.signing_key_ref.as_deref(),
+        Some("synthetic-private-key-reference")
     );
+    assert_eq!(
+        project_storage::open_private_bindings(&store, "project")
+            .unwrap()
+            .unwrap()
+            .bindings
+            .component_paths
+            .len(),
+        1
+    );
+
+    let error = project_service::save(
+        &mut store,
+        CreatorProjectSaveRequest {
+            project: project("project", 2),
+            expected_revision: Some(1),
+        },
+    )
+    .unwrap_err();
+    assert_eq!(error.code, ErrorCode::SnapshotConflict);
+    private.bindings.signing_key_ref = None;
+    assert_eq!(
+        project_storage::save_private_bindings(
+            &store,
+            1,
+            Some(private.revision),
+            &private.bindings
+        )
+        .unwrap(),
+        8
+    );
+    save(&mut store, project("project", 2), Some(1));
+    assert_eq!(
+        project_service::open(&store, "project")
+            .unwrap()
+            .missing_inputs,
+        vec![initial.program_descriptor.components[0].id.clone()]
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn private_binding_save_rejects_invalid_windows_paths_without_echoing_them() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = open_store(&dir.path().join("library.db")).unwrap();
+    let initial = project("project", 0);
+    save(&mut store, initial, None);
+    let mut bindings = CreatorPrivateBindings {
+        project_id: "project".into(),
+        component_paths: BTreeMap::new(),
+        signing_key_ref: None,
+    };
+    for path in [
+        r"C:\private\NUL.txt",
+        r"C:\private\COM¹ .txt",
+        r"C:\CONOUT$\key",
+        r"C:\private\a?b",
+        r"C:\private\key.pem.",
+        r"C:\private\key.pem ",
+        r"C:\private\.\key.pem",
+        r"C:\private\..\key.pem",
+        r"C:\private\key.pem:stream",
+        r"C:private\key.pem",
+        r"\\?\C:\private\NUL",
+        r"\\server\share\key",
+        r"\\.\C:\private\key",
+    ] {
+        bindings.signing_key_ref = Some(path.into());
+        let error = project_storage::save_private_bindings(&store, 0, None, &bindings).unwrap_err();
+        assert_eq!(error.code, ErrorCode::InvalidPath);
+        assert!(error.details.is_empty());
+        assert!(!error.message.contains(path));
+    }
+    for (expected, path) in [
+        r"C:/private/ordinary [key].pem",
+        r"\\?\C:\private\ordinary.pem",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        bindings.signing_key_ref = Some(path.into());
+        let expected = expected as u64;
+        assert_eq!(
+            project_storage::save_private_bindings(&store, 0, expected.checked_sub(1), &bindings)
+                .unwrap(),
+            expected
+        );
+    }
 }
 
 #[test]

@@ -20,6 +20,7 @@ fn fixture_document(bytes: &[u8], revision: u64) -> VerifiedDocument<'_> {
         project_id: "project-1",
         revision,
         bytes,
+        project: None,
     }
 }
 

@@ -76,6 +76,7 @@ pub const CREATOR_COMMANDS: &[&str] = &[
     "fusion_creator_job_resume",
     "fusion_creator_release_list",
     "fusion_creator_report_get",
+    "fusion_creator_private_bindings_save",
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -302,6 +303,21 @@ pub struct CreatorProjectSaveRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CreatorProjectSaveResponse {
+    #[serde(deserialize_with = "wire_revision")]
+    pub revision: u64,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CreatorPrivateBindingsSaveRequest {
+    #[serde(deserialize_with = "wire_revision")]
+    pub project_revision: u64,
+    #[serde(deserialize_with = "expected_revision")]
+    pub expected_bindings_revision: Option<u64>,
+    pub bindings: CreatorPrivateBindings,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CreatorPrivateBindingsSaveResponse {
     #[serde(deserialize_with = "wire_revision")]
     pub revision: u64,
 }

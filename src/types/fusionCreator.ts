@@ -72,7 +72,7 @@ export const CREATOR_COMMANDS = [
   'fusion_creator_scan', 'fusion_creator_classify', 'fusion_creator_build', 'fusion_creator_verify',
   'fusion_creator_export', 'fusion_creator_verify_https', 'fusion_creator_job_get',
   'fusion_creator_job_cancel', 'fusion_creator_job_resume', 'fusion_creator_release_list',
-  'fusion_creator_report_get'
+  'fusion_creator_report_get', 'fusion_creator_private_bindings_save'
 ] as const;
 export const INPUT_COMMANDS = [
   'fusion_input_devices', 'fusion_input_session_start', 'fusion_input_session_stop',
@@ -134,6 +134,12 @@ export const creatorProjectListResponseSchema = z.array(creatorProjectSummarySch
 export const creatorProjectRequestSchema = z.object({ projectId: id }).strict();
 export type CreatorPrivateBindings = z.infer<typeof creatorPrivateBindingsSchema>;
 export type SavedPrivateBindings = z.infer<typeof savedPrivateBindingsSchema>;
+export const creatorPrivateBindingsSaveRequestSchema = z.object({
+  projectRevision: revision, expectedBindingsRevision: revision.nullable(), bindings: creatorPrivateBindingsSchema
+}).strict();
+export const creatorPrivateBindingsSaveResponseSchema = z.object({ revision }).strict();
+export type CreatorPrivateBindingsSaveRequest = z.infer<typeof creatorPrivateBindingsSaveRequestSchema>;
+export type CreatorPrivateBindingsSaveResponse = z.infer<typeof creatorPrivateBindingsSaveResponseSchema>;
 export type CreatorProjectOpenResponse = z.infer<typeof creatorProjectOpenResponseSchema>;
 export type CreatorProjectSummary = z.infer<typeof creatorProjectSummarySchema>;
 export type CreatorProjectListResponse = z.infer<typeof creatorProjectListResponseSchema>;
@@ -185,6 +191,7 @@ export interface CreatorApi {
   projectList(): Promise<CreatorProjectListResponse>;
   projectOpen(request: CreatorProjectRequest): Promise<CreatorProjectOpenResponse>;
   projectSave(request: CreatorProjectSaveRequest): Promise<CreatorProjectSaveResponse>;
+  privateBindingsSave(request: CreatorPrivateBindingsSaveRequest): Promise<CreatorPrivateBindingsSaveResponse>;
   scan(request: CreatorJobStartRequest): Promise<CreatorJobReceipt>;
   classify(request: CreatorJobStartRequest): Promise<CreatorJobReceipt>;
   build(request: CreatorJobStartRequest): Promise<CreatorJobReceipt>;

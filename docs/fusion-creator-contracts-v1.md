@@ -308,6 +308,7 @@ streaming-normalizer; candidate preparation не меняет active config, sha
 | `fusion_creator_project_list` | — → `CreatorProjectSummary[]` |
 | `fusion_creator_project_open` | `CreatorProjectRequest { projectId }` → `CreatorProjectOpenResponse` |
 | `fusion_creator_project_save` | `CreatorProjectSaveRequest` → `CreatorProjectSaveResponse { revision }` |
+| `fusion_creator_private_bindings_save` | `CreatorPrivateBindingsSaveRequest` → `CreatorPrivateBindingsSaveResponse { revision }` |
 | `fusion_creator_scan`, `fusion_creator_classify`, `fusion_creator_build`, `fusion_creator_verify`, `fusion_creator_export`, `fusion_creator_verify_https` | `CreatorJobStartRequest` → `CreatorJobReceipt` |
 | `fusion_creator_job_get`, `fusion_creator_job_cancel` | `CreatorJobRequest` → `CreatorJob` |
 | `fusion_creator_job_resume` | `CreatorJobRequest` → `CreatorJobReceipt` |
@@ -343,6 +344,18 @@ streaming-normalizer; candidate preparation не меняет active config, sha
   Ответ `{ revision }` содержит фактически сохранённую новую ревизию. Это та же семантика, что
   `project_storage::check_revision`; проверки конфликтов остаются в storage, не в JSON Schema.
   Bindings в save request не встраиваются и этой командой не изменяются.
+  После удаления компонента `project_open` не возвращает его старый путь, но сохраняет ревизию
+  bindings для явного исправления. Чтобы вернуть тот же ID без повторного использования старого
+  пути, сначала сохрани открытые bindings отдельной командой.
+- Отдельная локальная команда `fusion_creator_private_bindings_save` принимает строго
+  `{ projectRevision, expectedBindingsRevision, bindings: CreatorPrivateBindings }`.
+  Проект должен существовать в указанной ревизии. `expectedBindingsRevision: null` добавляет
+  первую запись с ревизией `0`; `n` заменяет запись `n` на `n + 1`. Сравнение обеих
+  ревизий и запись выполняются одной транзакцией; переносимый проект не переписывается.
+  Компоненты должны принадлежать descriptor проекта. Пути, включая `signingKeyRef`, —
+  абсолютные локальные пути; содержимое файлов и ключа не читается. Удаление привязки задаётся
+  отсутствием ID в новой карте или `signingKeyRef: null`. Ответ содержит только ревизию bindings.
+  Команда не подтверждает наличие, целостность или право использования файлов при сборке.
 - `CreatorProjectSummary { projectId, title, revision, verificationStatus, modifiedAt }` — только
   сводка, без descriptor/paths/bindings. `verificationStatus` — `passed|failed|not_tested` для текущей
   ревизии: отсутствие актуальных свидетельств означает `not_tested`, изменение проекта не наследует

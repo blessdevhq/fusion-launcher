@@ -15,7 +15,7 @@ test('every frozen API method invokes the exact command and sole request envelop
   };
   const bridge = createCreatorBridge(transport);
   const request = { identity: 'request-is-passed-unchanged' };
-  const creatorMethods = ['projectList', 'projectOpen', 'projectSave', 'scan', 'classify', 'build', 'verify', 'export', 'verifyHttps', 'jobGet', 'jobCancel', 'jobResume', 'releaseList', 'reportGet'];
+  const creatorMethods = ['projectList', 'projectOpen', 'projectSave', 'scan', 'classify', 'build', 'verify', 'export', 'verifyHttps', 'jobGet', 'jobCancel', 'jobResume', 'releaseList', 'reportGet', 'privateBindingsSave'];
   const inputMethods = ['devices', 'sessionStart', 'sessionStop', 'sessionGet', 'bindingsSave', 'releaseForLaunch'];
   for (const [api, methods, commands] of [
     [bridge.creatorApi, creatorMethods, CREATOR_COMMANDS],
@@ -32,4 +32,21 @@ test('every frozen API method invokes the exact command and sole request envelop
 test('browser production APIs reject action_unavailable with the precise command', async () => {
   await assert.rejects(creatorApi.projectList(), { code: 'action_unavailable', details: { command: 'fusion_creator_project_list' } });
   await assert.rejects(fusionInputApi.devices(), { code: 'action_unavailable', details: { command: 'fusion_input_devices' } });
+});
+
+test('private bindings use their own local command and revision-only receipt', async () => {
+  const request = {
+    projectRevision: 2, expectedBindingsRevision: null,
+    bindings: { projectId: 'project', componentPaths: { runtime: 'C:/local/runtime' }, signingKeyRef: null }
+  };
+  const bridge = createCreatorBridge({
+    invoke: async <T>(command: string, args?: { request: unknown }) => {
+      assert.equal(command, 'fusion_creator_private_bindings_save');
+      assert.deepEqual(args, { request });
+      return { revision: 0 } as T;
+    },
+    listen: async () => () => undefined
+  });
+  assert.deepEqual(await bridge.creatorApi.privateBindingsSave(request), { revision: 0 });
+  await assert.rejects(creatorApi.privateBindingsSave(request), { code: 'action_unavailable', details: { command: 'fusion_creator_private_bindings_save' } });
 });

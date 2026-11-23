@@ -36,6 +36,11 @@ fn local_project_contracts_round_trip_shared_fixtures_with_required_nulls() {
     round_trip::<CreatorProjectSaveResponse>(&f["projectSaved"]);
     round_trip::<CreatorPrivateBindings>(&f["projectBindings"]["bindings"]);
     round_trip::<SavedPrivateBindings>(&f["projectBindings"]);
+    round_trip::<CreatorPrivateBindingsSaveRequest>(&json!({
+        "projectRevision": f["project"]["revision"], "expectedBindingsRevision": null,
+        "bindings": f["projectBindings"]["bindings"]
+    }));
+    round_trip::<CreatorPrivateBindingsSaveResponse>(&json!({"revision": 0}));
     round_trip::<CreatorProjectOpenResponse>(&json!({
         "project": f["project"], "privateBindings": f["projectBindings"], "missingInputs": []
     }));

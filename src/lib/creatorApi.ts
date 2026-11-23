@@ -34,6 +34,7 @@ export function createCreatorBridge(transport: CreatorTransport = desktopTranspo
     projectList: () => transport.invoke('fusion_creator_project_list'),
     projectOpen: (value) => request('fusion_creator_project_open', value),
     projectSave: (value) => request('fusion_creator_project_save', value),
+    privateBindingsSave: (value) => request('fusion_creator_private_bindings_save', value),
     scan: (value) => request('fusion_creator_scan', value),
     classify: (value) => request('fusion_creator_classify', value),
     build: (value) => request('fusion_creator_build', value),

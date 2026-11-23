@@ -76,17 +76,14 @@ pub(crate) fn open(
         )
     })?;
     validate_stored_project(&project)?;
-    let private_bindings = project_storage::open_private_bindings(store, project_id)?;
-    if private_bindings.as_ref().is_some_and(|saved| {
-        saved.bindings.component_paths.keys().any(|id| {
-            !project
-                .program_descriptor
-                .components
-                .iter()
-                .any(|component| &component.id == id)
-        })
-    }) {
-        return Err(invalid_stored());
+    let mut private_bindings = project_storage::open_private_bindings(store, project_id)?;
+    // Preserve the revision for explicit repair, without showing an obsolete
+    // component path or mutating the database on open.
+    if let Some(saved) = &mut private_bindings {
+        saved
+            .bindings
+            .component_paths
+            .retain(|id, _| project_storage::project_has_component(&project, id));
     }
     let mut missing_inputs = Vec::new();
     for component in &project.program_descriptor.components {

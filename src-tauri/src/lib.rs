@@ -208,6 +208,7 @@ pub fn run() {
             commands::fusion_creator::fusion_creator_project_list,
             commands::fusion_creator::fusion_creator_project_open,
             commands::fusion_creator::fusion_creator_project_save,
+            commands::fusion_creator::fusion_creator_private_bindings_save,
             commands::fusion_creator::fusion_creator_scan,
             commands::fusion_creator::fusion_creator_classify,
             commands::fusion_creator::fusion_creator_build,
