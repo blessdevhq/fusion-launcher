@@ -187,6 +187,23 @@ impl JobHandler for ManagedDirectoryBuild {
     fn validate_request(&self, request: &CreatorJobStartRequest) -> Result<(), FusionError> {
         validate_request(request)
     }
+    fn validate_write_roots(
+        &self,
+        project: &CreatorProgramProject,
+        bindings: Option<&SavedPrivateBindings>,
+        workspace: &Path,
+        release_cas: &Path,
+    ) -> Result<(), FusionError> {
+        let inputs = Inputs::resolve(project, bindings)?;
+        super::jobs::validate_build_write_roots(
+            inputs
+                .paths
+                .into_iter()
+                .map(|(component, path)| (component.id.as_str(), path)),
+            workspace,
+            release_cas,
+        )
+    }
     fn input_hashes(
         &self,
         project: &CreatorProgramProject,

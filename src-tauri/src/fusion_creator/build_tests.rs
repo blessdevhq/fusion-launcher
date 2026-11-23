@@ -1,4 +1,6 @@
 use super::*;
+#[path = "build_input_safety_tests.rs"]
+mod input_safety;
 use crate::fusion_creator::{
     project_service, project_storage, CreatorJobKind, CreatorJobStartRequest, CreatorJobStatus,
     CreatorPrivateBindings,
