@@ -7,6 +7,7 @@ import { CreatorDeviceDialog } from './CreatorDeviceDialog';
 import { creatorStages, creatorStageHasContent, type CreatorStage } from '@/lib/creatorUi';
 import { useCreatorStore } from '@/stores/creatorStore';
 import { CreatorStatus } from './CreatorStatus';
+import { CreatorSignedBuild } from './CreatorSignedBuild';
 
 export function CreatorScreen({ contextTitle, onFocus }: { contextTitle: string | null; onFocus: (id: string) => void }) {
   const { t, locale } = useI18n();
@@ -65,6 +66,8 @@ export function CreatorScreen({ contextTitle, onFocus }: { contextTitle: string 
         <CreatorStatus status={state.projectStatus} error={state.projectError} />
         {state.currentProject && <p className="mt-3 break-words text-sm">{state.currentProject.project.title} · {t.creator.ui.revision} {state.currentProject.project.revision}</p>}
       </section>
+      {state.projectStatus === 'ready' && state.currentProject && <CreatorSignedBuild
+        key={JSON.stringify([state.currentProject.project.project_id, state.currentProject.project.revision])} opened={state.currentProject} />}
       <section className="border-t border-fusion-line py-4" aria-labelledby="creator-jobs-title">
         <h2 id="creator-jobs-title" className="text-lg font-semibold">{t.creator.ui.jobs}</h2>
         <p className="mt-1 text-xs text-[var(--rh-muted)]">{t.creator.ui.historyNote}</p>
@@ -84,6 +87,10 @@ export function CreatorScreen({ contextTitle, onFocus }: { contextTitle: string 
             <p className="mt-1 break-words text-xs text-[var(--rh-muted)]">{t.creator.ui.phase}: {entry.progress.phase} · {t.creator.ui.sequence}: {entry.progress.sequence} · {entry.progress.completedUnits}{entry.progress.totalUnits === null ? '' : ` / ${entry.progress.totalUnits}`}</p>
             {entry.progress.totalUnits !== null && entry.progress.totalUnits > 0 && <progress className="mt-2 w-full accent-fusion-accent" max={entry.progress.totalUnits} value={Math.min(entry.progress.completedUnits, entry.progress.totalUnits)} />}
             {entry.progress.error && <CreatorStatus status={entry.progress.error.code === 'action_unavailable' ? 'unavailable' : 'error'} error={entry.progress.error} />}
+            {entry.progress.releaseId && <p className="mt-1 break-all text-xs" data-testid="creator-job-release">{t.creator.ui.signedBuild.releaseId}: {entry.progress.releaseId}</p>}
+            {entry.acceptingEvents && state.currentProject?.project.project_id === entry.receipt.projectId && state.currentProject.project.revision === entry.receipt.projectRevision
+              && (entry.progress.status === 'queued' || entry.progress.status === 'running') && <button type="button" className="rh-filter-chip rh-focusable mt-2"
+                data-focus-id={`creator:cancel-${entry.receipt.jobId}`} onClick={() => void state.cancelJob(entry.receipt.jobId).catch(() => {})}>{t.creator.ui.cancel}</button>}
             <details className="mt-2 text-xs text-[var(--rh-muted)]"><summary className="rh-focusable cursor-pointer">{t.creator.ui.jobs} ({entry.history.length})</summary>
               <ol className="mt-2 space-y-2">{entry.history.map((event) => <li key={event.sequence} className="break-words">#{event.sequence} · {t.creator.ui.statuses[event.status]} · {event.phase} · {event.completedUnits}{event.totalUnits === null ? '' : ` / ${event.totalUnits}`}</li>)}</ol>
             </details>

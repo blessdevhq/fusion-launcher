@@ -20,7 +20,15 @@ export const en = {
       create: 'Create build', context: 'Selected library item', contextNote: 'No project was created. Authoring requires a program descriptor; project creation is unavailable in this early UI.',
       stages: { base: 'Base', composition: 'Composition', profiles: 'Profiles', verification: 'Verification', release: 'Release' },
       descriptorUnavailable: 'Unavailable: this stage requires descriptor authoring and is not part of the early UI.',
-      releaseUnavailable: 'Unavailable: real build and export are not enabled in this UI.',
+      releaseUnavailable: 'Export is unavailable. Open a saved project on Base to build a local signed release.',
+      signedBuild: {
+        title: 'Signed release', action: 'Build signed release', directory: 'Select folder', key: 'Select signing key file',
+        selected: 'Selected · not verified', missing: 'Selection required', buildProfile: 'Build profile', controlsProfile: 'Controls profile',
+        note: 'Choose only folders you have permission to distribute. Keep the key outside them. The release stays local; it includes the profiles declared in the descriptor.',
+        unsupported: 'Build currently supports only redistributable managed components that use the entire input folder.',
+        pending: 'Starting signed build…', invalid: 'Select the required folders, key file and a compatible profile pair.',
+        failed: 'Could not start the build. Check the selections or reopen the project after a revision conflict.', releaseId: 'Release ID'
+      },
       projects: 'Projects', refresh: 'Refresh', emptyProjects: 'No saved projects.', revision: 'Revision', modified: 'Modified',
       jobs: 'Job progress and history', jobId: 'Job ID', loadJob: 'Open job', noJobs: 'No jobs opened in this session. Enter an existing job ID to read its saved state.',
       historyNote: 'Only acknowledged job snapshots and ordered events are shown. Closing Creator does not cancel a job.',
@@ -887,7 +895,15 @@ export const ru: UiText = {
       create: 'Создать сборку', context: 'Выбрано в библиотеке', contextNote: 'Проект не создан. Для создания нужен дескриптор программы; в раннем UI создание проекта недоступно.',
       stages: { base: 'Основа', composition: 'Состав', profiles: 'Профили', verification: 'Проверка', release: 'Выпуск' },
       descriptorUnavailable: 'Недоступно: этап требует редактирования дескриптора и не входит в ранний UI.',
-      releaseUnavailable: 'Недоступно: реальные build и export в этом UI не включены.',
+      releaseUnavailable: 'Экспорт недоступен. Открой сохранённый проект в разделе «Основа», чтобы собрать подписанный выпуск локально.',
+      signedBuild: {
+        title: 'Подписанный выпуск', action: 'Собрать подписанный выпуск', directory: 'Выбрать папку', key: 'Выбрать файл ключа подписи',
+        selected: 'Выбрано · не проверено', missing: 'Нужно выбрать', buildProfile: 'Профиль сборки', controlsProfile: 'Профиль управления',
+        note: 'Выбирай только папки, которые разрешено распространять. Ключ храни вне этих папок. Выпуск останется локальным и включит профили из дескриптора.',
+        unsupported: 'Пока можно собирать только управляемые компоненты, которые разрешено распространять и которые используют папку целиком.',
+        pending: 'Запускается подписанная сборка…', invalid: 'Выбери нужные папки, файл ключа и совместимую пару профилей.',
+        failed: 'Не удалось запустить сборку. Проверь выбранные файлы или заново открой проект после конфликта ревизий.', releaseId: 'ID выпуска'
+      },
       projects: 'Проекты', refresh: 'Обновить', emptyProjects: 'Сохранённых проектов нет.', revision: 'Ревизия', modified: 'Изменён',
       jobs: 'Прогресс и история заданий', jobId: 'ID задания', loadJob: 'Открыть задание', noJobs: 'В этой сессии задания не открывались. Введи ID существующего задания, чтобы прочитать сохранённое состояние.',
       historyNote: 'Показаны только подтверждённые снимки заданий и упорядоченные события. Закрытие Creator не отменяет задание.',

@@ -69,6 +69,51 @@ test('open uses the exact 1.1 envelope and older responses cannot replace a newe
   assert.equal(store.getState().currentProject?.project.project_id, opened.project.project_id);
 });
 
+test('private binding saves use independent CAS and ignore a save for a superseded project selection', async () => {
+  const pending = deferred<{ revision: number }>();
+  const bindings = { projectId: opened.project.project_id, componentPaths: {}, signingKeyRef: 'C:/fixture/signing-key' };
+  const store = createCreatorStore({ creatorApi: apiWith({
+    projectOpen: async ({ projectId }) => projectId === opened.project.project_id ? opened : {
+      ...opened, project: { ...opened.project, project_id: projectId }, privateBindings: null
+    },
+    privateBindingsSave: async (request) => {
+      assert.deepEqual(request, { projectRevision: 1, expectedBindingsRevision: 3, bindings });
+      return pending.promise;
+    }
+  }) });
+  const project = await store.getState().openProject(bindings.projectId);
+  const saving = store.getState().savePrivateBindings(project, bindings);
+  await store.getState().openProject('other');
+  pending.resolve({ revision: 4 });
+  await saving;
+  assert.equal(store.getState().currentProject?.privateBindings, null);
+  const reopened = await store.getState().openProject(bindings.projectId);
+  await store.getState().savePrivateBindings(reopened, bindings);
+  assert.deepEqual(store.getState().currentProject?.project, opened.project);
+  assert.deepEqual(store.getState().currentProject?.privateBindings, { revision: 4, bindings });
+});
+
+test('signed build reads its durable snapshot and cancel does not overwrite a newer terminal event', async () => {
+  const cancellation = deferred<CreatorJob>();
+  const receipt = { jobId: 'job-1', projectId: opened.project.project_id, projectRevision: 1 };
+  const request = { ...fixtures.jobStart, releaseId: null, targetDirectory: 'C:/fixture/output' };
+  const store = createCreatorStore({ creatorApi: apiWith({
+    projectOpen: async () => opened,
+    build: async (value) => { assert.deepEqual(value, request); return receipt; },
+    jobGet: async ({ jobId }) => { assert.equal(jobId, receipt.jobId); return job({ kind: 'build', sequence: 2, status: 'running' }); },
+    jobCancel: async ({ jobId }) => { assert.equal(jobId, receipt.jobId); return cancellation.promise; }
+  }) });
+  await store.getState().openProject(receipt.projectId);
+  await store.getState().startJob('build', request);
+  assert.equal(store.getState().jobs[receipt.jobId].progress?.sequence, 2);
+  const cancelling = store.getState().cancelJob(receipt.jobId);
+  assert.equal(store.getState().jobs[receipt.jobId].progress?.status, 'running');
+  assert.equal(store.getState().mergeJobProgress(progress({ kind: 'build', sequence: 4, status: 'completed' })), true);
+  cancellation.resolve(job({ kind: 'build', sequence: 3, status: 'cancelling' }));
+  await cancelling;
+  assert.equal(store.getState().jobs[receipt.jobId].progress?.status, 'completed');
+});
+
 test('job receipts establish ownership; events reject unknown IDs, revision mismatches and nonmonotonic sequences', async () => {
   const store = createCreatorStore({ creatorApi: apiWith({
     projectOpen: async () => opened,

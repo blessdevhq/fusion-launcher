@@ -1,9 +1,9 @@
 import { create } from 'zustand';
 import { z } from 'zod';
 import { creatorApi, fusionInputApi } from '../lib/creatorApi.ts';
-import { creatorJobProgressSchema, creatorProjectOpenResponseSchema, creatorProjectListResponseSchema, inputStateSchema } from '../types/fusionCreator.ts';
+import { creatorJobProgressSchema, creatorPrivateBindingsSaveResponseSchema, creatorProjectOpenResponseSchema, creatorProjectListResponseSchema, inputStateSchema } from '../types/fusionCreator.ts';
 import type { CreatorApi, FusionInputApi, CreatorProjectSummary, CreatorProjectOpenResponse,
-  CreatorJob, CreatorJobProgress, CreatorJobReceipt, CreatorJobKind, CreatorJobStartRequest,
+  CreatorJob, CreatorJobProgress, CreatorJobReceipt, CreatorJobKind, CreatorJobStartRequest, CreatorPrivateBindings,
   InputDevice, InputState, InputSessionReceipt, InputReleaseReceipt } from '../types/fusionCreator.ts';
 import type { FusionError } from '../types/fusionSource.ts';
 
@@ -29,10 +29,12 @@ export interface CreatorState {
   projectStatus: CreatorLoadStatus;
   projectError: FusionError | null;
   openProject(projectId: string): Promise<CreatorProjectOpenResponse>;
+  savePrivateBindings(opened: CreatorProjectOpenResponse, bindings: CreatorPrivateBindings): Promise<void>;
   jobs: Record<string, CreatorJobEntry>;
   selectedJobId: string | null;
   jobError: FusionError | null;
   startJob(kind: CreatorJobKind, request: CreatorJobStartRequest): Promise<CreatorJobReceipt>;
+  cancelJob(jobId: string): Promise<void>;
   reopenJob(jobId: string): Promise<CreatorJob>;
   mergeJobProgress(progress: CreatorJobProgress): boolean;
   inputDevices: InputDevice[];
@@ -96,6 +98,7 @@ export function createCreatorStore(dependencies: Partial<CreatorStoreDependencie
   const input = dependencies.fusionInputApi ?? fusionInputApi;
   let listGeneration = 0;
   let projectGeneration = 0;
+  let savingBindings = false;
   const jobGenerations = new Map<string, number>();
   const pendingJobs = new Map<string, CreatorJobProgress[]>();
   let devicesGeneration = 0;
@@ -164,23 +167,59 @@ export function createCreatorStore(dependencies: Partial<CreatorStoreDependencie
         throw error;
       }
     },
+    async savePrivateBindings(opened, bindings) {
+      if (savingBindings || get().currentProject !== opened || bindings.projectId !== opened.project.project_id) {
+        throw invalid('Saving requires the current private bindings revision and no other save in flight.');
+      }
+      const expectedBindingsRevision = opened.privateBindings?.revision ?? null;
+      savingBindings = true;
+      try {
+        const receipt = creatorPrivateBindingsSaveResponseSchema.safeParse(await api.privateBindingsSave({
+          projectRevision: opened.project.revision, expectedBindingsRevision, bindings
+        }));
+        if (!receipt.success || receipt.data.revision !== (expectedBindingsRevision === null ? 0 : expectedBindingsRevision + 1)) {
+          throw invalid('Unexpected private bindings revision.');
+        }
+        if (get().currentProject === opened) {
+          set({ currentProject: { ...opened, privateBindings: { revision: receipt.data.revision, bindings } } });
+        }
+      } finally {
+        savingBindings = false;
+      }
+    },
     async startJob(kind, request) {
       const generation = projectGeneration;
       try {
         if (!currentOwns(get().currentProject, request)) throw invalid('Job must target the current project revision.');
         const method = kind === 'verify_https' ? 'verifyHttps' : kind;
         const receipt = await api[method](request);
-        if (!receipt.jobId || receipt.projectId !== request.projectId || receipt.projectRevision !== request.projectRevision) throw invalid('Job receipt differs from the requested identity.');
+        if (!inputStateSchema.shape.sessionId.safeParse(receipt?.jobId).success || receipt.projectId !== request.projectId || receipt.projectRevision !== request.projectRevision) throw invalid('Job receipt differs from the requested identity.');
         // Creation may have succeeded natively, but a stale receipt cannot reacquire UI ownership.
         if (generation !== projectGeneration || !currentOwns(get().currentProject, receipt)) return receipt;
         const existing = ownJob(get().jobs, receipt.jobId);
         if (existing && !sameIdentity(existing.receipt, receipt)) throw invalid('Job ID already belongs to another project revision.');
         set((state) => ({ jobs: { ...state.jobs, [receipt.jobId]: existing ?? { ...emptyJob(receipt), kind, status: 'ready', acceptingEvents: true } }, selectedJobId: receipt.jobId, jobError: null }));
+        // A fast worker can finish before the receipt is delivered. Read durable state
+        // instead of relying on a future event; a read failure isn't a failed start.
+        if (kind === 'build') await get().reopenJob(receipt.jobId).catch(() => {});
         return receipt;
       } catch (error) {
         if (generation === projectGeneration) set({ jobError: creatorError(error) });
         throw error;
       }
+    },
+    async cancelJob(jobId) {
+      const entry = ownJob(get().jobs, jobId);
+      const previous = entry?.progress;
+      if (!previous || !entry.acceptingEvents || !currentOwns(get().currentProject, previous)
+        || (previous.status !== 'queued' && previous.status !== 'running')) throw invalid('No cancellable job for the current project.');
+      const generation = projectGeneration;
+      const snapshot = await api.jobCancel({ jobId });
+      const parsed = creatorJobProgressSchema.safeParse(snapshot?.progress);
+      if (!parsed.success || !sameIdentity(entry.receipt, parsed.data) || parsed.data.kind !== previous.kind) {
+        throw invalid('Cancel response differs from the requested job.');
+      }
+      if (generation === projectGeneration) get().mergeJobProgress(parsed.data);
     },
     async reopenJob(jobId) {
       const current = get().currentProject;
