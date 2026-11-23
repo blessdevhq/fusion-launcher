@@ -1,8 +1,12 @@
 //! Application-owned Creator service; closing a webview does not own/cancel jobs.
-use super::jobs::JobRunner;
+use super::build::ManagedDirectoryBuild;
+use super::jobs::{JobRunner, ProgressSink};
+use super::CreatorJobKind;
 use crate::fusion_source::errors::FusionError;
+use crate::storage::RepositoryStore;
 use crate::AppState;
-use std::sync::Arc;
+use std::path::Path;
+use std::sync::{Arc, Mutex};
 use tauri::Emitter;
 
 #[derive(Clone)]
@@ -18,7 +22,21 @@ impl CreatorBridge {
             let _ = app.emit(super::JOB_PROGRESS_EVENT, event);
         });
         Ok(Self {
-            runner: JobRunner::new(state.store.clone(), &state.data_dir.join("creator"), sink)?,
+            runner: production_runner(state.store.clone(), &state.data_dir.join("creator"), sink)?,
         })
     }
 }
+
+fn production_runner(
+    store: Arc<Mutex<RepositoryStore>>,
+    root: &Path,
+    sink: ProgressSink,
+) -> Result<JobRunner, FusionError> {
+    let runner = JobRunner::new(store, root, sink)?;
+    runner.register(CreatorJobKind::Build, Arc::new(ManagedDirectoryBuild))?;
+    Ok(runner)
+}
+
+#[cfg(test)]
+#[path = "build_tests.rs"]
+mod build_tests;

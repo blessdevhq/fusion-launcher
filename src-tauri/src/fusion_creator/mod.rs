@@ -1,5 +1,6 @@
 //! Frozen Creator DTOs, project storage and durable jobs. Build/export handlers are host-owned.
 pub mod bridge;
+mod build;
 pub mod declarative;
 pub mod input;
 pub mod jobs;

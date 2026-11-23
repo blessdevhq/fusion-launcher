@@ -181,7 +181,9 @@ pub async fn fusion_creator_private_bindings_save(
     .await
 }
 unavailable_command!(fusion_creator_classify(CreatorJobStartRequest) -> CreatorJobReceipt);
-unavailable_command!(fusion_creator_build(CreatorJobStartRequest) -> CreatorJobReceipt);
+creator_command!(fusion_creator_build(CreatorJobStartRequest) -> CreatorJobReceipt, |runner, request| {
+    runner.start(CreatorJobKind::Build, request)
+});
 unavailable_command!(fusion_creator_verify(CreatorJobStartRequest) -> CreatorJobReceipt);
 unavailable_command!(fusion_creator_export(CreatorJobStartRequest) -> CreatorJobReceipt);
 unavailable_command!(fusion_creator_verify_https(CreatorJobStartRequest) -> CreatorJobReceipt);
@@ -251,7 +253,7 @@ mod tests {
             serde_json::from_value(fixture["jobStart"].clone()).unwrap();
         rejects!(fusion_creator_scan, start.clone());
         rejects!(fusion_creator_classify, start.clone());
-        rejects!(fusion_creator_build, start.clone());
+
         rejects!(fusion_creator_verify, start.clone());
         rejects!(fusion_creator_export, start.clone());
         rejects!(fusion_creator_verify_https, start);
