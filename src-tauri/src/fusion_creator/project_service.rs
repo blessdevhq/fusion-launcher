@@ -90,12 +90,22 @@ pub(crate) fn open(
         let available = private_bindings
             .as_ref()
             .and_then(|saved| saved.bindings.component_paths.get(&component.id))
-            .is_some_and(|path| local_input_available(Path::new(path)));
+            .is_some_and(|path| {
+                let path = Path::new(path);
+                if super::build::supported_component(component) {
+                    fs_safety::guard(path).is_ok()
+                } else {
+                    local_input_available(path)
+                }
+            });
         if available {
             continue;
         }
         match &component.origin {
             ComponentOrigin::UserProvided { .. } => missing_inputs.push(component.id.clone()),
+            ComponentOrigin::Managed { .. } if super::build::supported_component(component) => {
+                missing_inputs.push(component.id.clone());
+            }
             // No artifact/cache resolver is installed in this service. A missing
             // private row is not evidence that a managed or external input is missing.
             ComponentOrigin::Managed { .. } | ComponentOrigin::External { .. } => {

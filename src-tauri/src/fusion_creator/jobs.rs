@@ -1,4 +1,4 @@
-//! Durable Creator runner. Only trusted host handlers execute work; production starts empty.
+//! Durable Creator runner. Only explicitly registered, trusted host handlers execute work.
 //! A worker owns its session/workspace leases independently of the IPC/UI lifetime.
 use super::*;
 use crate::fusion_source::errors::{ErrorCode, FusionError};
@@ -23,6 +23,9 @@ pub(crate) type ProgressSink = Arc<dyn Fn(CreatorJobProgress) + Send + Sync>;
 /// inputs/read leases for the operation. Include component:<id>, executor_implementation,
 /// and capability:<id> implementation digests. Called again before reuse/publication.
 pub trait JobHandler: Send + Sync {
+    fn validate_request(&self, _request: &CreatorJobStartRequest) -> Result<(), FusionError> {
+        Ok(())
+    }
     fn input_hashes(
         &self,
         project: &CreatorProgramProject,
@@ -396,6 +399,7 @@ impl JobRunner {
         request: CreatorJobStartRequest,
     ) -> Result<CreatorJobReceipt, FusionError> {
         let handler = self.handler(&kind, &format!("fusion_creator_{}", key(&kind)))?;
+        handler.validate_request(&request)?;
         let (project, bindings) = self.inputs(&request.project_id)?;
         validate_request(&project, &request)?;
         let workspace = self.workspace(&project.project_id);
@@ -502,6 +506,7 @@ impl JobRunner {
         };
         let request: CreatorJobStartRequest =
             serde_json::from_slice(&request_bytes).map_err(|_| invalid())?;
+        handler.validate_request(&request)?;
         let saved_stamp: CreatorResumeStamp =
             serde_json::from_slice(&stamp_bytes).map_err(|_| invalid())?;
         if request.project_id != previous.progress.project_id
@@ -723,6 +728,17 @@ impl JobContext {
     pub fn workspace(&self) -> &Path {
         &self.workspace
     }
+    pub(super) fn private_bindings(&self) -> Result<Option<SavedPrivateBindings>, FusionError> {
+        let store = lock(&self.runner.0.store)?;
+        current(&store, &self.project, &self.stamp)?;
+        project_storage::open_private_bindings(&store, &self.project.project_id)
+    }
+    pub(super) fn matches_input(&self, key: &str, digest: &str) -> bool {
+        self.stamp
+            .input_hashes
+            .get(key)
+            .is_some_and(|expected| expected == digest)
+    }
     /// Synchronous Packer/library scaffold, already running on the runner's blocking
     /// worker. G calls the library here and uses this context at cancellation points.
     pub fn blocking_library<T>(
@@ -890,6 +906,12 @@ impl JobContext {
         tx.execute("INSERT INTO creator_checkpoint_results(checkpoint_id,job_id,evidence) VALUES(?1,?2,?3)", params![checkpoint.checkpoint_id,self.job_id,output.evidence]).map_err(|_| io())?;
         job.progress.checkpoint_id = Some(checkpoint.checkpoint_id.clone());
         job.checkpoints.push(checkpoint.clone());
+        // A durable Build release is terminal. Cancellation or an edit after this
+        // transaction must not turn a successfully published release into a failure.
+        if receipt_backed && job.progress.kind == CreatorJobKind::Build {
+            job.progress.status = CreatorJobStatus::Completed;
+            job.progress.phase = "completed".into();
+        }
         persist(&tx, &mut job, &token)?;
         tx.commit().map_err(|_| io())?;
         (self.runner.0.sink)(job.progress);

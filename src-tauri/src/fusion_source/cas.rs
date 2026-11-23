@@ -309,6 +309,12 @@ fn path_contains(parent: &Path, child: &Path) -> bool {
     }
 }
 
+/// Hash a plain directory using the same checked inventory encoding as CAS import.
+pub(crate) fn directory_digest(root: &Path) -> Result<String, FusionError> {
+    let _root = fs_safety::guard(root)?;
+    inventory_digest(&inventory_directory(root)?)
+}
+
 fn inventory_directory(root: &Path) -> Result<Vec<CasFile>, FusionError> {
     fs_safety::list_plain_files(root)?
         .into_iter()

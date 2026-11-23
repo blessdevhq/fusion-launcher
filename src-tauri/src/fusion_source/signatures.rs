@@ -351,7 +351,7 @@ fn create_private_key(path: &Path) -> std::io::Result<std::fs::File> {
     windows_key_file::create(path)
 }
 
-pub(super) fn create_private_directory(path: &Path) -> std::io::Result<()> {
+pub(crate) fn create_private_directory(path: &Path) -> std::io::Result<()> {
     #[cfg(windows)]
     {
         windows_key_file::create_directory(path)
