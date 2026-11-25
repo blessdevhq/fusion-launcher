@@ -14,6 +14,7 @@ use crate::fusion_creator::declarative::{
 };
 use serde::{Deserialize, Serialize};
 
+use super::adapters::Cancellation;
 use crate::fusion_creator::projection::{
     resolve_projection, ProjectionLayer, ProjectionRequest, ProjectionSemantics,
 };
@@ -983,6 +984,38 @@ impl WorkspaceAssembler {
         }
     }
 
+    /// Keep the active workspace leased while reading saves and publishing a copy.
+    /// A damaged game executable must not prevent copying otherwise owned saves.
+    pub(super) fn backup_saves(
+        &self,
+        expected_snapshot_id: &str,
+        cancel: &Cancellation,
+    ) -> Result<(), FusionError> {
+        let _lock = self.lock()?;
+        cancel.check()?;
+        let state = self.state()?;
+        let active = state
+            .active
+            .as_ref()
+            .filter(|reference| reference.id == expected_snapshot_id)
+            .ok_or_else(|| {
+                FusionError::new(
+                    ErrorCode::SnapshotConflict,
+                    "The active installation changed. Refresh and retry the backup.",
+                )
+            })?;
+        let snapshot = self.read_owned_snapshot(active)?;
+        if snapshot.persistence.bindings.is_empty() {
+            return Err(FusionError::new(
+                ErrorCode::PersistenceConflict,
+                "This installation has no managed save paths.",
+            )
+            .with_detail("reason", "no_save_files"));
+        }
+        let persistence = PersistenceManager::open(&self.library_root, &self.game)?;
+        persistence.snapshot_manually(&snapshot.workspace_root, &snapshot.persistence, cancel)
+    }
+
     /// Binary rollback only swaps existing validated snapshots. Saves are never
     /// restored implicitly, and a dynamic provider is never queried again.
     pub fn rollback(&self) -> Result<AssembledWorkspace, FusionError> {
@@ -1387,6 +1420,17 @@ impl WorkspaceAssembler {
     }
 
     fn read_snapshot(&self, reference: &SnapshotRef) -> Result<WorkspaceSnapshot, FusionError> {
+        let snapshot = self.read_owned_snapshot(reference)?;
+        self.validate_request(&snapshot.manifest, &snapshot.plan, &snapshot.inputs)?;
+        Ok(snapshot)
+    }
+
+    /// Establish snapshot ownership without opening game payloads. This does
+    /// not validate the build or grant a launch lease.
+    fn read_owned_snapshot(
+        &self,
+        reference: &SnapshotRef,
+    ) -> Result<WorkspaceSnapshot, FusionError> {
         fs_safety::validate_relative_path(&reference.id)?;
         let allowed =
             std::iter::once(self.control_root.join("snapshots")).chain(self.external_root.clone());
@@ -1429,7 +1473,6 @@ impl WorkspaceAssembler {
                 "Snapshot metadata identity is invalid.",
             ));
         }
-        self.validate_request(&snapshot.manifest, &snapshot.plan, &snapshot.inputs)?;
         Ok(snapshot)
     }
 

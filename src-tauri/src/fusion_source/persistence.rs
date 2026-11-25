@@ -4,14 +4,18 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File, OpenOptions};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use chrono::{DateTime, SecondsFormat};
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 
+use super::adapters::Cancellation;
 use super::canonical::QualifiedGameId;
+use super::dto::{SaveSnapshotInventory, SaveSnapshotSummary};
 use super::errors::{ErrorCode, FusionError};
 use super::fs_safety;
 use super::schema::PersistenceSpec;
@@ -61,13 +65,8 @@ pub struct PersistenceManager {
 
 impl PersistenceManager {
     pub fn open(library_root: &Path, game: &QualifiedGameId) -> Result<Self, FusionError> {
-        let source = safe_id(&game.source_id)?;
-        let game = safe_id(&game.game_id)?;
+        let root = library_root.join(persistence_path(game)?);
         let _library = fs_safety::guard(library_root)?;
-        let root = library_root
-            .join(".fusion-source/persistence")
-            .join(source)
-            .join(game);
         let _root = fs_safety::ensure_directory(&root)?;
         let _data = fs_safety::ensure_directory(&root.join("data"))?;
         let _snapshots = fs_safety::ensure_directory(&root.join("snapshots"))?;
@@ -396,12 +395,34 @@ impl PersistenceManager {
     /// Complete this backup before activating a replacement binary workspace.
     /// An interrupted copy remains under an incomplete name and is never returned.
     pub fn snapshot_before_update(&self) -> Result<SaveSnapshot, FusionError> {
+        self.create_snapshot(None)
+    }
+
+    pub(super) fn snapshot_manually(
+        &self,
+        workspace: &Path,
+        bindings: &PersistenceBindings,
+        cancel: &Cancellation,
+    ) -> Result<(), FusionError> {
+        self.create_snapshot(Some((workspace, bindings, cancel)))
+            .map(drop)
+    }
+
+    fn create_snapshot(
+        &self,
+        manual: Option<(&Path, &PersistenceBindings, &Cancellation)>,
+    ) -> Result<SaveSnapshot, FusionError> {
         let _lock = self.lock()?;
         let id = new_id();
         let staging = self.root.join("snapshots").join(format!("{id}.incomplete"));
         let root = self.root.join("snapshots").join(&id);
         let mut files = BTreeMap::new();
-        copy_tree(&self.root.join("data"), &staging, &mut files, "")?;
+        if let Some((workspace, bindings, cancel)) = manual {
+            cancel.check()?;
+            self.copy_active_saves(workspace, bindings, &staging, &mut files, cancel)?;
+        } else {
+            copy_tree(&self.root.join("data"), &staging, &mut files, "")?;
+        }
         let total_bytes = files
             .values()
             .try_fold(0u64, |total, size| total.checked_add(*size))
@@ -412,11 +433,104 @@ impl PersistenceManager {
             files,
             total_bytes,
         };
-        fs_safety::atomic_write_json(&staging.join(".snapshot.json"), &snapshot)?;
+        let metadata = serde_json::to_vec(&snapshot)
+            .map_err(|error| fs_safety::io_error("Serialize save metadata", &staging, error))?;
+        if manual.is_some() {
+            if snapshot.files.is_empty() {
+                return Err(FusionError::new(
+                    ErrorCode::PersistenceConflict,
+                    "No save files have been written yet.",
+                )
+                .with_detail("reason", "no_save_files"));
+            }
+            if snapshot.files.len() > MAX_SAVE_METADATA_FILES
+                || snapshot.total_bytes > MAX_EXACT_IPC_BYTES
+                || metadata.len() as u64 > MAX_SAVE_METADATA_BYTES
+            {
+                return Err(invalid(
+                    "Save backup exceeds the supported inventory limits.",
+                ));
+            }
+        }
+        fs_safety::atomic_write(&staging.join(".snapshot.json"), &metadata)?;
         let _parent = fs_safety::guard(&self.root.join("snapshots"))?;
+        if let Some((_, _, cancel)) = manual {
+            cancel.check()?;
+        }
         fs::rename(&staging, &snapshot.root)
             .map_err(|error| io_error("publish save snapshot", &snapshot.root, error))?;
         Ok(snapshot)
+    }
+
+    /// Read the current save view without reconciling or changing live slots.
+    fn copy_active_saves(
+        &self,
+        workspace: &Path,
+        bindings: &PersistenceBindings,
+        staging: &Path,
+        files: &mut BTreeMap<String, u64>,
+        cancel: &Cancellation,
+    ) -> Result<(), FusionError> {
+        let _workspace = fs_safety::guard(workspace)?;
+        for binding in &bindings.bindings {
+            cancel.check()?;
+            let parsed = parse_path(&binding.declared_path)?;
+            let relative = format!("{}/{}", parsed.namespace, parsed.relative);
+            let persistent = self.root.join("data").join(&relative);
+            if persistent != binding.persistent_path
+                || binding.workspace_relative
+                    != (parsed.namespace == "workspace").then_some(parsed.relative)
+            {
+                return Err(invalid("Save binding does not belong to this game."));
+            }
+            let _persistent_parent = fs_safety::guard(persistent.parent().expect("save parent"))?;
+            let metadata = fs::symlink_metadata(&persistent)
+                .map_err(|error| io_error("inspect save slot", &persistent, error))?;
+            check_plain(&persistent, &metadata)?;
+            let directory = binding.kind == SavePathKind::Directory;
+            if (directory && !metadata.is_dir()) || (!directory && !metadata.is_file()) {
+                return Err(invalid("Save slot kind changed."));
+            }
+            let target = binding
+                .workspace_relative
+                .as_deref()
+                .map(|path| workspace.join(path));
+            let _target_parent = target
+                .as_deref()
+                .and_then(Path::parent)
+                .map(fs_safety::guard)
+                .transpose()?;
+            let mut source = persistent.as_path();
+            if let Some(target) = &target {
+                let metadata = fs::symlink_metadata(target)
+                    .map_err(|error| io_error("inspect workspace save", target, error))?;
+                if is_reparse(&metadata) {
+                    let actual = fs::read_link(target)
+                        .map_err(|error| io_error("read workspace save link", target, error))?;
+                    let expected = fs::canonicalize(&persistent)
+                        .map_err(|error| io_error("resolve save slot", &persistent, error))?;
+                    if actual != expected && actual != persistent {
+                        return Err(invalid(
+                            "Workspace save link points outside its recorded slot.",
+                        ));
+                    }
+                } else if !directory && metadata.is_file() {
+                    source = target;
+                } else {
+                    return Err(invalid("Workspace save directory or file binding changed."));
+                }
+            }
+            let destination = staging.join(&relative);
+            if directory {
+                copy_tree(source, &destination, files, &relative)?;
+            } else {
+                fs_safety::copy_file(source, &destination)?;
+                let copied = fs::metadata(&destination)
+                    .map_err(|error| io_error("inspect staged save", &destination, error))?;
+                files.insert(relative, copied.len());
+            }
+        }
+        Ok(())
     }
 
     fn lock(&self) -> Result<PersistenceLock, FusionError> {
@@ -436,6 +550,179 @@ impl PersistenceManager {
             .map_err(|error| io_error("lock saves", &path, error))?;
         Ok(PersistenceLock { _file: file })
     }
+}
+
+const MAX_LISTED_SAVE_SNAPSHOTS: usize = 100;
+const MAX_SCANNED_SAVE_ENTRIES: usize = 4096;
+const MAX_READ_SAVE_METADATA: usize = 256;
+const MAX_SAVE_METADATA_BYTES: u64 = 1024 * 1024;
+const MAX_SAVE_METADATA_FILES: usize = 10_000;
+const MAX_EXACT_IPC_BYTES: u64 = (1 << 53) - 1;
+
+fn persistence_path(game: &QualifiedGameId) -> Result<PathBuf, FusionError> {
+    Ok(Path::new(".fusion-source")
+        .join("persistence")
+        .join(safe_id(&game.source_id)?)
+        .join(safe_id(&game.game_id)?))
+}
+
+/// List only published metadata. Never open the persistence manager, lock save
+/// writers, or resolve paths from a metadata document.
+pub(super) fn list_save_snapshots(
+    library_root: &Path,
+    game: &QualifiedGameId,
+) -> Result<SaveSnapshotInventory, FusionError> {
+    let unavailable = |code| FusionError::new(code, "Cannot read the save backup directory.");
+    let relative = persistence_path(game)
+        .map_err(|error| unavailable(error.code))?
+        .join("snapshots");
+    let mut inventory = SaveSnapshotInventory::default();
+    let mut guard = fs_safety::guard(library_root).map_err(|error| unavailable(error.code))?;
+    let mut snapshots = library_root.to_owned();
+    for part in relative.components() {
+        snapshots.push(part);
+        // Check only a direct child of the guarded directory. A junction with
+        // no snapshots beneath it is unsafe, not a missing inventory.
+        match fs::symlink_metadata(&snapshots) {
+            Ok(metadata) => {
+                fs_safety::check_metadata(&metadata, &snapshots)
+                    .map_err(|error| unavailable(error.code))?;
+                if !metadata.is_dir() {
+                    return Err(unavailable(ErrorCode::InvalidPath));
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(inventory),
+            Err(_) => return Err(unavailable(ErrorCode::Io)),
+        }
+        // Each guard also protects all ancestors; keep the deepest one live.
+        guard = fs_safety::guard(&snapshots).map_err(|error| unavailable(error.code))?;
+    }
+    let _snapshots_guard = guard;
+
+    let mut entries = fs::read_dir(&snapshots).map_err(|_| unavailable(ErrorCode::Io))?;
+    let mut ids = Vec::new();
+    for entry in entries.by_ref().take(MAX_SCANNED_SAVE_ENTRIES) {
+        let entry = entry.map_err(|_| unavailable(ErrorCode::Io))?;
+        if let Ok(id) = entry.file_name().into_string() {
+            if is_save_snapshot_id(&id) {
+                ids.push(id);
+            }
+        }
+    }
+    // At the directory bound, newest-first applies to the entries encountered,
+    // not to entries outside the scan. Report that the inventory is incomplete.
+    inventory.has_more = entries.next().is_some() || ids.len() > MAX_READ_SAVE_METADATA;
+    ids.sort_unstable_by(|left, right| right.cmp(left));
+    for id in ids.into_iter().take(MAX_READ_SAVE_METADATA) {
+        match read_save_snapshot_summary(&snapshots.join(&id), &id) {
+            Some(summary) if inventory.snapshots.len() < MAX_LISTED_SAVE_SNAPSHOTS => {
+                inventory.snapshots.push(summary);
+            }
+            Some(_) => inventory.has_more = true,
+            None => inventory.skipped_count += 1,
+        }
+    }
+    Ok(inventory)
+}
+
+fn is_save_snapshot_id(id: &str) -> bool {
+    // new_id(): 32 lowercase hexadecimal epoch nanoseconds, then 16 sequence digits.
+    id.len() == 49
+        && id.bytes().enumerate().all(|(index, byte)| {
+            if index == 32 {
+                byte == b'-'
+            } else {
+                byte.is_ascii_digit() || matches!(byte, b'a'..=b'f')
+            }
+        })
+}
+
+fn read_save_snapshot_summary(root: &Path, id: &str) -> Option<SaveSnapshotSummary> {
+    let nanos = u128::from_str_radix(id.split_once('-')?.0, 16).ok()?;
+    let seconds = i64::try_from(nanos / 1_000_000_000).ok()?;
+    if seconds > 253_402_300_799 {
+        return None; // RFC3339 requires a four-digit year.
+    }
+    let created_at = DateTime::from_timestamp(seconds, (nanos % 1_000_000_000) as u32)?;
+    let _entry_guard = fs_safety::guard(root).ok()?;
+    let file = fs_safety::open_read(&root.join(".snapshot.json")).ok()?;
+    let length = file.metadata().ok()?.len();
+    if length > MAX_SAVE_METADATA_BYTES || fs_safety::link_count(&file).ok()? != 1 {
+        return None;
+    }
+    let mut bytes = Vec::with_capacity(length as usize);
+    file.take(MAX_SAVE_METADATA_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    if bytes.len() as u64 != length {
+        return None;
+    }
+    let metadata: SaveSnapshot = serde_json::from_slice(&bytes).ok()?;
+    if metadata.id != id
+        || metadata.files.len() > MAX_SAVE_METADATA_FILES
+        || metadata.total_bytes > MAX_EXACT_IPC_BYTES
+        || !save_snapshot_root_matches(root, &metadata.root)
+    {
+        return None;
+    }
+    let total_bytes = metadata
+        .files
+        .iter()
+        .try_fold(0u64, |total, (name, size)| {
+            fs_safety::validate_relative_path(name).ok()?;
+            total.checked_add(*size)
+        })?;
+    (total_bytes == metadata.total_bytes).then(|| SaveSnapshotSummary {
+        id: id.to_owned(),
+        created_at: created_at.to_rfc3339_opts(SecondsFormat::AutoSi, true),
+        file_count: metadata.files.len(),
+        total_bytes,
+    })
+}
+
+fn save_snapshot_root_matches(expected: &Path, recorded: &Path) -> bool {
+    if expected == recorded {
+        return true;
+    }
+    // Match ID, snapshots, game and source exactly. Canonicalization must not
+    // let two distinct qualified IDs alias each other on case-insensitive disks.
+    if !expected
+        .components()
+        .rev()
+        .take(4)
+        .eq(recorded.components().rev().take(4))
+    {
+        return false;
+    }
+    // Only resolve the guarded directory obtained by listing. A relocated or
+    // copied backup with a stale root is skipped, never followed or rewritten.
+    let Ok(canonical) = expected.canonicalize() else {
+        return false;
+    };
+    if canonical == recorded {
+        return true;
+    }
+    #[cfg(windows)]
+    if let Some(dos) = canonical
+        .to_str()
+        .and_then(|path| path.strip_prefix(r"\\?\"))
+    {
+        // Accept the conventional spelling of exactly this canonical DOS/UNC
+        // path too, without folding case across case-sensitive directories.
+        use std::path::{Component, Prefix};
+        if let Some(Component::Prefix(prefix)) = canonical.components().next() {
+            match prefix.kind() {
+                Prefix::VerbatimDisk(_) => return Path::new(dos) == recorded,
+                Prefix::VerbatimUNC(..) => {
+                    return dos
+                        .strip_prefix(r"UNC\")
+                        .is_some_and(|unc| Path::new(&format!(r"\\{unc}")) == recorded);
+                }
+                _ => {}
+            }
+        }
+    }
+    false
 }
 
 struct PersistenceLock {
@@ -743,6 +1030,192 @@ pub fn unlink_workspace_save_link(link: &Path) -> Result<(), FusionError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const INVENTORY_ROOT: &str = ".fusion-source/persistence/source/game/snapshots";
+
+    fn inventory_game() -> QualifiedGameId {
+        QualifiedGameId {
+            source_id: "source".into(),
+            game_id: "game".into(),
+        }
+    }
+
+    fn inventory_entry(snapshots: &Path, seconds: u64) -> SaveSnapshot {
+        let id = format!("{:032x}-0000000000000000", seconds * 1_000_000_000);
+        SaveSnapshot {
+            root: snapshots.join(&id),
+            id,
+            files: BTreeMap::from([("workspace/example.dat".into(), 12)]),
+            total_bytes: 12,
+        }
+    }
+
+    fn write_inventory_entry(path: &Path, snapshot: &SaveSnapshot) {
+        fs::create_dir_all(path).unwrap();
+        fs::write(
+            path.join(".snapshot.json"),
+            serde_json::to_vec(snapshot).unwrap(),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn save_inventory_missing_tree_does_not_create_it() {
+        let temporary = tempfile::tempdir().unwrap();
+        let library = temporary.path();
+        let listed = list_save_snapshots(library, &inventory_game()).unwrap();
+        assert!(listed.snapshots.is_empty());
+        assert_eq!(listed.skipped_count, 0);
+        assert!(!listed.has_more);
+        assert_eq!(fs::read_dir(library).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn save_inventory_caps_results_and_metadata_reads() {
+        let temporary = tempfile::tempdir().unwrap();
+        let library = temporary.path();
+        let snapshots = library.join(INVENTORY_ROOT);
+        let count = MAX_LISTED_SAVE_SNAPSHOTS as u64 + 1;
+        for seconds in 1..=count {
+            let snapshot = inventory_entry(&snapshots, seconds);
+            write_inventory_entry(&snapshot.root, &snapshot);
+        }
+        let listed = list_save_snapshots(library, &inventory_game()).unwrap();
+        assert_eq!(listed.snapshots.len(), MAX_LISTED_SAVE_SNAPSHOTS);
+        assert_eq!(
+            listed.snapshots[0].id,
+            inventory_entry(&snapshots, count).id
+        );
+        assert_eq!(
+            listed.snapshots.last().unwrap().id,
+            inventory_entry(&snapshots, 2).id
+        );
+        assert!(listed.has_more);
+        assert_eq!(listed.skipped_count, 0);
+
+        for seconds in count + 1..=count + MAX_READ_SAVE_METADATA as u64 + 1 {
+            fs::create_dir(inventory_entry(&snapshots, seconds).root).unwrap();
+        }
+        let listed = list_save_snapshots(library, &inventory_game()).unwrap();
+        assert!(listed.snapshots.is_empty());
+        assert!(listed.has_more);
+        assert_eq!(listed.skipped_count, MAX_READ_SAVE_METADATA);
+    }
+
+    #[test]
+    fn save_inventory_isolates_bad_metadata_and_ignores_unpublished_names() {
+        let temporary = tempfile::tempdir().unwrap();
+        let library = temporary.path();
+        let snapshots = library.join(INVENTORY_ROOT);
+
+        let good = inventory_entry(&snapshots, 1);
+        let mut canonical = inventory_entry(&snapshots, 2);
+        write_inventory_entry(&good.root, &good);
+        fs::create_dir(&canonical.root).unwrap();
+        canonical.root = canonical.root.canonicalize().unwrap();
+        write_inventory_entry(&canonical.root, &canonical);
+
+        let wrong_id = inventory_entry(&snapshots, 3);
+        write_inventory_entry(&wrong_id.root, &good);
+        let wrong_root = inventory_entry(&snapshots, 4);
+        write_inventory_entry(
+            &wrong_root.root,
+            &SaveSnapshot {
+                root: library.join("elsewhere").join(&wrong_root.id),
+                ..wrong_root.clone()
+            },
+        );
+        let mut wrong_total = inventory_entry(&snapshots, 5);
+        wrong_total.total_bytes += 1;
+        write_inventory_entry(&wrong_total.root, &wrong_total);
+        let mut overflow = inventory_entry(&snapshots, 6);
+        overflow
+            .files
+            .insert("workspace/overflow.dat".into(), u64::MAX);
+        write_inventory_entry(&overflow.root, &overflow);
+        let corrupt = inventory_entry(&snapshots, 7);
+        fs::create_dir(&corrupt.root).unwrap();
+        fs::write(corrupt.root.join(".snapshot.json"), b"not JSON").unwrap();
+        let oversized = inventory_entry(&snapshots, 8);
+        write_inventory_entry(&oversized.root, &oversized);
+        OpenOptions::new()
+            .write(true)
+            .open(oversized.root.join(".snapshot.json"))
+            .unwrap()
+            .set_len(2 * 1024 * 1024)
+            .unwrap();
+        let file = inventory_entry(&snapshots, 9);
+        fs::write(file.root, b"not a directory").unwrap();
+        let incomplete = inventory_entry(&snapshots, 10);
+        write_inventory_entry(
+            &snapshots.join(format!("{}.incomplete", incomplete.id)),
+            &incomplete,
+        );
+        write_inventory_entry(&snapshots.join("unrecognized"), &good);
+
+        let metadata = good.root.join(".snapshot.json");
+        let before = (
+            fs::read(&metadata).unwrap(),
+            fs::metadata(&metadata).unwrap().modified().unwrap(),
+        );
+        let listed = list_save_snapshots(library, &inventory_game()).unwrap();
+        assert_eq!(listed.skipped_count, 7);
+        assert!(!listed.has_more);
+        assert_eq!(listed.snapshots.len(), 2);
+        assert_eq!(listed.snapshots[0].id, canonical.id);
+        assert_eq!(listed.snapshots[1].id, good.id);
+        assert_eq!(listed.snapshots[1].created_at, "1970-01-01T00:00:01Z");
+        assert_eq!(listed.snapshots[1].file_count, 1);
+        assert_eq!(listed.snapshots[1].total_bytes, 12);
+        assert_eq!(
+            before,
+            (
+                fs::read(&metadata).unwrap(),
+                fs::metadata(&metadata).unwrap().modified().unwrap()
+            )
+        );
+        assert_eq!(
+            fs::read_dir(snapshots.parent().unwrap()).unwrap().count(),
+            1
+        );
+        // No payload fixture is needed: this only inventories published metadata.
+    }
+
+    #[test]
+    fn save_inventory_rejects_reparse_entries_and_unsafe_parents() {
+        let temporary = tempfile::tempdir().unwrap();
+        let library = temporary.path();
+        let snapshots = library.join(INVENTORY_ROOT);
+        let good = inventory_entry(&snapshots, 1);
+        write_inventory_entry(&good.root, &good);
+        let linked = inventory_entry(&snapshots, 2);
+        let outside = library.join("outside");
+        // Even otherwise valid metadata under the link must not be returned.
+        write_inventory_entry(&outside, &linked);
+        create_directory_link(&outside, &linked.root).unwrap();
+        let hardlinked = inventory_entry(&snapshots, 3);
+        let elsewhere = library.join("elsewhere");
+        write_inventory_entry(&elsewhere, &hardlinked);
+        fs::create_dir(&hardlinked.root).unwrap();
+        fs::hard_link(
+            elsewhere.join(".snapshot.json"),
+            hardlinked.root.join(".snapshot.json"),
+        )
+        .unwrap();
+
+        let listed = list_save_snapshots(library, &inventory_game()).unwrap();
+        assert_eq!(listed.skipped_count, 2);
+        assert_eq!(listed.snapshots.len(), 1);
+        assert_eq!(listed.snapshots[0].id, good.id);
+        unlink_workspace_save_link(&linked.root).unwrap();
+
+        let source = snapshots.parent().unwrap().parent().unwrap();
+        fs::rename(source, library.join("relocated-source")).unwrap();
+        // The target lacks game/snapshots. Checking existence first would hide the link.
+        create_directory_link(&outside, source).unwrap();
+        assert!(list_save_snapshots(library, &inventory_game()).is_err());
+        unlink_workspace_save_link(source).unwrap();
+    }
 
     fn setup() -> (
         tempfile::TempDir,

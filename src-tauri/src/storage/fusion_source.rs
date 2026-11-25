@@ -527,7 +527,10 @@ impl RepositoryStore {
         kind: &str,
     ) -> Result<FusionOperationRecord, FusionError> {
         validate_game(game)?;
-        if !["install", "update", "rollback", "launch", "remove"].contains(&kind) {
+        if !matches!(
+            kind,
+            "install" | "update" | "rollback" | "launch" | "remove" | "saveBackup"
+        ) {
             return Err(FusionError::new(
                 ErrorCode::InvalidManifest,
                 "The Fusion operation kind is invalid.",

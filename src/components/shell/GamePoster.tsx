@@ -60,24 +60,35 @@ export function GamePoster({
   />;
 }
 
-export function FusionGamePoster({ item, onOpen, onFocus }: {
+export function FusionGamePoster({
+  item,
+  compact,
+  focusId,
+  zone = 'library',
+  onOpen,
+  onFocus
+}: {
   item: Extract<UnifiedLibraryItem, { kind: 'fusion_source' }>;
+  compact?: boolean;
+  focusId?: string;
+  zone?: string;
   onOpen: (game: FusionCatalogEntry) => void;
   onFocus: (focusId: string) => void;
 }) {
   const { t } = useI18n();
   return <PosterCard
     game={{ id: item.key, title: item.title, platform: item.platform ?? '', coverImageUrl: item.game.coverUrl ?? undefined }}
-    focusId={item.focusId}
-    zone="library"
-    statusLabel={displayStatusLabel(item.statusLabel, t)}
+    focusId={focusId ?? item.focusId}
+    zone={zone}
+    compact={compact}
+    statusLabel={compact ? shortStatusLabel(item.statusLabel, t) : displayStatusLabel(item.statusLabel, t)}
     statusTone={item.statusTone}
     progressVisible={item.isDownloading}
     progressPercent={item.progressPercent}
     needsSetup={item.needsSetup}
     onOpen={() => onOpen(item.game)}
     onFocus={onFocus}
-    testId={`fusion-catalog-${item.game.gameId}`}
+    testId={zone === 'library' ? `fusion-catalog-${item.game.gameId}` : undefined}
   />;
 }
 

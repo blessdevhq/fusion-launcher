@@ -440,6 +440,8 @@ export function SettingsModal({
   };
 
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    // Keep dialog keyboard events out of the shell's global navigation.
+    event.stopPropagation();
     if (event.key === 'Escape') {
       event.preventDefault();
       onClose();

@@ -256,6 +256,26 @@ impl ServiceEnvironment {
 }
 
 impl FusionService {
+    /// Query the recorded installation without opening a service for any root.
+    pub fn game_list_save_snapshots(
+        storage: &dyn FusionStorage,
+        game: &QualifiedGameId,
+    ) -> Result<SaveSnapshotInventory, FusionError> {
+        let Some(record) = storage
+            .get_installation(game)?
+            .filter(|record| record.active_snapshot_id.is_some())
+        else {
+            return Ok(SaveSnapshotInventory::default());
+        };
+        let root = record.library_root.as_deref().ok_or_else(|| {
+            FusionError::new(
+                ErrorCode::PersistenceConflict,
+                "The active installation has no recorded library root.",
+            )
+        })?;
+        super::persistence::list_save_snapshots(Path::new(root), game)
+    }
+
     pub fn open(
         library_root: &Path,
         storage: Arc<dyn FusionStorage>,
@@ -1129,7 +1149,14 @@ impl FusionService {
         let user_layers = manifest
             .layers
             .values()
-            .filter(|layer| selected.contains(&layer.id))
+            .filter(|layer| {
+                selected.contains(&layer.id)
+                    || (layer.optional
+                        && matches!(
+                            layer.kind,
+                            LayerKind::Addon | LayerKind::Mod | LayerKind::ShaderCache
+                        ))
+            })
             .filter(|layer| {
                 !crate::fusion_creator::declarative::runtime::descriptor(&manifest).is_some_and(
                     |program| {
@@ -1149,6 +1176,8 @@ impl FusionService {
                     archive,
                 } => Some(UserLayerRequirement {
                     layer_id: layer.id.clone(),
+                    title: layer.title.clone(),
+                    optional: layer.optional,
                     instructions: instructions.clone(),
                     archive: enum_string(archive),
                     raw_path_required: *archive == ArchiveFormat::Raw,
@@ -1817,9 +1846,11 @@ impl FusionService {
                         return Err(FusionError::new(
                             ErrorCode::InvalidPath,
                             "User imports require an absolute selected path.",
-                        ));
+                        )
+                        .with_detail("layerId", id));
                     }
-                    let raw = raw_path(layer, &request)?;
+                    let raw = raw_path(layer, &request)
+                        .map_err(|error| error.with_detail("layerId", id))?;
                     let layer = layer.clone();
                     let library = self.inner.library_root.clone();
                     let directory = path.is_dir();
@@ -1848,7 +1879,8 @@ impl FusionService {
                         }
                     })
                     .await
-                    .map_err(|_| internal_error())??;
+                    .map_err(|_| internal_error())?
+                    .map_err(|error| error.with_detail("layerId", id))?;
                     inputs.insert(id.clone(), input);
                 }
                 LayerSource::Remote { mirrors, .. } => {
@@ -2011,6 +2043,44 @@ fn raw_path(
 }
 
 impl FusionService {
+    pub async fn game_create_save_snapshot(
+        &self,
+        game: &QualifiedGameId,
+    ) -> Result<OperationProgress, FusionError> {
+        let (owner, cancel) = self.begin_operation(game, "saveBackup")?;
+        let service = self.clone();
+        let game = game.clone();
+        // Keep operation ownership even if the IPC caller stops waiting.
+        tokio::task::spawn_blocking(move || {
+            let result = (|| {
+                cancel.check()?;
+                let record = service.inner.storage.get_installation(&game)?;
+                let (record, snapshot_id) = record
+                    .as_ref()
+                    .and_then(|record| record.active_snapshot_id.as_deref().map(|id| (record, id)))
+                    .ok_or_else(|| {
+                        FusionError::new(
+                            ErrorCode::SnapshotNotFound,
+                            "Install the game before making a save backup.",
+                        )
+                    })?;
+                if record.library_root.as_deref().map(Path::new) != Some(service.library_root()) {
+                    return Err(FusionError::new(
+                        ErrorCode::PersistenceConflict,
+                        "The backup must use the active installation's recorded library root.",
+                    ));
+                }
+                service.progress(&game, &owner.id, "saveBackup", None)?;
+                service
+                    .assembler(&game, record.external_workspace_root.as_deref())?
+                    .backup_saves(snapshot_id, &cancel)
+            })();
+            owner.finish(result)
+        })
+        .await
+        .map_err(|_| internal_error())?
+    }
+
     pub async fn game_rollback(
         &self,
         game: &QualifiedGameId,

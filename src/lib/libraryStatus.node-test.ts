@@ -226,6 +226,42 @@ describe('library status derivation', () => {
     );
   });
 
+  it('finds Latin-accented titles without changing the displayed title', () => {
+    const items = buildGameLibraryItems([{ ...game, title: 'Pokémon' }], [], configuredSettings);
+
+    assert.deepEqual(
+      searchAndSortLibraryItems(items, 'all', 'pokemon', 'title').map((item) => item.game.title),
+      ['Pokémon']
+    );
+  });
+
+  it('matches compact titles while preserving status filters', () => {
+    const items = buildGameLibraryItems([
+      { ...game, title: 'Sky-Racer!!' },
+      { ...secondGame, title: 'Spider-Man' }
+    ], [status({ installed: true })], configuredSettings);
+
+    for (const query of ['skyracer', 'sky racer', 'sky-racer']) {
+      assert.deepEqual(searchAndSortLibraryItems(items, 'ready', query, 'title').map((item) => item.game.id), ['repo::game']);
+    }
+    assert.deepEqual(searchAndSortLibraryItems(items, 'all', 'spiderman', 'title').map((item) => item.game.id), ['repo::second']);
+    assert.equal(searchAndSortLibraryItems(items, 'installed', 'spiderman', 'title').length, 0);
+    assert.equal(searchAndSortLibraryItems(items, 'all', '---', 'title').length, 2);
+  });
+
+  it('searches normalized metadata without joining separate fields', () => {
+    const items = buildGameLibraryItems([{
+      ...game, title: 'Sky', repositoryName: 'Racer',
+      metadata: { developer: 'Café Studio', publisher: 'Éditeur', series: 'Pokémon', releaseYear: 1996, genres: ['Rôle-playing'], tags: ['Co-op'] }
+    }], [status({ installed: true })], configuredSettings);
+
+    for (const query of ['cafe', 'editeur', 'pokemon 1996', 'role playing', 'coop', 'ready to play']) {
+      assert.equal(searchAndSortLibraryItems(items, 'ready', query, 'title').length, 1, query);
+    }
+    assert.equal(searchAndSortLibraryItems(items, 'all', 'skyracer', 'title').length, 0);
+    assert.equal(searchAndSortLibraryItems(items, 'all', 'racer sky', 'title').length, 1);
+  });
+
   it('applies library filters before search and sorts status by actionability', () => {
     const items = buildGameLibraryItems(
       [game, secondGame, { ...game, id: 'repo::third', sourceId: 'third', title: 'Beta Run' }],

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { buildGameLibraryItem } from './libraryStatus.ts';
 import { DEFAULT_SETTINGS } from './settings.ts';
-import { buildUnifiedLibraryItems, countUnifiedLibraryItems, libraryPlatformLabel, selectUnifiedLibraryItems } from './unifiedLibrary.ts';
+import { buildUnifiedLibraryItems, countUnifiedLibraryItems, libraryPlatformLabel, selectHomeShowcase, selectUnifiedLibraryItems } from './unifiedLibrary.ts';
 import { fusionGameKey, type FusionCatalogEntry, type FusionOperationProgress } from '../types/fusionSource.ts';
 
 function fusion(gameId: string, overrides: Partial<FusionCatalogEntry> = {}): FusionCatalogEntry {
@@ -85,6 +85,53 @@ describe('unified library browsing', () => {
     assert.equal(libraryPlatformLabel('Switch'), 'Nintendo Switch');
   });
 
+  it('finds unaccented queries in both legacy and Fusion Source titles', () => {
+    const items = buildUnifiedLibraryItems([legacy('old', 'Pokémon Red', 'gba')], [
+      fusion('new', { title: 'Pokémon Blue', platform: 'gba' })
+    ]);
+
+    assert.deepEqual(
+      selectUnifiedLibraryItems(items, 'all', 'pokemon', 'title').map((item) => item.title),
+      ['Pokémon Blue', 'Pokémon Red']
+    );
+  });
+
+  it('matches compact titles in both domains without bypassing platform or status filters', () => {
+    const items = buildUnifiedLibraryItems([legacy('old', 'Sky-Racer!!', 'gba')], [
+      fusion('new', { title: 'Sky Racer', platform: 'pc' })
+    ]);
+    const originalKeys = items.map((item) => item.key);
+
+    for (const query of ['skyracer', 'sky racer', 'sky-racer']) {
+      assert.equal(selectUnifiedLibraryItems(items, 'all', query, 'title').length, 2, query);
+    }
+    assert.deepEqual(selectUnifiedLibraryItems(items, 'ready', 'skyracer', 'title').map((item) => item.kind), ['legacy']);
+    assert.deepEqual(selectUnifiedLibraryItems(items, 'all', 'skyracer', 'title', 'pc').map((item) => item.kind), ['fusion_source']);
+    assert.equal(selectUnifiedLibraryItems(items, 'installed', 'skyracer', 'title', 'pc').length, 0);
+    assert.equal(selectUnifiedLibraryItems(items, 'all', '!!!', 'title').length, 2);
+    assert.deepEqual(items.map((item) => item.key), originalKeys);
+  });
+
+  it('keeps normalized source and metadata fields separate in the unified index', () => {
+    const old = legacy('old', 'Sky');
+    old.game.repositoryName = 'Racer';
+    old.game.metadata = { developer: 'Café Studio', publisher: 'Éditeur', series: 'Pokémon', releaseYear: 1996, genres: ['Rôle-playing'], tags: ['Co-op'] };
+    const items = buildUnifiedLibraryItems([old], [fusion('new', { title: 'Sky', sourceName: 'Racer' })]);
+
+    assert.equal(selectUnifiedLibraryItems(items, 'all', 'skyracer', 'title').length, 0);
+    assert.equal(selectUnifiedLibraryItems(items, 'all', 'racer sky', 'title').length, 2);
+    for (const query of ['cafe', 'editeur', 'pokemon 1996', 'role playing', 'coop', 'ready to play']) {
+      assert.deepEqual(selectUnifiedLibraryItems(items, 'all', query, 'title').map((item) => item.kind), ['legacy'], query);
+    }
+  });
+
+  it('preserves Cyrillic distinctions in the unified library', () => {
+    const items = buildUnifiedLibraryItems([legacy('old', 'Йоши')], [fusion('new', { title: 'Иоши' })]);
+
+    assert.deepEqual(selectUnifiedLibraryItems(items, 'all', 'йоши', 'title').map((item) => item.kind), ['legacy']);
+    assert.deepEqual(selectUnifiedLibraryItems(items, 'all', 'иоши', 'title').map((item) => item.kind), ['fusion_source']);
+  });
+
   it('downgrades known blocked snapshots without disabling a ready installation after a failed update', () => {
     const game = fusion('ready', { installed: true, readyToPlay: true, activeSnapshotId: 'snapshot', updateAvailable: true });
     const failed = { [fusionGameKey(game)]: { operationId: 'op', sourceId: 'source', gameId: 'ready', layerId: null, phase: 'fetch', status: 'failed', sequence: 9, error: null } };
@@ -94,5 +141,46 @@ describe('unified library browsing', () => {
     const blocked = buildUnifiedLibraryItems([], [game], failed, new Set([fusionGameKey(game)]));
     assert.equal(selectUnifiedLibraryItems(blocked, 'ready', '', 'status').length, 0);
     assert.equal(selectUnifiedLibraryItems(blocked, 'missing', '', 'status').length, 1);
+  });
+
+  it('builds home showcase from legacy, fusion-only, and mixed libraries with key deduplication', () => {
+    const legacyOnly = buildUnifiedLibraryItems([
+      legacy('not-ready', 'Alpha', 'nes', false),
+      legacy('ready', 'Beta', 'snes', true)
+    ], []);
+    const legacyShowcase = selectHomeShowcase(legacyOnly);
+    assert.equal(legacyShowcase.heroItem?.key, 'legacy:ready');
+    assert.deepEqual(legacyShowcase.explore.map((item) => item.key), ['legacy:not-ready']);
+    assert.deepEqual(legacyShowcase.needsSetup.map((item) => item.key), ['legacy:not-ready']);
+
+    const fusionOnly = buildUnifiedLibraryItems([], [
+      fusion('not-installed', { title: 'Uninstalled' }),
+      fusion('ready-fusion', { title: 'Ready Fusion', installed: true, readyToPlay: true, activeSnapshotId: 'snap-1' })
+    ]);
+    const fusionShowcase = selectHomeShowcase(fusionOnly);
+    assert.equal(fusionShowcase.heroItem?.key, 'fusion_source:source::ready-fusion');
+    assert.deepEqual(fusionShowcase.explore.map((item) => item.key), ['fusion_source:source::not-installed']);
+    assert.equal(fusionShowcase.recent.length, 2);
+
+    const downloadingFusion = fusion('dl-fusion', { title: 'Downloading Fusion' });
+    const mixed = buildUnifiedLibraryItems([
+      legacy('l1', 'Legacy Ready', 'nes', true),
+      legacy('l2', 'Legacy Needs Setup', 'switch', false)
+    ], [
+      fusion('f1', { title: 'Fusion Ready', installed: true, readyToPlay: true, activeSnapshotId: 'snap-f1' }),
+      downloadingFusion
+    ], {
+      [fusionGameKey(downloadingFusion)]: {
+        operationId: 'op-1', sourceId: 'source', gameId: 'dl-fusion', layerId: null,
+        phase: 'fetch', status: 'running', sequence: 1, error: null
+      }
+    });
+    const mixedShowcase = selectHomeShowcase(mixed, 12);
+    assert.equal(mixedShowcase.heroItem?.key, 'legacy:l1');
+    assert.equal(mixedShowcase.explore[0]?.key, 'fusion_source:source::f1');
+    assert.equal(new Set(mixedShowcase.explore.map((item) => item.key)).size, mixedShowcase.explore.length);
+    assert.deepEqual(mixedShowcase.downloads.map((item) => item.key), ['fusion_source:source::dl-fusion']);
+    assert.deepEqual(mixedShowcase.needsSetup.map((item) => item.key), ['legacy:l2']);
+    assert.equal(mixedShowcase.recent.length, 4);
   });
 });

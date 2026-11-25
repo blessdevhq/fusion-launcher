@@ -1,4 +1,4 @@
-import { fusionGameKey, type FusionCatalogEntry, type FusionCrashReport, type FusionGameOptions, type FusionGameState, type FusionInstallInput, type FusionOperationProgress, type FusionSourcePreview, type FusionSourceSummary } from '../types/fusionSource.ts';
+import { fusionGameKey, type FusionCatalogEntry, type FusionCrashReport, type FusionGameOptions, type FusionGameState, type FusionInstallInput, type FusionOperationProgress, type FusionSaveSnapshotInventory, type FusionSourcePreview, type FusionSourceSummary } from '../types/fusionSource.ts';
 
 export const FUSION_PREVIEW_URL = 'https://demo.fusion.invalid/index.json';
 const gameIds = ['runtime-demo', 'overlay-demo', 'coop-demo', 'repair-demo'];
@@ -12,6 +12,7 @@ let attempt = 0;
 const completions = new Map<string, (event: FusionOperationProgress) => void>();
 const reportIds = new Set(['preview-crash']);
 const failedRepairs = new Set<string>();
+const manualSaveSnapshots = new Map<string, FusionSaveSnapshotInventory['snapshots']>();
 
 function fixture(gameId: string): FusionGameState {
   const blocked = gameId === 'overlay-demo';
@@ -29,7 +30,10 @@ function fixture(gameId: string): FusionGameState {
     defaultRuntimeChannel: 'pinned', externalWorkspaceRoot: repair ? 'D:/Fusion/Workspaces/recovery' : null,
     addons: [{ id: 'shader-cache', title: 'Shader cache', description: 'Precompiled shaders reduce loading stutter.', kind: 'shader_cache', enabled: true }, { id: 'coop', title: null, description: null, kind: 'addon', enabled: false }],
     runtimeChannels: ['pinned', 'dynamic'],
-    userLayers: gameId === 'coop-demo' ? [{ layerId: 'base', instructions: 'Choose your own game files. Preview uses a simulated local directory.', archive: 'raw', rawPathRequired: true }] : [],
+    userLayers: gameId === 'coop-demo' ? [
+      { layerId: 'base', title: 'Your game files', optional: false, instructions: 'Choose your own game files. Preview uses a simulated local directory.', archive: 'raw', rawPathRequired: true },
+      { layerId: 'coop', title: 'Cooperative content', optional: true, instructions: 'Only needed when the cooperative layer is enabled.', archive: 'zip', rawPathRequired: false },
+    ] : [],
     executables: installed ? [{ path: 'runtime/engine.exe', blake3: 'a'.repeat(64), role: 'main_executable', trusted: true }, { path: 'runtime/core.dll', blake3: 'c'.repeat(64), role: 'core_library', trusted: true }] : [],
     blockers: blocked ? [{ code: 'missing_capability', message: 'This game requires vfs.overlay_mount.v2. No compatible fallback is declared.', details: { capability: 'vfs.overlay_mount.v2' } }] : repair ? [{ code: 'corrupted_critical_binary', message: 'The runtime binary differs from the approved snapshot.', details: { path: 'runtime/core.dll' } }] : [],
     warnings: gameId === 'runtime-demo' ? ['Shader cache is optional and may be rebuilt by the runtime.'] : [],
@@ -105,6 +109,39 @@ export const fusionPreviewApi = {
     game.ready = game.ready && !game.operation;
     return game;
   },
+  async listSaveSnapshots(sourceId: string, gameId: string): Promise<FusionSaveSnapshotInventory> {
+    const game = state(sourceId, gameId);
+    const automatic = gameId === 'runtime-demo' ? [
+      ...(game.activeVersion === '1.1.0' ? [
+        { id: 'preview-save-rebuild', createdAt: '2026-10-19T10:00:00Z', fileCount: 4, totalBytes: 8192 },
+      ] : []),
+      { id: 'preview-save-new', createdAt: '2026-10-18T10:00:00Z', fileCount: 3, totalBytes: 4096 },
+      { id: 'preview-save-old', createdAt: '2026-10-17T10:00:00Z', fileCount: 2, totalBytes: 2048 },
+    ] : [];
+    return {
+      snapshots: game.installed ? structuredClone([...(manualSaveSnapshots.get(fusionGameKey(game)) ?? []), ...automatic]
+        .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))) : [],
+      skippedCount: 0,
+      hasMore: false,
+    };
+  },
+  async createSaveSnapshot(sourceId: string, gameId: string): Promise<FusionOperationProgress> {
+    const game = state(sourceId, gameId);
+    if (isActive(game.operation)) throw { code: 'operation_in_progress', message: 'This game already has an active operation.', details: {} };
+    if (!game.installed || !game.activeSnapshotId) throw { code: 'snapshot_conflict', message: 'No active installation to back up.', details: {} };
+    const operationId = `preview-save-backup-${++attempt}`;
+    const event = { operationId, sourceId, gameId, layerId: null, phase: 'saveBackup', sequence: 1, status: 'running', error: null } satisfies FusionOperationProgress;
+    const completion = new Promise<FusionOperationProgress>((resolve) => completions.set(operationId, resolve));
+    emit(event);
+    setTimeout(() => {
+      if (!completions.has(operationId) || game.operation?.operationId !== operationId || game.operation.status !== 'running') return;
+      const key = fusionGameKey(game);
+      const metadata = { id: operationId, createdAt: new Date().toISOString(), fileCount: 3, totalBytes: 4096 };
+      manualSaveSnapshots.set(key, [metadata, ...(manualSaveSnapshots.get(key) ?? [])]);
+      finish({ ...event, phase: 'completed', status: 'completed', sequence: 2 });
+    }, 650);
+    return completion;
+  },
   async setOptions(sourceId: string, gameId: string, options: FusionGameOptions) {
     const game = state(sourceId, gameId);
     game.options = structuredClone(options);
@@ -116,7 +153,8 @@ export const fusionPreviewApi = {
     const game = state(sourceId, gameId);
     const blocked = game.blockers.find((blocker) => !['untrusted_executable', 'missing_injector_dll', 'corrupted_critical_binary', 'local_base_modified'].includes(blocker.code));
     if (blocked) throw blocked;
-    if (!game.installed && game.userLayers.some((layer) => !input.userFiles[layer.layerId])) throw { code: 'missing_layer', message: 'Select the required user files before installing.', details: { layerId: 'base' } };
+    const missing = game.userLayers.find((layer) => (!layer.optional || game.addons.some((addon) => addon.id === layer.layerId && addon.enabled)) && !input.userFiles[layer.layerId]);
+    if (!game.installed && missing) throw { code: 'missing_layer', message: 'Select the required user files before installing.', details: { layerId: missing.layerId } };
     if (game.installed && input.externalWorkspaceRoot && input.externalWorkspaceRoot !== game.externalWorkspaceRoot) throw { code: 'snapshot_conflict', message: 'An installed workspace cannot be moved.', details: {} };
     const operationId = `preview-operation-${++attempt}`;
     const event = { operationId, sourceId, gameId, layerId: 'runtime', phase: 'fetch', sequence: 1, status: 'running', error: null, transfer: { downloadedBytes: 1048576, totalBytes: 8388608, speedBytesPerSecond: 2097152 } } satisfies FusionOperationProgress;
@@ -187,7 +225,7 @@ export const fusionPreviewApi = {
   async sendCrash(_reportId: string, _expectedEndpoint: string): Promise<void> { throw new Error('No telemetry endpoint is configured for this preview source.'); },
   async discardCrash(reportId: string) { reportIds.delete(reportId); states.forEach((game) => { game.crashReportIds = game.crashReportIds.filter((id) => id !== reportId); game.crashReports = game.crashReports.filter((report) => report.reportId !== reportId); }); },
   subscribe(listener: (event: FusionOperationProgress) => void) { listeners.add(listener); return () => { listeners.delete(listener); }; },
-  reset() { connected = false; localDirectory = null; prepareEden = false; states.clear(); completions.clear(); failedRepairs.clear(); reportIds.clear(); reportIds.add('preview-crash'); }
+  reset() { connected = false; localDirectory = null; prepareEden = false; states.clear(); completions.clear(); failedRepairs.clear(); manualSaveSnapshots.clear(); reportIds.clear(); reportIds.add('preview-crash'); }
 };
 
 function isActive(operation: FusionOperationProgress | null) {

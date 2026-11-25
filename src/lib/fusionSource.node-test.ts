@@ -71,6 +71,20 @@ describe('Fusion IPC contracts and source routing', () => {
     assert.equal(calls.some((call) => call.command === 'install_game'), false);
   });
 
+  it('requests backup metadata by qualified game identity alone', async () => {
+    const inventory = { snapshots: [{ id: 'backup', createdAt: '2026-10-18T10:00:00Z', fileCount: 2, totalBytes: 2048 }], skippedCount: 1, hasMore: false };
+    response = () => inventory;
+    assert.deepEqual(await api.fusionGameListSaveSnapshots('source', 'game'), inventory);
+    assert.deepEqual(calls, [{ command: 'fusion_game_list_save_snapshots', args: { game: { sourceId: 'source', gameId: 'game' } } }]);
+  });
+
+  it('creates a local backup by qualified game identity alone and returns terminal progress', async () => {
+    const completed = { operationId: 'backup', sourceId: 'source', gameId: 'game', layerId: null, phase: 'complete', sequence: 2, status: 'completed', error: null } satisfies FusionOperationProgress;
+    response = () => completed;
+    assert.deepEqual(await api.fusionGameCreateSaveSnapshot('source', 'game'), completed);
+    assert.deepEqual(calls, [{ command: 'fusion_game_create_save_snapshot', args: { game: { sourceId: 'source', gameId: 'game' } } }]);
+  });
+
   it('binds the explicit crash send action to the reviewed endpoint', async () => {
     await api.fusionCrashPreview('report');
     assert.deepEqual(calls.map((call) => call.command), ['fusion_crash_preview']);
@@ -81,6 +95,48 @@ describe('Fusion IPC contracts and source routing', () => {
 
 describe('Fusion browser preview', () => {
   beforeEach(() => fusionPreviewApi.reset());
+  it('provides demo backup metadata only for the matching installation', async () => {
+    const inventory = await fusionPreviewApi.listSaveSnapshots('fusion-preview', 'runtime-demo');
+    assert.deepEqual(inventory.snapshots.map(({ fileCount, totalBytes }) => [fileCount, totalBytes]), [[3, 4096], [2, 2048]]);
+    assert.deepEqual(await fusionPreviewApi.listSaveSnapshots('fusion-preview', 'repair-demo'), { snapshots: [], skippedCount: 0, hasMore: false });
+    await fusionPreviewApi.removeGame('fusion-preview', 'runtime-demo');
+    assert.deepEqual((await fusionPreviewApi.listSaveSnapshots('fusion-preview', 'runtime-demo')).snapshots, []);
+  });
+
+  it('publishes only simulated metadata after a qualified preview backup completes', async () => {
+    const snapshots = () => fusionPreviewApi.listSaveSnapshots('fusion-preview', 'runtime-demo');
+    const before = await snapshots();
+    const backup = fusionPreviewApi.createSaveSnapshot('fusion-preview', 'runtime-demo');
+    assert.deepEqual(await snapshots(), before);
+    await assert.rejects(fusionPreviewApi.createSaveSnapshot('fusion-preview', 'runtime-demo'), { code: 'operation_in_progress' });
+    assert.equal((await backup).status, 'completed');
+    const after = await snapshots();
+    const added = after.snapshots.filter(({ id }) => !before.snapshots.some((snapshot) => snapshot.id === id));
+    assert.equal(added.length, 1);
+    assert.deepEqual(Object.keys(added[0]).sort(), ['createdAt', 'fileCount', 'id', 'totalBytes']);
+    assert.deepEqual((await fusionPreviewApi.listSaveSnapshots('fusion-preview', 'repair-demo')).snapshots, []);
+    await assert.rejects(fusionPreviewApi.createSaveSnapshot('other-source', 'runtime-demo'), { code: 'missing_source' });
+  });
+
+  it('does not publish preview metadata when a backup is cancelled', async () => {
+    const before = await fusionPreviewApi.listSaveSnapshots('fusion-preview', 'runtime-demo');
+    const backup = fusionPreviewApi.createSaveSnapshot('fusion-preview', 'runtime-demo');
+    await fusionPreviewApi.cancel('fusion-preview', 'runtime-demo');
+    assert.equal((await backup).status, 'cancelled');
+    assert.deepEqual(await fusionPreviewApi.listSaveSnapshots('fusion-preview', 'runtime-demo'), before);
+  });
+  it('exposes a disabled optional input before options are saved', async () => {
+    const game = await fusionPreviewApi.state('fusion-preview', 'coop-demo');
+    const optional = game.userLayers.find((layer) => layer.layerId === 'coop');
+    assert.equal(optional?.optional, true);
+    assert.equal(optional?.title, 'Cooperative content');
+    assert.equal(game.addons.find((addon) => addon.id === 'coop')?.enabled, false);
+  });
+  it('does not require a disabled optional input during preview installation', async () => {
+    const pending = fusionPreviewApi.install('fusion-preview', 'coop-demo', { userFiles: { base: 'preview://owned/' }, rawPaths: {}, externalWorkspaceRoot: null });
+    await fusionPreviewApi.cancel('fusion-preview', 'coop-demo');
+    assert.equal((await pending).status, 'cancelled');
+  });
   it('connecting a source preserves existing state and does not install a user-file game', async () => {
     const before = await fusionPreviewApi.state('fusion-preview', 'coop-demo');
     assert.deepEqual(await fusionPreviewApi.catalog(), []);

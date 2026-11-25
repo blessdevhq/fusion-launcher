@@ -12,6 +12,7 @@ import {
   X,
 } from 'lucide-react';
 import { api } from '@/lib/api';
+import { useModalFocusTrap } from '@/hooks/useModalFocusTrap';
 import { getUiText } from '@/lib/i18n';
 import { useLauncherStore } from '@/stores/launcherStore';
 import type { Manifest, ManifestGame } from '@/types/manifest';
@@ -62,6 +63,15 @@ export function DeepLinkConfirmModal({ request, onClose }: DeepLinkConfirmModalP
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const activeRequestIdRef = useRef<string>(request.id);
+  const modalRef = useRef<HTMLElement>(null);
+  const closeRef = useRef<HTMLButtonElement>(null);
+
+  const handleClose = () => {
+    activeRequestIdRef.current = '';
+    onClose();
+  };
+
+  useModalFocusTrap({ containerRef: modalRef, onClose: handleClose, initialFocusRef: closeRef });
 
   // Invalidate in-flight operations when request changes
   useEffect(() => {
@@ -98,11 +108,6 @@ export function DeepLinkConfirmModal({ request, onClose }: DeepLinkConfirmModalP
 
     return () => clearTimeout(timer);
   }, [step]);
-
-  const handleClose = () => {
-    activeRequestIdRef.current = '';
-    onClose();
-  };
 
   const handleConfirmSource = async () => {
     const currentId = request.id;
@@ -186,7 +191,7 @@ export function DeepLinkConfirmModal({ request, onClose }: DeepLinkConfirmModalP
 
   return (
     <div className="fixed inset-0 z-[70] grid place-items-center bg-black/75 px-5 backdrop-blur-sm">
-      <section className="w-full max-w-lg rounded-2xl border border-white/12 bg-fusion-surface/95 p-6 shadow-[0_40px_120px_rgba(0,0,0,0.7)]">
+      <section ref={modalRef} role="dialog" aria-modal="true" tabIndex={-1} className="w-full max-w-lg rounded-2xl border border-white/12 bg-fusion-surface/95 p-6 shadow-[0_40px_120px_rgba(0,0,0,0.7)] outline-none">
         <header className="flex items-start gap-4">
           <div className="grid h-10 w-10 shrink-0 place-items-center rounded-md bg-amber-400/15 text-amber-200">
             <ShieldAlert className="h-5 w-5" />
@@ -215,6 +220,7 @@ export function DeepLinkConfirmModal({ request, onClose }: DeepLinkConfirmModalP
             </p>
           </div>
           <button
+            ref={closeRef}
             onClick={handleClose}
             className="grid h-9 w-9 place-items-center rounded-md border border-white/10 text-white/60 transition hover:text-white"
             title={t.cancel}

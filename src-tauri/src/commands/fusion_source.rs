@@ -437,6 +437,27 @@ pub async fn fusion_game_get_state(
         .await
 }
 #[tauri::command]
+pub async fn fusion_game_list_save_snapshots(
+    game: QualifiedGameId,
+    bridge: State<'_, FusionBridge>,
+) -> Result<SaveSnapshotInventory, FusionError> {
+    let storage = bridge.0.storage.clone();
+    blocking(move || FusionService::game_list_save_snapshots(&*storage, &game)).await
+}
+#[tauri::command]
+pub async fn fusion_game_create_save_snapshot(
+    game: QualifiedGameId,
+    state: State<'_, AppState>,
+    bridge: State<'_, FusionBridge>,
+) -> Result<OperationProgress, FusionError> {
+    let _access = bridge.0.local_source_access.read().await;
+    bridge
+        .service(&state, Some(&game))
+        .await?
+        .game_create_save_snapshot(&game)
+        .await
+}
+#[tauri::command]
 pub async fn fusion_game_set_options(
     game: QualifiedGameId,
     options: GameOptions,

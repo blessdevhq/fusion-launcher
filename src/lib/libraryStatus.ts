@@ -1,5 +1,6 @@
 import { getEmulatorConfig, getEmulatorPath, type AppSettings } from './settings.ts';
 import { getUiText } from './i18n.ts';
+import { buildLibrarySearchIndex, librarySearchTerms, matchesLibrarySearch } from './librarySearch.ts';
 import { PLATFORM_LABELS } from '../types/platform.ts';
 import type {
   CatalogGame,
@@ -135,19 +136,16 @@ export function searchAndSortLibraryItems(
   query: string,
   sort: LibrarySort
 ): GameLibraryItem[] {
-  const normalizedQuery = normalizeSearchText(query);
+  const terms = librarySearchTerms(query);
   const filtered = filterLibraryItems(items, filter);
-  const searched = normalizedQuery
-    ? filtered.filter((item) => matchesLibraryQuery(item, normalizedQuery))
+  const searched = terms.length
+    ? filtered.filter((item) => matchesLibraryQuery(item, terms))
     : filtered;
 
   return [...searched].sort((left, right) => compareLibraryItems(left, right, sort));
 }
 
-function matchesLibraryQuery(item: GameLibraryItem, query: string) {
-  const terms = query.split(/\s+/).filter(Boolean);
-  if (terms.length === 0) return true;
-
+function matchesLibraryQuery(item: GameLibraryItem, terms: readonly string[]) {
   const searchableFields = [
     item.game.title,
     item.game.platform,
@@ -163,8 +161,7 @@ function matchesLibraryQuery(item: GameLibraryItem, query: string) {
     ...item.missingRequirements
   ];
 
-  const combined = normalizeSearchText(searchableFields.join(' '));
-  return terms.every((term) => combined.includes(term));
+  return matchesLibrarySearch(buildLibrarySearchIndex(searchableFields), terms);
 }
 
 function compareLibraryItems(left: GameLibraryItem, right: GameLibraryItem, sort: LibrarySort) {
@@ -194,10 +191,6 @@ function statusRank(item: GameLibraryItem) {
 
 function compareStrings(left: string, right: string) {
   return left.localeCompare(right, undefined, { sensitivity: 'base', numeric: true });
-}
-
-function normalizeSearchText(value: string) {
-  return value.trim().toLocaleLowerCase();
 }
 
 function deriveStatusLabel({

@@ -22,6 +22,251 @@ const MANIFEST: &str = "https://example.com/source/game.json";
 const RUNTIME_ONE: &[u8] = b"fixture runtime version one";
 const RUNTIME_TWO: &[u8] = b"fixture runtime version two";
 
+#[tokio::test]
+async fn manual_backup_copies_current_detached_save_offline_without_switching_version() {
+    let f = fixture();
+    f.service.source_add(INDEX).await.unwrap();
+    f.service
+        .game_install(&f.game, f.request.clone())
+        .await
+        .unwrap();
+    let original = active(&f);
+    let save = original.workspace_root.join("saves/progress.dat");
+    fs::remove_file(&save).unwrap();
+    fs::write(&save, b"latest detached save").unwrap();
+    f.transport.calls.lock().unwrap().clear();
+
+    let operation = f.service.game_create_save_snapshot(&f.game).await.unwrap();
+    assert_eq!(operation.status, "completed");
+    let inventory = FusionService::game_list_save_snapshots(&*f.storage, &f.game).unwrap();
+    assert_eq!(inventory.snapshots.len(), 1);
+    let id = &inventory.snapshots[0].id;
+    let backup = f.service.library_root().join(format!(
+        ".fusion-source/persistence/{}/{}/snapshots/{id}/workspace/saves/progress.dat",
+        f.game.source_id, f.game.game_id
+    ));
+    assert_eq!(fs::read(backup).unwrap(), b"latest detached save");
+    assert_eq!(active(&f).id, original.id);
+    assert_eq!(fs::read(save).unwrap(), b"latest detached save");
+    assert_eq!(
+        fs::read(&original.persistence.bindings[0].persistent_path).unwrap(),
+        b"initial save",
+        "creating a backup must not overwrite the existing persistent slot"
+    );
+    assert!(f.transport.calls.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn manual_backup_survives_missing_runtime_cache_without_enabling_launch() {
+    use super::cas::CasStore;
+    use super::layers::LayerInput;
+    use super::workspace::WorkspaceAssembler;
+
+    let f = fixture();
+    f.service.source_add(INDEX).await.unwrap();
+    f.service
+        .game_install(&f.game, f.request.clone())
+        .await
+        .unwrap();
+    let original = active(&f);
+    let LayerInput::Cas { digest, .. } = &original.inputs["runtime"] else {
+        panic!("fixture runtime must live in CAS");
+    };
+    let cas = CasStore::open(f.service.library_root()).unwrap();
+    let runtime = cas.get(digest).unwrap();
+    fs::rename(
+        runtime.root.parent().unwrap(),
+        f._temporary.path().join("unavailable-runtime-cache"),
+    )
+    .unwrap();
+
+    let workspace = WorkspaceAssembler::open(f.service.library_root(), &f.game).unwrap();
+    assert!(
+        workspace.active().is_err(),
+        "launch lease still requires CAS"
+    );
+    let result = f.service.game_create_save_snapshot(&f.game).await.unwrap();
+    assert_eq!(result.status, "completed");
+    let history = FusionService::game_list_save_snapshots(&*f.storage, &f.game).unwrap();
+    assert_eq!(history.snapshots.len(), 1);
+    let id = &history.snapshots[0].id;
+    let backup = f.service.library_root().join(format!(
+        ".fusion-source/persistence/{}/{}/snapshots/{id}/workspace/saves/progress.dat",
+        f.game.source_id, f.game.game_id
+    ));
+    assert_eq!(fs::read(backup).unwrap(), b"initial save");
+    assert_eq!(active(&f).id, original.id);
+}
+
+#[tokio::test]
+async fn manual_backup_rejects_an_active_workspace_lease() {
+    use super::workspace::WorkspaceAssembler;
+
+    let f = fixture();
+    f.service.source_add(INDEX).await.unwrap();
+    f.service
+        .game_install(&f.game, f.request.clone())
+        .await
+        .unwrap();
+    let assembler = WorkspaceAssembler::open(f.service.library_root(), &f.game).unwrap();
+    let lease = assembler.active().unwrap().unwrap();
+    let error = f
+        .service
+        .game_create_save_snapshot(&f.game)
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, ErrorCode::OperationInProgress);
+    assert!(
+        FusionService::game_list_save_snapshots(&*f.storage, &f.game)
+            .unwrap()
+            .snapshots
+            .is_empty()
+    );
+    drop(lease);
+    assert_eq!(
+        f.service
+            .game_create_save_snapshot(&f.game)
+            .await
+            .unwrap()
+            .status,
+        "completed"
+    );
+}
+
+#[tokio::test]
+async fn manual_backup_does_not_publish_an_empty_save_directory() {
+    let f = fixture();
+    let mut wire = document("1", RUNTIME_ONE);
+    wire["persistence"]["saves_paths"] = json!(["workspace/new-saves"]);
+    f.transport.set(INDEX, index(&wire));
+    f.transport
+        .set(MANIFEST, serde_json::to_vec(&wire).unwrap());
+    f.service.source_add(INDEX).await.unwrap();
+    f.service
+        .game_install(&f.game, f.request.clone())
+        .await
+        .unwrap();
+    let error = f
+        .service
+        .game_create_save_snapshot(&f.game)
+        .await
+        .unwrap_err();
+    assert_eq!(error.details.get("reason"), Some(&json!("no_save_files")));
+    assert!(
+        FusionService::game_list_save_snapshots(&*f.storage, &f.game)
+            .unwrap()
+            .snapshots
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn manual_backup_copies_an_owned_save_directory_but_refuses_its_replacement() {
+    let f = fixture();
+    let mut wire = document("1", RUNTIME_ONE);
+    wire["persistence"]["saves_paths"] = json!(["workspace/saves"]);
+    f.transport.set(INDEX, index(&wire));
+    f.transport
+        .set(MANIFEST, serde_json::to_vec(&wire).unwrap());
+    f.service.source_add(INDEX).await.unwrap();
+    f.service
+        .game_install(&f.game, f.request.clone())
+        .await
+        .unwrap();
+    let save_dir = active(&f).workspace_root.join("saves");
+    fs::write(save_dir.join("progress.dat"), b"current managed save").unwrap();
+    f.service.game_create_save_snapshot(&f.game).await.unwrap();
+    let before = FusionService::game_list_save_snapshots(&*f.storage, &f.game).unwrap();
+    assert_eq!(before.snapshots.len(), 1);
+    assert_eq!(before.snapshots[0].file_count, 1);
+    super::persistence::unlink_workspace_save_link(&save_dir).unwrap();
+    fs::create_dir(&save_dir).unwrap();
+    fs::write(save_dir.join("progress.dat"), b"new unbound save").unwrap();
+
+    assert_eq!(
+        f.service
+            .game_create_save_snapshot(&f.game)
+            .await
+            .unwrap_err()
+            .code,
+        ErrorCode::PersistenceConflict
+    );
+    let after = FusionService::game_list_save_snapshots(&*f.storage, &f.game).unwrap();
+    assert_eq!(after.snapshots.len(), 1);
+    assert_eq!(after.snapshots[0].id, before.snapshots[0].id);
+}
+
+#[tokio::test]
+async fn save_inventory_uses_only_the_active_qualified_installation_root() {
+    use super::persistence::PersistenceManager;
+
+    let f = fixture();
+    let other_root = f._temporary.path().join("other-library");
+    fs::create_dir(&other_root).unwrap();
+    let stray = PersistenceManager::open(&other_root, &f.game).unwrap();
+    stray.snapshot_before_update().unwrap();
+    assert!(
+        FusionService::game_list_save_snapshots(&*f.storage, &f.game)
+            .unwrap()
+            .snapshots
+            .is_empty()
+    );
+
+    f.transport.set(INDEX, index(&document("1", RUNTIME_ONE)));
+    f.transport.set(
+        MANIFEST,
+        serde_json::to_vec(&document("1", RUNTIME_ONE)).unwrap(),
+    );
+    f.service.source_add(INDEX).await.unwrap();
+    let library = f._temporary.path().join("library");
+    f.storage
+        .bind_installation_root(&f.game, &library, None)
+        .unwrap();
+    let manager = PersistenceManager::open(&library, &f.game).unwrap();
+    let first = manager.snapshot_before_update().unwrap();
+    // Staging without an active installation.
+    assert!(
+        FusionService::game_list_save_snapshots(&*f.storage, &f.game)
+            .unwrap()
+            .snapshots
+            .is_empty()
+    );
+
+    f.service
+        .game_install(&f.game, f.request.clone())
+        .await
+        .unwrap();
+    let second = manager.snapshot_before_update().unwrap();
+    let other_game = QualifiedGameId {
+        source_id: "other-source".into(),
+        game_id: f.game.game_id.clone(),
+    };
+    PersistenceManager::open(&library, &other_game)
+        .unwrap()
+        .snapshot_before_update()
+        .unwrap();
+
+    fs::remove_file(manager.root().join(".lock")).unwrap();
+    let inventory = FusionService::game_list_save_snapshots(&*f.storage, &f.game).unwrap();
+    let snapshots = &inventory.snapshots;
+    assert_eq!(snapshots.len(), 2);
+    assert_eq!(snapshots[0].id, second.id);
+    assert_eq!(snapshots[1].id, first.id);
+    assert_eq!(snapshots[0].file_count, second.files.len());
+    assert_eq!(snapshots[0].total_bytes, second.total_bytes);
+    assert!(!manager.root().join(".lock").exists());
+    assert!(chrono::DateTime::parse_from_rfc3339(&snapshots[0].created_at).is_ok());
+    assert_eq!(
+        serde_json::to_value(&inventory).unwrap(),
+        json!({"snapshots": [
+            {"id": second.id, "createdAt": snapshots[0].created_at,
+             "fileCount": second.files.len(), "totalBytes": second.total_bytes},
+            {"id": first.id, "createdAt": snapshots[1].created_at,
+             "fileCount": first.files.len(), "totalBytes": first.total_bytes}
+        ], "skippedCount": 0, "hasMore": false})
+    );
+}
+
 fn signed_index(bytes: &[u8], key: &ed25519_dalek::SigningKey) -> Vec<u8> {
     let mut index: super::schema::SourceIndex = serde_json::from_slice(bytes).unwrap();
     super::signatures::sign_index(&mut index, key).unwrap();
@@ -435,6 +680,122 @@ async fn catalog_batches_local_readiness_and_applied_options_without_fetching_ma
 }
 
 #[tokio::test]
+async fn setup_lists_disabled_user_shader_without_selecting_it_or_saving_options() {
+    let f = fixture();
+    let mut wire = document("1", RUNTIME_ONE);
+    wire["layers"][2]["title"] = json!("Shader cache");
+    wire["layers"][2]["source"]["instructions"] = json!("Choose your own shader cache.");
+    f.transport.set(INDEX, index(&wire));
+    f.transport
+        .set(MANIFEST, serde_json::to_vec(&wire).unwrap());
+    f.service.source_add(INDEX).await.unwrap();
+
+    let state = f.service.game_get_state(&f.game).await.unwrap();
+    assert_eq!(state.user_layers.len(), 3);
+    assert!(state.options.enabled_addons.is_none());
+    assert!(
+        !state
+            .addons
+            .iter()
+            .find(|addon| addon.id == "shader")
+            .unwrap()
+            .enabled
+    );
+    let serialized = serde_json::to_value(&state).unwrap();
+    let requirements = serialized["userLayers"].as_array().unwrap();
+    for id in ["base", "runtime"] {
+        let requirement = requirements
+            .iter()
+            .find(|layer| layer["layerId"] == id)
+            .unwrap();
+        assert_eq!(requirement["optional"], json!(false));
+        assert_eq!(requirement["title"], Value::Null);
+        assert_eq!(requirement["rawPathRequired"], json!(true));
+    }
+    let shader = requirements
+        .iter()
+        .find(|layer| layer["layerId"] == "shader")
+        .unwrap();
+    assert_eq!(
+        shader,
+        &json!({
+            "layerId": "shader",
+            "title": "Shader cache",
+            "optional": true,
+            "instructions": "Choose your own shader cache.",
+            "archive": "raw",
+            "rawPathRequired": true
+        })
+    );
+
+    // Setup metadata must not require a disabled shader's files during execution.
+    f.service
+        .game_install(&f.game, f.request.clone())
+        .await
+        .unwrap();
+    assert_eq!(active(&f).plan.selected_layers, vec!["base", "runtime"]);
+    let installed = f.service.game_get_state(&f.game).await.unwrap();
+    assert!(installed.options.enabled_addons.is_none());
+    assert!(
+        !installed
+            .addons
+            .iter()
+            .find(|addon| addon.id == "shader")
+            .unwrap()
+            .enabled
+    );
+}
+
+#[tokio::test]
+async fn user_import_path_errors_identify_the_layer() {
+    for relative_selection in [true, false] {
+        let f = fixture();
+        f.service.source_add(INDEX).await.unwrap();
+        let mut request = f.request.clone();
+        if relative_selection {
+            request
+                .user_files
+                .insert("base".into(), "relative.bin".into());
+        } else {
+            request
+                .raw_paths
+                .insert("base".into(), "../escape.bin".into());
+        }
+        let error = f.service.game_install(&f.game, request).await.unwrap_err();
+        assert_eq!(error.details.get("layerId"), Some(&json!("base")));
+    }
+}
+
+#[tokio::test]
+async fn user_import_digest_error_identifies_the_layer_and_preserves_digest_details() {
+    let f = fixture();
+    let mut wire = document("1", RUNTIME_ONE);
+    let expected = hash(b"expected user-owned base");
+    let actual = hash(b"wrong user-owned base");
+    wire["layers"][0]["transport_digest"] = json!({
+        "algorithm": "blake3",
+        "value": expected
+    });
+    f.transport.set(INDEX, index(&wire));
+    f.transport
+        .set(MANIFEST, serde_json::to_vec(&wire).unwrap());
+    f.service.source_add(INDEX).await.unwrap();
+    let file = f._temporary.path().join("wrong-base.bin");
+    fs::write(&file, b"wrong user-owned base").unwrap();
+    let mut request = f.request.clone();
+    request
+        .user_files
+        .insert("base".into(), file.to_string_lossy().into());
+    request.raw_paths.insert("base".into(), "data.bin".into());
+
+    let error = f.service.game_install(&f.game, request).await.unwrap_err();
+    assert_eq!(error.code, ErrorCode::IntegrityViolation);
+    assert_eq!(error.details.get("expected"), Some(&json!(expected)));
+    assert_eq!(error.details.get("actual"), Some(&json!(actual)));
+    assert_eq!(error.details.get("layerId"), Some(&json!("base")));
+}
+
+#[tokio::test]
 async fn adding_source_only_fetches_compact_index_and_manifest_cache_is_hash_bound() {
     let f = fixture();
     let preview = f.service.source_preview(INDEX).await.unwrap();
@@ -454,7 +815,7 @@ async fn adding_source_only_fetches_compact_index_and_manifest_cache_is_hash_bou
     assert!(!catalog[0].installed);
     let first = f.service.game_get_state(&f.game).await.unwrap();
     assert!(!first.installed);
-    assert_eq!(first.user_layers.len(), 2);
+    assert_eq!(first.user_layers.len(), 3);
     assert_eq!(first.addons.len(), 1);
     f.service.game_get_state(&f.game).await.unwrap();
     assert_eq!(
@@ -783,7 +1144,7 @@ async fn source_extends_are_resolved_on_demand_and_cycles_block_only_the_request
     );
     f.service.source_add(INDEX).await.unwrap();
     let state = f.service.game_get_state(&f.game).await.unwrap();
-    assert_eq!(state.user_layers.len(), 2);
+    assert_eq!(state.user_layers.len(), 3);
     base["extends"] = json!("native-game");
     source["games"][1]["manifest_blake3"] = json!(hash(&serde_json::to_vec(&base).unwrap()));
     f.transport.set(INDEX, serde_json::to_vec(&source).unwrap());

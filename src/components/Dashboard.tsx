@@ -26,9 +26,9 @@ import { useCreatorEvents } from '@/hooks/useCreatorEvents';
 import { buildGameLibraryItems, type GameLibraryItem, type LibraryFilter, type LibrarySort } from '@/lib/libraryStatus';
 import { api } from '@/lib/api';
 import { fusionPreviewApi } from '@/lib/fusionPreviewData';
-import { buildUnifiedLibraryItems, selectUnifiedLibraryItems } from '@/lib/unifiedLibrary';
+import { buildUnifiedLibraryItems, countUnifiedLibraryItems, selectUnifiedLibraryItems } from '@/lib/unifiedLibrary';
 import { useFusionSourceStore, isFusionOperationTerminal } from '@/stores/fusionSourceStore';
-import { fusionGameKey, type FusionOperationProgress } from '@/types/fusionSource';
+import { fusionGameKey, type FusionCatalogEntry, type FusionOperationProgress } from '@/types/fusionSource';
 import { displayProductText } from '@/lib/brandText';
 import { isDirectGameDownload } from '@/lib/downloadActions';
 import { getUiText } from '@/lib/i18n';
@@ -52,6 +52,7 @@ interface DashboardProps {
   initialSettings: AppSettings;
   catalog: CatalogGame[];
   repositories: RepositorySummary[];
+  initialHydrated?: boolean;
   message: string | null;
   onDisconnectRepository: (repositoryId: string) => Promise<void>;
   onRefresh: () => Promise<void>;
@@ -61,6 +62,7 @@ export function Dashboard({
   initialSettings,
   catalog,
   repositories,
+  initialHydrated = false,
   message,
   onDisconnectRepository,
   onRefresh
@@ -108,7 +110,9 @@ export function Dashboard({
   const [sourceUrl, setSourceUrl] = useState('');
   const [sourcePreview, setSourcePreview] = useState<RepositoryPreview | null>(null);
   const [busyAction, setBusyAction] = useState<BusyAction>(null);
-  const [dataReady, setDataReady] = useState(false);
+  const [dataReady, setDataReady] = useState(initialHydrated);
+  const initialHydratedRef = useRef(initialHydrated);
+  const lastFocusedElementRef = useRef<HTMLElement | null>(null);
   const [launchFailure, setLaunchFailure] = useState<LaunchFailure | null>(null);
   const [healthReport, setHealthReport] = useState<HealthReport | null>(null);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
@@ -170,32 +174,13 @@ export function Dashboard({
   }, [mergeFusionOperation, refreshLauncherData]);
 
   useEffect(() => {
-    let cancelled = false;
-    const loadPersistedSettings = async () => {
-      try {
-        const persistedSettings = await loadSettings();
-        if (!cancelled) {
-          setSettings(persistedSettings);
-          setSettingsMessage(null);
-        }
-      } catch (error) {
-        if (!cancelled) setSettingsMessage(t.dashboard.messages.settingsLoadError(error));
-      }
-    };
-
-    void loadPersistedSettings();
-    return () => {
-      cancelled = true;
-    };
-  }, [setSettings, t]);
-
-  useEffect(() => {
     document.documentElement.lang = locale;
   }, [locale]);
 
   useEffect(() => {
+    if (initialHydratedRef.current) return;
     void refreshLauncherData();
-  }, [storeCatalog.length, refreshLauncherData]);
+  }, [refreshLauncherData]);
 
   useEffect(() => {
     if (!isTauriRuntime()) return;
@@ -328,7 +313,8 @@ export function Dashboard({
     () => selectUnifiedLibraryItems(unifiedLibraryItems, libraryFilter, librarySearch, librarySort, libraryPlatform),
     [unifiedLibraryItems, libraryFilter, librarySearch, librarySort, libraryPlatform]
   );
-  const homeRails = useMemo(() => composeHomeRails(items, t), [items, t]);
+  const homeRails = useMemo(() => composeHomeRails(unifiedLibraryItems, t), [unifiedLibraryItems, t]);
+  const unifiedCounts = useMemo(() => countUnifiedLibraryItems(unifiedLibraryItems), [unifiedLibraryItems]);
   const notificationAlertKey = useMemo(() => {
     const updateKey = updatePanel.phase === 'available'
       ? `update:${updatePanel.report?.version ?? 'available'}`
@@ -566,6 +552,27 @@ export function Dashboard({
     }
   };
 
+  const launchFusionItem = useCallback(async (game: FusionCatalogEntry) => {
+    const gameKey = fusionGameKey(game);
+    setBusyAction(`play-fusion:${gameKey}`);
+    setLauncherMessage(null);
+    try {
+      await api.fusionGameLaunch(game.sourceId, game.gameId);
+      addActivityEvent({
+        title: t.dashboard.messages.launchSent,
+        detail: game.title,
+        tone: 'success'
+      });
+      await refreshLauncherData();
+    } catch (error) {
+      setLauncherMessage(error instanceof Error ? error.message : String(error));
+      setSelectedGameId(null);
+      setSelectedFusionKey(gameKey);
+    } finally {
+      setBusyAction(null);
+    }
+  }, [addActivityEvent, refreshLauncherData, setSelectedGameId, t.dashboard.messages.launchSent]);
+
   const executePrimaryAction = async (item: GameLibraryItem) => {
     if (item.primaryAction === 'play') return launchItem(item);
     if (item.primaryAction === 'download') return installItem(item);
@@ -638,8 +645,16 @@ export function Dashboard({
       return;
     }
     if (kind === 'fusion-game') {
+      const key = safeDecodeURIComponent(rest[rest.length - 1] ?? '');
+      if (rest[0] === 'hero') {
+        const entry = fusionCatalog.find((game) => fusionGameKey(game) === key);
+        if (entry?.installed && entry.readyToPlay) {
+          void launchFusionItem(entry);
+          return;
+        }
+      }
       setSelectedGameId(null);
-      setSelectedFusionKey(safeDecodeURIComponent(value));
+      setSelectedFusionKey(key);
       return;
     }
     if (kind === 'fusion-library') {
@@ -647,6 +662,10 @@ export function Dashboard({
     }
     if (kind === 'top') {
       if (value === 'refresh') void refreshAll();
+      if (value === 'port-game') {
+        setPortingStudioInitialFile(undefined);
+        setPortingStudioOpen(true);
+      }
       if (value === 'notifications') setNotificationsOpen((open) => !open);
       if (value === 'update-check') {
         setNotificationsOpen(true);
@@ -707,7 +726,7 @@ export function Dashboard({
       openLibraryCollection(collectionTargetForId(value));
       return;
     }
-    if (focusId === 'settings:open') {
+    if (focusId === 'settings:open' || focusId === 'home:settings') {
       setNotificationsOpen(false);
       setSettingsOpen(true);
       return;
@@ -720,20 +739,34 @@ export function Dashboard({
       setActiveView('library');
       return;
     }
-    if (focusId === 'downloads:open') setActiveView('downloads');
-    if (focusId === 'library:open') setActiveView('library');
-  }, [checkAppUpdate, deleteDownload, executePrimaryAction, installAppUpdate, itemsByGameId, launchItem, openLibraryCollection, refreshAll, runAction, setActiveView, setSelectedGameId]);
+    if (focusId === 'downloads:open') {
+      setActiveView('downloads');
+      return;
+    }
+    if (focusId === 'library:open') {
+      setActiveView('library');
+      return;
+    }
+
+    const fallbackElement = document.querySelector<HTMLElement>(`[data-focus-id="${cssEscape(focusId)}"]`);
+    if (fallbackElement && !fallbackElement.hasAttribute('disabled')) {
+      fallbackElement.click();
+    }
+  }, [checkAppUpdate, deleteDownload, executePrimaryAction, fusionCatalog, installAppUpdate, itemsByGameId, launchFusionItem, launchItem, openLibraryCollection, refreshAll, runAction, setActiveView, setSelectedGameId]);
 
   useEffect(() => {
-    document.querySelectorAll<HTMLElement>('[data-focus-active="true"]').forEach((element) => {
-      element.removeAttribute('data-focus-active');
-    });
+    if (lastFocusedElementRef.current && lastFocusedElementRef.current.isConnected) {
+      lastFocusedElementRef.current.removeAttribute('data-focus-active');
+    }
+    lastFocusedElementRef.current = null;
 
     if (!focusedItemId) return;
-    document
-      .querySelector<HTMLElement>(`[data-focus-id="${cssEscape(focusedItemId)}"]`)
-      ?.setAttribute('data-focus-active', 'true');
-  }, [activeView, downloads.length, focusedItemId, items.length, notificationsOpen, selectedGameId, selectedFusionKey, settingsOpen]);
+    const element = document.querySelector<HTMLElement>(`[data-focus-id="${cssEscape(focusedItemId)}"]`);
+    if (element) {
+      element.setAttribute('data-focus-active', 'true');
+      lastFocusedElementRef.current = element;
+    }
+  }, [activeView, focusedItemId, items.length, notificationsOpen, selectedGameId, selectedFusionKey, settingsOpen, portingStudioOpen, launchFailure, pendingDeepLink]);
 
   useGamepad({
     focusedItemId,
@@ -743,15 +776,51 @@ export function Dashboard({
       else focusActivate(id);
     },
     onBack: () => {
-      if (selectedFusionKey) setSelectedFusionKey(null);
+      if (pendingDeepLink) setPendingDeepLink(null);
+      else if (launchFailure) setLaunchFailure(null);
+      else if (portingStudioOpen) {
+        setPortingStudioOpen(false);
+        setPortingStudioInitialFile(undefined);
+      } else if (selectedFusionKey) setSelectedFusionKey(null);
       else if (notificationsOpen) setNotificationsOpen(false);
       else if (selectedGameId) setSelectedGameId(null);
       else if (settingsOpen) setSettingsOpen(false);
       else setActiveView('home');
     },
     onMenu: (focusId) => {
+      if (focusId?.startsWith('fusion-game:')) {
+        const key = safeDecodeURIComponent(focusId.split(':').at(-1) ?? '');
+        if (key) {
+          setSelectedGameId(null);
+          setSelectedFusionKey(key);
+        }
+        return;
+      }
       const gameId = focusId?.startsWith('game:') ? safeDecodeURIComponent(focusId.split(':').at(-1) ?? '') : null;
-      if (gameId) setSelectedGameId(gameId);
+      if (gameId) {
+        setSelectedGameId(gameId);
+        return;
+      }
+      if (activeView === 'library') {
+        document.querySelector<HTMLInputElement>('[data-testid="library-search"]')?.focus();
+      }
+    },
+    onSecondary: (focusId) => {
+      if (activeView !== 'downloads' || !focusId) return;
+      const [kind, ...rest] = focusId.split(':');
+      if (kind !== 'details' && kind !== 'download-action') return;
+      const gameId = safeDecodeURIComponent(rest.at(-1) ?? '');
+      if (!gameId) return;
+      const item = itemsByGameId.get(gameId);
+      const record = downloads.find((download) => download.gameId === gameId) ?? item?.download;
+      if (!record) return;
+      void runAction(`resume:${gameId}`, () => (
+        record.subjectType === 'asset' || record.magnetUri.startsWith('direct:asset:')
+          ? api.downloadAsset(gameId)
+          : isDirectGameDownload(item?.game, record)
+          ? api.startGameDownload(gameId)
+          : api.resumeDownload(gameId)
+      ));
     }
   });
 
@@ -795,8 +864,12 @@ export function Dashboard({
               setNotificationsOpen(false);
             }
           }}
-          games={items}
+          games={unifiedLibraryItems}
           onSelectGame={(gameId) => setSelectedGameId(gameId)}
+          onSelectFusionGame={(game) => {
+            setSelectedGameId(null);
+            setSelectedFusionKey(fusionGameKey(game));
+          }}
           onNavigateToLibrary={(query) => {
             if (query !== undefined) {
               setLibrarySearch(query);
@@ -815,10 +888,15 @@ export function Dashboard({
             loading={!dataReady}
             heroItem={homeRails.heroItem}
             rails={homeRails.rails}
-            collectionItems={items}
+            collectionCounts={unifiedCounts}
             busyAction={busyAction}
             onPrimaryAction={(item) => void executePrimaryAction(item)}
             onOpenDetails={(game) => setSelectedGameId(game.id)}
+            onOpenFusion={(game) => {
+              setSelectedGameId(null);
+              setSelectedFusionKey(fusionGameKey(game));
+            }}
+            onLaunchFusion={(game) => void launchFusionItem(game)}
             onOpenCollection={openLibraryCollection}
             onOpenSettings={() => setSettingsOpen(true)}
             onFocus={setFocusedItemId}

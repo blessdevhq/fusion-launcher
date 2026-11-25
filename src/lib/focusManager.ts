@@ -1,4 +1,5 @@
 export type FocusDirection = 'left' | 'right' | 'up' | 'down';
+export type FocusAction = 'activate' | 'back' | 'menu' | 'secondary';
 
 export type InputOwner = symbol;
 
@@ -42,12 +43,14 @@ export interface FocusActionMap {
   activate: string[];
   back: string[];
   menu: string[];
+  secondary: string[];
 }
 
 export const DEFAULT_FOCUS_ACTIONS: FocusActionMap = {
   activate: ['Enter', 'Space', 'GamepadA'],
   back: ['Escape', 'GamepadB'],
-  menu: ['KeyY', 'GamepadY']
+  menu: ['KeyY', 'GamepadY'],
+  secondary: ['GamepadX']
 };
 
 export function nextFocusTarget(
@@ -73,17 +76,18 @@ export function nextFocusTarget(
     .filter(({ center: candidateCenter }) => isCandidateInDirection(currentCenter, candidateCenter, direction))
     .map(({ target, center: candidateCenter }) => ({
       target,
-      score: scoreCandidate(currentCenter, candidateCenter, direction)
+      score: scoreCandidate(currentCenter, candidateCenter, direction, target.zone === current.zone)
     }))
     .sort((a, b) => a.score - b.score);
 
   return candidates[0]?.target ?? wrapWithinZone(targets, current, direction);
 }
 
-export function actionForInput(code: string, actions: FocusActionMap = DEFAULT_FOCUS_ACTIONS) {
+export function actionForInput(code: string, actions: FocusActionMap = DEFAULT_FOCUS_ACTIONS): FocusAction | null {
   if (actions.activate.includes(code)) return 'activate';
   if (actions.back.includes(code)) return 'back';
   if (actions.menu.includes(code)) return 'menu';
+  if (actions.secondary.includes(code)) return 'secondary';
   return null;
 }
 
@@ -108,7 +112,8 @@ function isCandidateInDirection(
 function scoreCandidate(
   current: { x: number; y: number },
   candidate: { x: number; y: number },
-  direction: FocusDirection
+  direction: FocusDirection,
+  sameZone: boolean
 ) {
   const primary = direction === 'left' || direction === 'right'
     ? Math.abs(candidate.x - current.x)
@@ -117,7 +122,7 @@ function scoreCandidate(
     ? Math.abs(candidate.y - current.y)
     : Math.abs(candidate.x - current.x);
 
-  return primary * 3 + secondary;
+  return primary + secondary * 3 + (sameZone ? 0 : 12);
 }
 
 function wrapWithinZone(

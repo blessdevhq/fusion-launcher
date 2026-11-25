@@ -1,6 +1,7 @@
 import { PLATFORM_LABELS } from '../types/platform.ts';
 import { fusionGameKey, type FusionCatalogEntry, type FusionOperationProgress } from '../types/fusionSource.ts';
 import type { GameLibraryItem, LibraryFilter, LibrarySort, StatusTone } from './libraryStatus.ts';
+import { buildLibrarySearchIndex, librarySearchTerms, matchesLibrarySearch } from './librarySearch.ts';
 
 interface LibraryPresentation {
   key: string;
@@ -17,7 +18,7 @@ interface LibraryPresentation {
   statusLabel: string;
   statusTone: StatusTone;
   progressPercent: number;
-  searchText: string;
+  searchIndex: readonly string[];
 }
 
 /** Shared browsing data only. Installation and launch keep their original domains. */
@@ -69,10 +70,10 @@ export function buildUnifiedLibraryItems(
     statusLabel: item.statusLabel,
     statusTone: item.statusTone,
     progressPercent: item.progressPercent,
-    searchText: [item.game.title, item.game.platform, libraryPlatformLabel(item.game.platform), item.game.repositoryName,
+    searchIndex: buildLibrarySearchIndex([item.game.title, item.game.platform, libraryPlatformLabel(item.game.platform), item.game.repositoryName,
       item.game.sourceId, item.game.metadata?.developer, item.game.metadata?.publisher, item.game.metadata?.series,
       item.game.metadata?.releaseYear, ...(item.game.metadata?.genres ?? []), ...(item.game.metadata?.tags ?? []),
-      item.statusLabel, ...item.missingRequirements].join(' ').toLocaleLowerCase()
+      item.statusLabel, ...item.missingRequirements])
   }));
   const fusionItems: UnifiedLibraryItem[] = fusion.map((game) => {
     const gameKey = fusionGameKey(game);
@@ -102,7 +103,7 @@ export function buildUnifiedLibraryItems(
       statusLabel,
       statusTone: isDownloading ? 'active' : needsSetup ? 'missing' : readyToPlay ? 'ready' : hasError ? 'error' : isPaused ? 'paused' : 'idle',
       progressPercent,
-      searchText: [game.title, game.gameId, game.sourceName, game.platform, libraryPlatformLabel(game.platform), statusLabel].join(' ').toLocaleLowerCase()
+      searchIndex: buildLibrarySearchIndex([game.title, game.gameId, game.sourceName, game.platform, libraryPlatformLabel(game.platform), statusLabel])
     };
   });
   return [...legacyItems, ...fusionItems];
@@ -119,10 +120,10 @@ export function filterUnifiedLibraryItems(items: UnifiedLibraryItem[], filter: L
 export function selectUnifiedLibraryItems(
   items: UnifiedLibraryItem[], filter: LibraryFilter, query: string, sort: LibrarySort, platform?: string | null
 ): UnifiedLibraryItem[] {
-  const terms = query.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
+  const terms = librarySearchTerms(query);
   const selectedPlatform = normalizeLibraryPlatform(platform);
   return filterUnifiedLibraryItems(items, filter)
-    .filter((item) => (!selectedPlatform || item.platform === selectedPlatform) && terms.every((term) => item.searchText.includes(term)))
+    .filter((item) => (!selectedPlatform || item.platform === selectedPlatform) && matchesLibrarySearch(item.searchIndex, terms))
     .sort((left, right) => {
       const compare = (a: string, b: string) => a.localeCompare(b, undefined, { sensitivity: 'base', numeric: true });
       const rank = (item: UnifiedLibraryItem) => item.readyToPlay ? 0 : item.isDownloading ? 1 : item.isPaused ? 2 : item.hasError ? 3 : item.installed ? 4 : 5;
@@ -143,4 +144,49 @@ export function countUnifiedLibraryItems(items: UnifiedLibraryItem[]): LibraryCo
     missing: filterUnifiedLibraryItems(items, 'missing').length,
     platforms: Array.from(byPlatform, ([platform, count]) => ({ platform, count })).sort((a, b) => a.platform.localeCompare(b.platform))
   };
+}
+
+export interface HomeShowcase {
+  heroItem: UnifiedLibraryItem | null;
+  explore: UnifiedLibraryItem[];
+  downloads: UnifiedLibraryItem[];
+  needsSetup: UnifiedLibraryItem[];
+  recent: UnifiedLibraryItem[];
+}
+
+export function selectHomeShowcase(items: UnifiedLibraryItem[], railLimit = 12): HomeShowcase {
+  const ready = items.filter((item) => item.readyToPlay);
+  const downloading = items.filter((item) => item.isDownloading || item.isPaused || item.hasError);
+  const needsSetup = items.filter((item) =>
+    item.needsSetup || (item.kind === 'legacy' && item.item.missingRequirements.length > 0)
+  );
+  const heroItem = ready[0] ?? downloading[0] ?? items[0] ?? null;
+  const supporting = heroItem ? items.filter((item) => item.key !== heroItem.key) : items;
+  const supportingReady = ready.filter((item) => item.key !== heroItem?.key);
+
+  return {
+    heroItem,
+    explore: mergeUnifiedRailItems(supportingReady, supporting, railLimit),
+    downloads: mergeUnifiedRailItems(downloading, [], railLimit),
+    needsSetup: mergeUnifiedRailItems(needsSetup, [], railLimit),
+    recent: mergeUnifiedRailItems(items, [], railLimit)
+  };
+}
+
+function mergeUnifiedRailItems(
+  primaryItems: UnifiedLibraryItem[],
+  fallbackItems: UnifiedLibraryItem[],
+  limit: number
+): UnifiedLibraryItem[] {
+  const seen = new Set<string>();
+  const result: UnifiedLibraryItem[] = [];
+
+  for (const item of [...primaryItems, ...fallbackItems]) {
+    if (seen.has(item.key)) continue;
+    seen.add(item.key);
+    result.push(item);
+    if (result.length >= limit) break;
+  }
+
+  return result;
 }

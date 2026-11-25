@@ -23,20 +23,37 @@ export default function HomePage() {
     setLoading(true);
     try {
       await api.repairLibrary();
-      const [nextRepositories, nextCatalog, nextOnboardingState, nextSettings, nextFusionSources, nextFusionCatalog] = await Promise.all([
+      const [
+        nextRepositories,
+        nextCatalog,
+        nextOnboardingState,
+        nextSettings,
+        nextFusionSources,
+        nextFusionCatalog,
+        nextLibraryStatuses,
+        nextDownloads
+      ] = await Promise.all([
         api.listRepositories(),
         api.getCatalog(),
         api.getOnboardingState(),
         loadSettings().catch(() => DEFAULT_SETTINGS),
         api.fusionSourceList(),
-        api.fusionSourceListCatalog()
+        api.fusionSourceListCatalog(),
+        api.getLibraryStatuses(),
+        api.listTorrentDownloads()
       ]);
       setRepositories(nextRepositories);
       setCatalog(nextCatalog);
       setOnboardingState(nextOnboardingState);
       setSettings(nextSettings);
+      const launcherStore = useLauncherStore.getState();
+      launcherStore.setRepositories(nextRepositories);
+      launcherStore.setCatalog(nextCatalog);
+      launcherStore.setLibraryStatuses(nextLibraryStatuses);
+      launcherStore.setDownloads(nextDownloads);
+      launcherStore.setSettings(nextSettings);
+      launcherStore.setFusionCatalog(nextFusionCatalog);
       useFusionSourceStore.getState().setSourcesAndCatalog(nextFusionSources, nextFusionCatalog);
-      useLauncherStore.getState().setFusionCatalog(nextFusionCatalog);
       setMessage(null);
     } catch (error) {
       setRepositories([]);
@@ -96,6 +113,7 @@ export default function HomePage() {
       initialSettings={settings}
       catalog={catalog}
       repositories={repositories}
+      initialHydrated={message === null}
       message={message}
       onDisconnectRepository={disconnectRepository}
       onRefresh={reload}

@@ -3,8 +3,9 @@ import { AlertTriangle, ArrowRight, Bell, CheckCircle2, Download, Loader2, Refre
 import { useI18n } from '@/components/I18nProvider';
 import { GameArt } from '@/components/shell/GamePoster';
 import { displayProductText } from '@/lib/brandText';
-import { searchAndSortLibraryItems, type GameLibraryItem } from '@/lib/libraryStatus';
+import { libraryPlatformLabel, selectUnifiedLibraryItems, type UnifiedLibraryItem } from '@/lib/unifiedLibrary';
 import type { ActivityEvent } from '@/stores/launcherStore';
+import type { FusionCatalogEntry } from '@/types/fusionSource';
 import type { UpdatePanelPhase, UpdatePanelState } from './types';
 import { ActivityIcon } from './shared';
 import { displayActivityTitle, formatEventTime, updateNotificationText } from './utils';
@@ -25,6 +26,7 @@ export function TopChrome({
   onOpenActivityEvent,
   games,
   onSelectGame,
+  onSelectFusionGame,
   onNavigateToLibrary
 }: {
   onRefresh: () => void;
@@ -40,8 +42,9 @@ export function TopChrome({
   onCheckAppUpdate: () => Promise<void>;
   onInstallAppUpdate: () => Promise<void>;
   onOpenActivityEvent: (event: ActivityEvent) => void;
-  games?: GameLibraryItem[];
+  games?: UnifiedLibraryItem[];
   onSelectGame?: (gameId: string) => void;
+  onSelectFusionGame?: (game: FusionCatalogEntry) => void;
   onNavigateToLibrary?: (query?: string) => void;
 }) {
   const [searchValue, setSearchValue] = useState('');
@@ -53,7 +56,7 @@ export function TopChrome({
 
   const matchingGames = useMemo(() => {
     if (!searchValue.trim() || !games) return [];
-    return searchAndSortLibraryItems(games, 'all', searchValue, 'title');
+    return selectUnifiedLibraryItems(games, 'all', searchValue, 'title');
   }, [games, searchValue]);
 
   useEffect(() => {
@@ -147,34 +150,54 @@ export function TopChrome({
             ) : (
               <>
                 <div className="rh-search-popover-list">
-                  {matchingGames.slice(0, 6).map((item) => (
-                    <button
-                      key={item.game.id}
-                      type="button"
-                      data-testid={`global-search-item-${item.game.id}`}
-                      className="rh-search-popover-item"
-                      onClick={() => {
-                        setSearchFocused(false);
-                        onSelectGame?.(item.game.id);
-                      }}
-                    >
-                      <div className="h-9 w-7 shrink-0 overflow-hidden rounded bg-black/40">
-                        <GameArt game={item.game} className="h-full w-full object-cover" />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <div className="truncate text-sm font-semibold text-white">
-                          {displayProductText(item.game.title)}
+                  {matchingGames.slice(0, 6).map((item) => {
+                    const artGame = item.kind === 'legacy'
+                      ? item.item.game
+                      : {
+                          id: item.key,
+                          title: item.title,
+                          platform: item.platform ?? '',
+                          coverImageUrl: item.game.coverUrl ?? undefined
+                        };
+                    const testId = item.kind === 'legacy'
+                      ? `global-search-item-${item.item.game.id}`
+                      : `global-search-item-fusion-${item.game.gameId}`;
+                    const platformText = libraryPlatformLabel(item.platform) || item.platform || 'PC';
+                    const statusText = t.statusLabels[item.statusLabel as keyof typeof t.statusLabels] ?? item.statusLabel;
+
+                    return (
+                      <button
+                        key={item.key}
+                        type="button"
+                        data-testid={testId}
+                        className="rh-search-popover-item"
+                        onClick={() => {
+                          setSearchFocused(false);
+                          if (item.kind === 'legacy') {
+                            onSelectGame?.(item.item.game.id);
+                          } else {
+                            onSelectFusionGame?.(item.game);
+                          }
+                        }}
+                      >
+                        <div className="h-9 w-7 shrink-0 overflow-hidden rounded bg-black/40">
+                          <GameArt game={artGame} className="h-full w-full object-cover" />
                         </div>
-                        <div className="flex items-center gap-2 text-xs text-white/50">
-                          <span className="uppercase tracking-wider">{item.game.platform}</span>
-                          <span>•</span>
-                          <span className={`rh-card-status-${item.statusTone}`}>
-                            {item.statusLabel}
-                          </span>
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate text-sm font-semibold text-white">
+                            {displayProductText(item.title)}
+                          </div>
+                          <div className="flex items-center gap-2 text-xs text-white/50">
+                            <span className="uppercase tracking-wider">{platformText}</span>
+                            <span>•</span>
+                            <span className={`rh-card-status-${item.statusTone}`}>
+                              {statusText}
+                            </span>
+                          </div>
                         </div>
-                      </div>
-                    </button>
-                  ))}
+                      </button>
+                    );
+                  })}
                 </div>
                 {onNavigateToLibrary && (
                   <div className="rh-search-popover-footer">

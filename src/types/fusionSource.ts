@@ -70,6 +70,8 @@ export interface FusionAddon {
 
 export interface FusionUserLayer {
   layerId: string;
+  title?: string | null;
+  optional?: boolean;
   instructions: string | null;
   archive: string;
   rawPathRequired: boolean;
@@ -122,6 +124,12 @@ export interface FusionGameState {
   operation: FusionOperationProgress | null;
   crashReportIds: string[];
   crashReports: FusionCrashSummary[];
+}
+
+export interface FusionSaveSnapshotInventory {
+  snapshots: { id: string; createdAt: string; fileCount: number; totalBytes: number }[];
+  skippedCount: number;
+  hasMore: boolean;
 }
 
 export interface FusionCrashSummary {

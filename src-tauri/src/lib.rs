@@ -235,6 +235,8 @@ pub fn run() {
             commands::fusion_source::fusion_source_remove,
             commands::fusion_source::fusion_source_list_catalog,
             commands::fusion_source::fusion_game_get_state,
+            commands::fusion_source::fusion_game_list_save_snapshots,
+            commands::fusion_source::fusion_game_create_save_snapshot,
             commands::fusion_source::fusion_game_set_options,
             commands::fusion_source::fusion_game_install,
             commands::fusion_source::fusion_game_update,

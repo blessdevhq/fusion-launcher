@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useId } from 'react';
+import { useState, useEffect, useCallback, useId, useRef } from 'react';
 import {
   Wand2,
   UploadCloud,
@@ -24,6 +24,7 @@ import {
 import { open, save } from '@tauri-apps/plugin-dialog';
 import { api } from '@/lib/api';
 import { useI18n } from '@/components/I18nProvider';
+import { useModalFocusTrap } from '@/hooks/useModalFocusTrap';
 import { isTauriRuntime } from '@/lib/runtime';
 import type { CustomGameInput, GameFileInspection } from '@/types/repository';
 
@@ -51,6 +52,9 @@ export function GamePortingStudioModal({
 }: GamePortingStudioModalProps) {
   const { t } = useI18n();
   const titleInputId = useId();
+  const modalRef = useRef<HTMLDivElement>(null);
+  const closeRef = useRef<HTMLButtonElement>(null);
+  useModalFocusTrap({ containerRef: modalRef, onClose, initialFocusRef: closeRef });
 
   // File state
   const [inspecting, setInspecting] = useState(false);
@@ -284,7 +288,7 @@ export function GamePortingStudioModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-4">
-      <div className="relative flex max-h-[92vh] w-full max-w-4xl flex-col rounded-xl border border-white/12 bg-fusion-surface text-fusion-text shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+      <div ref={modalRef} role="dialog" aria-modal="true" tabIndex={-1} className="relative flex max-h-[92vh] w-full max-w-4xl flex-col rounded-xl border border-white/12 bg-fusion-surface text-fusion-text shadow-2xl overflow-hidden outline-none animate-in fade-in zoom-in-95 duration-200">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-white/10 px-6 py-4 bg-white/[0.02]">
           <div className="flex items-center gap-3">
@@ -297,6 +301,7 @@ export function GamePortingStudioModal({
             </div>
           </div>
           <button
+            ref={closeRef}
             onClick={onClose}
             className="grid h-8 w-8 place-items-center rounded-lg border border-white/10 text-white/60 hover:bg-white/10 hover:text-white transition"
           >

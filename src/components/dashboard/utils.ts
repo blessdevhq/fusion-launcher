@@ -1,6 +1,7 @@
-import { mergeRailItems, type HomeRail } from '@/components/shell/CockpitPanels';
+import type { HomeRail } from '@/components/shell/CockpitPanels';
 import { updateErrorText, type UiText } from '@/lib/i18n';
 import { filterLibraryItems, type GameLibraryItem, type LibraryFilter } from '@/lib/libraryStatus';
+import { selectHomeShowcase, type UnifiedLibraryItem } from '@/lib/unifiedLibrary';
 import type { TorrentDownloadRecord, UpdateCheckError } from '@/types/repository';
 import { ACTIVE_DOWNLOAD_STATUSES } from './constants';
 import type { UpdatePanelState } from './types';
@@ -15,46 +16,39 @@ export function updateNotificationText(state: UpdatePanelState, t: UiText, local
 }
 
 export function composeHomeRails(
-  items: GameLibraryItem[],
+  items: UnifiedLibraryItem[],
   t: UiText
-): { heroItem: GameLibraryItem | null; rails: HomeRail[] } {
-  const ready = items.filter((item) => item.readyToPlay);
-  const downloading = items.filter((item) => item.isDownloading || item.isPaused || item.hasError);
-  const needsSetup = items.filter((item) => item.missingRequirements.length > 0);
-  const heroItem = ready[0] ?? downloading[0] ?? items[0] ?? null;
-  const supportingItems = heroItem
-    ? items.filter((item) => item.game.id !== heroItem.game.id)
-    : items;
-  const supportingReady = ready.filter((item) => item.game.id !== heroItem?.game.id);
+): { heroItem: UnifiedLibraryItem | null; rails: HomeRail[] } {
+  const showcase = selectHomeShowcase(items, 12);
 
   const rails: HomeRail[] = [
     {
       title: t.dashboard.rails.exploreLibrary,
       testId: 'home-rail-library',
       zone: 'library',
-      items: mergeRailItems(supportingReady, supportingItems, 12)
+      items: showcase.explore
     },
     {
       title: t.dashboard.rails.downloads,
       testId: 'home-rail-downloads',
       zone: 'downloads',
-      items: mergeRailItems(downloading, [], 12)
+      items: showcase.downloads
     },
     {
       title: t.dashboard.rails.needsSetup,
       testId: 'home-rail-setup',
       zone: 'setup',
-      items: mergeRailItems(needsSetup, [], 12)
+      items: showcase.needsSetup
     },
     {
       title: t.dashboard.rails.recentlyAdded,
       testId: 'home-rail-recent',
       zone: 'recent',
-      items: mergeRailItems(items, [], 12)
+      items: showcase.recent
     }
   ];
 
-  return { heroItem, rails };
+  return { heroItem: showcase.heroItem, rails };
 }
 
 export function displayActivityTitle(title: string, t: UiText) {

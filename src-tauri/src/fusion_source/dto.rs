@@ -88,6 +88,23 @@ pub struct FusionInstallationRecord {
     pub status: String,
 }
 
+#[derive(Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveSnapshotInventory {
+    pub snapshots: Vec<SaveSnapshotSummary>,
+    pub skipped_count: usize,
+    pub has_more: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveSnapshotSummary {
+    pub id: String,
+    pub created_at: String,
+    pub file_count: usize,
+    pub total_bytes: u64,
+}
+
 #[derive(Clone, Debug)]
 pub struct FusionManifestRecord {
     pub game: QualifiedGameId,
@@ -155,6 +172,8 @@ pub struct AddonState {
 #[serde(rename_all = "camelCase")]
 pub struct UserLayerRequirement {
     pub layer_id: String,
+    pub title: Option<String>,
+    pub optional: bool,
     pub instructions: Option<String>,
     pub archive: String,
     pub raw_path_required: bool,

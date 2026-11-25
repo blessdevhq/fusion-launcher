@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { listen } from '@tauri-apps/api/event';
 import {
@@ -24,6 +24,7 @@ import { LaunchErrorModal } from '@/components/LaunchErrorModal';
 import { InstallProgressOverlay } from '@/components/InstallProgressOverlay';
 import { GameArt } from '@/components/shell/GamePoster';
 import { useDownloadState } from '@/hooks/useDownloadState';
+import { useModalFocusTrap } from '@/hooks/useModalFocusTrap';
 import { api } from '@/lib/api';
 import { displayProductText } from '@/lib/brandText';
 import { isDirectGameDownload, shouldShowDownloadPeers } from '@/lib/downloadActions';
@@ -71,6 +72,9 @@ export function GameDetailsModal({
   const [defaultSaveDir, setDefaultSaveDir] = useState<string | null>(null);
   const [launchFailure, setLaunchFailure] = useState<LaunchFailure | null>(null);
   const [scrapeState, setScrapeState] = useState<ScrapeState | null>(null);
+  const modalRef = useRef<HTMLElement>(null);
+  const closeRef = useRef<HTMLButtonElement>(null);
+  useModalFocusTrap({ containerRef: modalRef, onClose, initialFocusRef: closeRef, active: !launchFailure });
   const download = useDownloadState(game.id);
   const orchestrator = useInstallGame(game.id);
   const userProvidedGame = isUserProvidedGame(game);
@@ -579,7 +583,7 @@ export function GameDetailsModal({
 
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/78 px-5 backdrop-blur-xl">
-      <section data-testid="game-details-modal" className="relative max-h-[88vh] w-full max-w-3xl overflow-y-auto rounded-2xl border border-white/12 bg-fusion-surface/95 shadow-[0_40px_120px_rgba(0,0,0,0.72)]">
+      <section ref={modalRef} role="dialog" aria-modal="true" tabIndex={-1} data-testid="game-details-modal" className="relative max-h-[88vh] w-full max-w-3xl overflow-y-auto rounded-2xl border border-white/12 bg-fusion-surface/95 shadow-[0_40px_120px_rgba(0,0,0,0.72)] outline-none">
         <header className="flex items-start gap-4 border-b border-white/10 p-5">
           <div className="min-w-0 flex-1">
             <h2 className="text-2xl font-bold">{displayProductText(game.title)}</h2>
@@ -587,6 +591,7 @@ export function GameDetailsModal({
             {onCreateBuild && <button type="button" data-testid="creator-context-action" onClick={onCreateBuild} className="rh-filter-chip rh-focusable mt-3">{t.creator.ui.create}</button>}
           </div>
           <button
+            ref={closeRef}
             onClick={onClose}
             className="grid h-9 w-9 place-items-center rounded-lg border border-white/10 text-white/60 transition hover:border-fusion-accent/40 hover:bg-fusion-accent/10 hover:text-white"
             title={t.gameDetails.closeTitle}

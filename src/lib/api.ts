@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { previewApi } from './previewData.ts';
 import { fusionPreviewApi } from './fusionPreviewData.ts';
-import type { FusionCatalogEntry, FusionSourcePreview, FusionSourceSummary, FusionGameState, FusionGameOptions, FusionInstallInput, FusionOperationProgress, FusionCrashReport, SourcePreview, SourceSummary } from '../types/fusionSource.ts';
+import type { FusionCatalogEntry, FusionSourcePreview, FusionSourceSummary, FusionGameState, FusionGameOptions, FusionInstallInput, FusionOperationProgress, FusionCrashReport, FusionSaveSnapshotInventory, SourcePreview, SourceSummary } from '../types/fusionSource.ts';
 import { isPreviewRuntime, isTauriRuntime, requireDesktopBridge } from './runtime.ts';
 import type {
   EmulatorInstallResult,
@@ -66,6 +66,8 @@ const previewHandlers: Record<string, PreviewHandler> = {
   fusion_source_remove: ({ sourceId }) => fusionPreviewApi.remove(String(sourceId)),
   fusion_source_list_catalog: () => fusionPreviewApi.catalog(),
   fusion_game_get_state: ({ game }) => fusionPreviewApi.state((game as FusionGameIdentity).sourceId, (game as FusionGameIdentity).gameId),
+  fusion_game_list_save_snapshots: ({ game }) => fusionPreviewApi.listSaveSnapshots((game as FusionGameIdentity).sourceId, (game as FusionGameIdentity).gameId),
+  fusion_game_create_save_snapshot: ({ game }) => fusionPreviewApi.createSaveSnapshot((game as FusionGameIdentity).sourceId, (game as FusionGameIdentity).gameId),
   fusion_game_set_options: ({ game, options }) => fusionPreviewApi.setOptions((game as FusionGameIdentity).sourceId, (game as FusionGameIdentity).gameId, options as FusionGameOptions),
   fusion_game_install: ({ game, request }) => fusionPreviewApi.install((game as FusionGameIdentity).sourceId, (game as FusionGameIdentity).gameId, request as FusionInstallInput),
   fusion_game_update: ({ game, request }) => fusionPreviewApi.install((game as FusionGameIdentity).sourceId, (game as FusionGameIdentity).gameId, request as FusionInstallInput),
@@ -256,6 +258,12 @@ export const api = {
   fusionSourceRemove(sourceId: string) { return call<void>('fusion_source_remove', { sourceId }); },
   fusionSourceListCatalog() { return call<FusionCatalogEntry[]>('fusion_source_list_catalog'); },
   fusionGameGetState(sourceId: string, gameId: string) { return call<FusionGameState>('fusion_game_get_state', { game: { sourceId, gameId } }); },
+  fusionGameListSaveSnapshots(sourceId: string, gameId: string) {
+    return call<FusionSaveSnapshotInventory>('fusion_game_list_save_snapshots', { game: { sourceId, gameId } });
+  },
+  fusionGameCreateSaveSnapshot(sourceId: string, gameId: string) {
+    return call<FusionOperationProgress>('fusion_game_create_save_snapshot', { game: { sourceId, gameId } });
+  },
   fusionGameSetOptions(sourceId: string, gameId: string, options: FusionGameOptions) {
     return call<FusionGameState>('fusion_game_set_options', { game: { sourceId, gameId }, options });
   },
