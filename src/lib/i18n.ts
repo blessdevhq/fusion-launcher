@@ -14,6 +14,99 @@ export function normalizeLocale(value: unknown): Locale {
 }
 
 export const en = {
+  creator: {
+    ui: {
+      title: 'Creator', description: 'Projects, job evidence and device checks. Porting Studio remains a separate legacy workflow.',
+      create: 'Create build', context: 'Selected library item', contextNote: 'No project was created. Authoring requires a program descriptor; project creation is unavailable in this early UI.',
+      stages: { base: 'Base', composition: 'Composition', profiles: 'Profiles', verification: 'Verification', release: 'Release' },
+      descriptorUnavailable: 'Unavailable: this stage requires descriptor authoring and is not part of the early UI.',
+      releaseUnavailable: 'Export is unavailable. Open a saved project on Base to build a local signed release.',
+      signedBuild: {
+        title: 'Signed release', action: 'Build signed release', directory: 'Select folder', key: 'Select signing key file',
+        selected: 'Selected · not verified', missing: 'Selection required', buildProfile: 'Build profile', controlsProfile: 'Controls profile',
+        note: 'Choose only folders you have permission to distribute. Keep the key outside them. The release stays local; it includes the profiles declared in the descriptor.',
+        unsupported: 'Build currently supports only redistributable managed components that use the entire input folder.',
+        pending: 'Starting signed build…', invalid: 'Select the required folders, key file and a compatible profile pair.',
+        failed: 'Could not start the build. Check the selections or reopen the project after a revision conflict.', releaseId: 'Release ID'
+      },
+      projects: 'Projects', refresh: 'Refresh', emptyProjects: 'No saved projects.', revision: 'Revision', modified: 'Modified',
+      jobs: 'Job progress and history', jobId: 'Job ID', loadJob: 'Open job', noJobs: 'No jobs opened in this session. Enter an existing job ID to read its saved state.',
+      historyNote: 'Only acknowledged job snapshots and ordered events are shown. Closing Creator does not cancel a job.',
+      sequence: 'Sequence', phase: 'Phase', cancel: 'Cancel job', resume: 'Resume job',
+      statuses: { queued: 'Queued', running: 'Running', cancelling: 'Cancelling', cancelled: 'Cancelled', interrupted: 'Interrupted', completed: 'Completed', failed: 'Failed', passed: 'Passed', not_tested: 'Not tested' },
+      kinds: { scan: 'Scan', classify: 'Classification', build: 'Build', verify: 'Verification', export: 'Export', verify_https: 'HTTPS verification' },
+      reportKinds: {
+        structure_integrity: 'Structure integrity',
+        clean_install: 'Clean install',
+        observed_launch: 'Observed launch',
+        manual_scenario: 'Manual scenario',
+        https_acquisition: 'HTTPS acquisition'
+      },
+      verify: {
+        title: 'Clean verification',
+        note: 'Verifies the signed release archive and performs a clean installation into an isolated temporary library without the author folder or signing key.',
+        noProject: 'Open a project on Base to verify its built releases.',
+        noRelease: 'No signed release for the current project revision.',
+        goToBuild: 'Go to Base',
+        release: 'Release',
+        manifestHash: 'Manifest BLAKE3',
+        buildProfile: 'Build profile',
+        controlsProfile: 'Controls profile',
+        action: 'Verify release',
+        retry: 'Retry verification',
+        restart: 'Start clean verify again',
+        resumeNotice: 'This interrupted job has verified structure evidence and can resume clean install.',
+        restartOnlyNotice: 'Interrupted before structure checkpoint. Safe resume is unsupported here; start a clean verification again.',
+        envApprovalRequired: 'Clean verify is blocked: declared environment variables require local approval bound to this descriptor hash and variable names.',
+        unsupported: 'Clean verification currently supports only redistributable managed components without unapproved environment bindings.',
+        passedStages: 'Stages passed before failure',
+        pairsTitle: 'Declared profile pairs',
+        resultsTitle: 'Verification results',
+        inputVerified: 'Input verified',
+        reportId: 'Report ID',
+        jobTitle: 'Verification job',
+        progress: 'Progress'
+      },
+      release: {
+        title: 'Export & HTTPS check',
+        note: 'Exports strictly allowlisted signed release files from pinned CAS bytes without private paths, keys, device IDs or user saves. Every declared profile pair must pass verification before exporting.',
+        noProject: 'Open a project on Base to export or verify hosted releases.',
+        noRelease: 'No signed release for the current project revision.',
+        goToVerify: 'Go to Verification',
+        release: 'Release',
+        gateReady: 'All declared profile pairs passed verification; release is eligible for export.',
+        gateBlocked: 'Export is locked until every declared compatible pair passes structure and clean install verification:',
+        exportSection: 'Export Source directory',
+        targetDirectory: 'Export folder',
+        pickDirectory: 'Select empty export folder',
+        selected: 'Selected folder',
+        missingDirectory: 'Select an empty destination directory',
+        exportAction: 'Export release',
+        exportJob: 'Export job',
+        httpsSection: 'Verify hosted HTTPS Source',
+        httpsUrl: 'Hosted Source index URL (HTTPS)',
+        httpsPlaceholder: 'https://example.org/my-source/source-index.json',
+        httpsAction: 'Verify HTTPS',
+        httpsRetry: 'Retry HTTPS verification',
+        httpsJob: 'HTTPS verification job',
+        httpsResult: 'HTTPS acquisition result',
+        legacyNote: 'If a release was built earlier with offline.fusion.invalid links, build a new release on Base to export portable HTTPS links.'
+      }
+    },
+    common: { unavailable: 'Unavailable', error: 'Error', idle: 'Not requested', preview: 'Browser preview: Creator commands are unavailable without the native bridge.' }
+  },
+  input: {
+    title: 'Device selection and check', open: 'Check input device', devices: 'Devices', empty: 'No devices reported by the input service.',
+    connected: 'Connected', disconnected: 'Disconnected', known: 'Mapping known', unknown: 'Unknown mapping — no button layout inferred',
+    check: 'Start check', stop: 'Stop and release device', assignment: 'Binding assignment', assignmentNote: 'Unavailable: saving assignments requires a descriptor controls profile. No binding is saved by this dialog.',
+    ownership: 'This dialog owns navigation input. The launcher shell is paused.',
+    releaseRequired: 'Device release is not confirmed. Retry stop; input ownership is retained until handlesClosed is acknowledged.',
+    noSession: 'No input session started.', session: 'Session', buttons: 'Logical buttons', axes: 'Logical axes',
+    profileLabel: 'Controls profile', selectProfile: 'Select SDL controls profile', noControlsProfile: 'No SDL controls profile available.',
+    capture: 'Capture input', capturing: 'Press button or move stick…', cancelCapture: 'Cancel capture',
+    deadzones: 'Axis deadzones', saveBindings: 'Save controller bindings', savedBindings: 'Controller bindings saved for this device session.',
+    statuses: { active: 'Active', disconnected: 'Disconnected', stopping: 'Stopping', stopped: 'Stopped', failed: 'Failed' }
+  },
   language: {
     label: 'Language',
     description: 'Choose the interface language. Catalog text stays as the source provides it.',
@@ -52,7 +145,9 @@ export const en = {
     sources: 'Sources',
     updated: 'Updated',
     published: 'Published',
-    peers: 'peers'
+    peers: 'peers',
+    share: 'Share',
+    filesPreserved: (paths: string[]) => `Some files were preserved because safe deletion could not be confirmed: ${paths.join('; ')}`
   },
   brand: {
     tagline: 'Retro game libraries. One Windows launcher.',
@@ -70,6 +165,7 @@ export const en = {
   },
   statusLabels: {
     'Ready to Play': 'Ready to play',
+    'Update Available': 'Update available',
     'Game File Issue': 'Game file issue',
     'Missing Requirements': 'Missing requirements',
     'Download Error': 'Download error',
@@ -306,8 +402,18 @@ export const en = {
     emptyHealth: 'No records yet.'
   },
   dashboard: {
+    dropzone: {
+      title: 'Drop file to install or import',
+      description: 'System files (prod.keys, PS3 firmware, BIOS), games (.nsp, .iso, .zip), or sources (.json)',
+      processing: 'Analyzing and installing file...',
+      installedSystem: (label: string) => `Installed system component: ${label}`,
+      installedGame: (title: string) => `Imported game: ${title}`,
+      gamePayloadNotice: (fileName: string) => `Game file detected: ${fileName}. Open game in Library to link it.`,
+      sourceConnected: (name: string) => `Source connected: ${name}`
+    },
     filters: {
       all: 'All games',
+      ready: 'Ready to play',
       installed: 'Installed',
       downloading: 'Downloading',
       missing: 'Needs setup'
@@ -321,6 +427,10 @@ export const en = {
     topbar: {
       searchAria: 'Search games and collections',
       searchPlaceholder: 'Search games, collections, friends...',
+      clearSearch: 'Clear search',
+      searchResults: 'Search results',
+      searchNoResults: 'No games found',
+      searchViewAll: (count: number) => `View all ${count} results in library`,
       refreshTitle: 'Refresh',
       settingsTitle: 'Open settings',
       notificationsTitle: 'Open activity center',
@@ -353,6 +463,7 @@ export const en = {
     },
     rails: {
       continuePlaying: 'Continue playing',
+      exploreLibrary: 'Explore library',
       downloads: 'Downloads',
       needsSetup: 'Needs setup',
       recentlyAdded: 'Recently added'
@@ -385,6 +496,7 @@ export const en = {
       deleteFiles: 'Delete files',
       deleteConfirm: (title: string) => `Delete downloaded files for ${title}?`,
       statusHints: {
+        queued: 'In download queue.',
         interrupted: 'Restored after restart. Resume to continue.',
         paused: 'Paused state is persisted.',
         resolving: 'Resolving magnet metadata.',
@@ -399,6 +511,7 @@ export const en = {
       home: 'Home',
       library: 'Library',
       downloads: 'Downloads',
+      creator: 'Creator',
       settings: 'Settings'
     },
     stats: {
@@ -431,7 +544,7 @@ export const en = {
       ready: 'Ready to play',
       downloads: 'Downloads',
       missing: 'Needs setup',
-      count: (count: number) => `${count} games`
+      count: (count: number) => `${count} ${count === 1 ? 'game' : 'games'}`
     }
   },
   onboarding: {
@@ -446,7 +559,7 @@ export const en = {
     },
     firstRun: 'First run',
     title: 'Set up Fusion Launcher before you play',
-    copy: 'Install one game from a manifest and set up a matching emulator. Commercial ROMs, BIOS, firmware, and keys are not bundled.',
+    copy: 'Connect a source or manifest, then set up a matching emulator. Proprietary game and system files are not bundled.',
     stepperLabel: 'First run setup steps',
     continue: 'Continue',
     steps: {
@@ -469,7 +582,7 @@ export const en = {
     },
     sourceStep: {
       title: 'Install from a manifest',
-      copy: 'Paste a manifest URL or JSON, load it, then install one game. The manifest can include the ROM and emulator bundle.',
+      copy: 'Paste a manifest URL or JSON, load it, then install one game. The manifest can describe allowed game files and optional emulator setup.',
       demoCopy: 'The manifest is the only first-run source path.',
       useDemo: 'Use manifest',
       connected: (count: number) => `Manifest installed / ${count} games found`,
@@ -598,6 +711,7 @@ export const en = {
   },
   gameDetails: {
     downloadTitles: {
+      queued: 'Queued',
       resolving: 'Resolving metadata',
       downloading: 'Downloading',
       paused: 'Paused',
@@ -625,6 +739,9 @@ export const en = {
       systemFileImported: 'System file imported.',
       downloadFolderNotReady: 'Downloaded game folder is not ready yet.',
       launchSent: 'Launch sent.',
+      smartImportSuccess: (label: string) => `Successfully imported ${label}!`,
+      smartImportButton: 'Smart Auto-Import (Keys / Firmware / BIOS)',
+      smartImportDropPrompt: 'Drop keys, firmware, or BIOS here',
       removeConfirm: (title: string) => `Delete downloaded files for ${title}?`
     },
     closeTitle: 'Close',
@@ -724,6 +841,99 @@ export const en = {
     game: 'Installing game',
     verify: 'Final check',
     done: 'Ready to play'
+  },
+  portingStudio: {
+    triggerButton: 'Port Game',
+    triggerButtonTooltip: 'Create, optimize, and export game configs in 1 click',
+    modalTitle: 'Game Porting & Manifest Studio',
+    modalSubtitle: 'Package your games with artwork, 60 FPS patches, and instant sharing links for friends.',
+    dragPrompt: 'Drag & Drop ROM or Game File Here',
+    dragSubtext: 'Supports .nsp, .xci, .iso, .chd, .sfc, .z64, .gba, .cue, .cso',
+    inspectingFile: 'Analyzing file & calculating SHA-256 hash...',
+    inspectingFileMetadata: 'Checking the selected file...',
+    fileMetadataOnly: 'Checksum not calculated',
+    keepFileInPlace: 'Use the existing file in its current location',
+    keepFileInPlaceDesc: 'No copy is created. Keep the file at this path; removing it from Fusion preserves the original. Uncheck to copy it into the library.',
+    fileLabel: 'Target File',
+    gameTitle: 'Game Title',
+    gameTitlePlaceholder: 'e.g. Chrono Trigger',
+    platform: 'Platform',
+    setupProfile: 'Setup Profile',
+    sizeBytes: 'File Size',
+    sha256: 'SHA-256 Checksum',
+    autoScrapeBtn: 'Auto-Fill Artwork & Info',
+    autoScraping: 'Searching SteamGridDB & ScreenScraper...',
+    coverUrl: 'Cover Image URL',
+    heroUrl: 'Hero Background URL',
+    developer: 'Developer / Studio',
+    releaseYear: 'Release Year',
+    genres: 'Genres (comma-separated)',
+    description: 'Game Description',
+    optimizationTitle: 'Optimizations & Modding Presets',
+    enable60fps: '⚡ Enable 60 FPS Patch & Unlock',
+    enable60fpsDesc: 'Injects 60 FPS optimization patch into emulator on launch',
+    autoGamepad: '🎮 Auto-Configure Gamepad Layout',
+    autoGamepadDesc: 'Pre-configures XInput / DualSense controls out of the box',
+    authorBrandingTitle: 'Creator Branding & Attribution',
+    authorBrandingDesc: 'Earn recognition, promote your community, or link your donation page.',
+    authorName: 'Author / Translator Nickname',
+    authorNamePlaceholder: 'e.g. @MechanicsVoiceOver, Dendy_Master',
+    authorUrl: 'Creator Channel / Boosty / Discord URL',
+    authorUrlPlaceholder: 'https://t.me/... or https://boosty.to/...',
+    patchVersion: 'Translation / Mod Version',
+    patchVersionPlaceholder: 'e.g. Full Russian Voiceover v1.2',
+    notes: 'Player Notes & Tips',
+    notesPlaceholder: 'e.g. Best played on Vulkan renderer with 2x scaling.',
+    distributionTitle: 'Distribution Mode',
+    modeUserProvided: '🟢 User-Provided ROM (Zero-Copyright Safe)',
+    modeUserProvidedDesc: '100% legal anywhere. Manifest contains metadata & settings; players bring their own dump.',
+    modeDirect: '🔵 Direct Download Link (HTTP / Archive.org)',
+    modeDirectPlaceholder: 'https://archive.org/... or https://my-server.com/...',
+    modeMagnet: '🟣 P2P Magnet Link (Decentralized Torrent)',
+    modeMagnetPlaceholder: 'magnet:?xt=urn:btih:...',
+    shareSectionTitle: 'Viral Share & Export',
+    copyDeepLink: 'Copy One-Click Share Link (fusion://)',
+    copyDeepLinkDesc: 'Anyone with Fusion Launcher can click this link to preview and add the game in 1 second!',
+    copyPostMarkdown: 'Copy Post Template (Telegram / Discord)',
+    saveManifestJson: 'Save .fusion.json Manifest',
+    addToLibraryBtn: 'Add to My Library & Play Now',
+    linkCopiedAlert: 'Share link copied to clipboard! Share it with your friends or community.',
+    postCopiedAlert: 'Post template copied! Paste it into Discord, Telegram, or VK.',
+    manifestSavedAlert: 'Manifest saved successfully!',
+    addedSuccessAlert: 'Game successfully added to your library!',
+    authorCardBadge: (name: string) => `Config by ${name}`,
+    authorCardLink: 'Creator Page',
+    previewCardTitle: 'Live In-App Preview'
+  },
+  deepLinkModal: {
+    connectSourceTitle: 'Connect External Repository',
+    inspectManifestTitle: 'Inspect Game Manifest',
+    confirmInstallTitle: 'Confirm Game Installation',
+    stepIndicator: (step: number, total: number) => `Step ${step}/${total}`,
+    connectSourceDesc: 'An external link requested access to add a repository. Verify the target host before proceeding.',
+    inspectManifestDesc: 'An external link requested installing a game. Fusion Launcher will inspect the manifest before anything is saved.',
+    confirmInstallDesc: 'Review the game details and download sources parsed from the remote manifest.',
+    targetHost: 'Target Host',
+    fullResource: 'Full HTTPS Resource',
+    selectGame: (count: number) => `Select Game (${count} available in manifest)`,
+    gameTitle: 'Game Title',
+    platform: 'Platform',
+    downloadHosts: 'Download Hosts / Transport',
+    torrentMagnet: 'Torrent / Magnet',
+    noRemoteSource: 'No remote download source declared',
+    emulatorNotice: 'Emulator',
+    emulatorNoticeDesc: 'Uses your configured or platform default emulator. External sources cannot supply executables.',
+    cancel: 'Cancel',
+    back: 'Back',
+    inspectManifest: 'Inspect Manifest',
+    inspectCooldown: 'Inspect in 1.5s...',
+    fetching: 'Fetching...',
+    confirmProceed: 'Confirm & Proceed',
+    confirmInstall: 'Confirm & Install',
+    confirmCooldown: 'Confirming in 1.5s...',
+    installing: 'Installing...',
+    processing: 'Processing...',
+    noGamesError: 'Manifest contains no installable games.'
   }
 } as const;
 
@@ -739,6 +949,99 @@ type DeepWiden<T> =
 export type UiText = DeepWiden<typeof en>;
 
 export const ru: UiText = {
+  creator: {
+    ui: {
+      title: 'Creator', description: 'Проекты, свидетельства заданий и проверка устройств. Porting Studio остаётся отдельным legacy-потоком.',
+      create: 'Создать сборку', context: 'Выбрано в библиотеке', contextNote: 'Проект не создан. Для создания нужен дескриптор программы; в раннем UI создание проекта недоступно.',
+      stages: { base: 'Основа', composition: 'Состав', profiles: 'Профили', verification: 'Проверка', release: 'Выпуск' },
+      descriptorUnavailable: 'Недоступно: этап требует редактирования дескриптора и не входит в ранний UI.',
+      releaseUnavailable: 'Экспорт недоступен. Открой сохранённый проект в разделе «Основа», чтобы собрать подписанный выпуск локально.',
+      signedBuild: {
+        title: 'Подписанный выпуск', action: 'Собрать подписанный выпуск', directory: 'Выбрать папку', key: 'Выбрать файл ключа подписи',
+        selected: 'Выбрано · не проверено', missing: 'Нужно выбрать', buildProfile: 'Профиль сборки', controlsProfile: 'Профиль управления',
+        note: 'Выбирай только папки, которые разрешено распространять. Ключ храни вне этих папок. Выпуск останется локальным и включит профили из дескриптора.',
+        unsupported: 'Пока можно собирать только управляемые компоненты, которые разрешено распространять и которые используют папку целиком.',
+        pending: 'Запускается подписанная сборка…', invalid: 'Выбери нужные папки, файл ключа и совместимую пару профилей.',
+        failed: 'Не удалось запустить сборку. Проверь выбранные файлы или заново открой проект после конфликта ревизий.', releaseId: 'ID выпуска'
+      },
+      projects: 'Проекты', refresh: 'Обновить', emptyProjects: 'Сохранённых проектов нет.', revision: 'Ревизия', modified: 'Изменён',
+      jobs: 'Прогресс и история заданий', jobId: 'ID задания', loadJob: 'Открыть задание', noJobs: 'В этой сессии задания не открывались. Введи ID существующего задания, чтобы прочитать сохранённое состояние.',
+      historyNote: 'Показаны только подтверждённые снимки заданий и упорядоченные события. Закрытие Creator не отменяет задание.',
+      sequence: 'Последовательность', phase: 'Этап', cancel: 'Отменить задание', resume: 'Продолжить задание',
+      statuses: { queued: 'В очереди', running: 'Выполняется', cancelling: 'Отмена', cancelled: 'Отменено', interrupted: 'Прервано', completed: 'Завершено', failed: 'Ошибка', passed: 'Пройдено', not_tested: 'Не проверено' },
+      kinds: { scan: 'Сканирование', classify: 'Классификация', build: 'Сборка', verify: 'Проверка', export: 'Экспорт', verify_https: 'Проверка HTTPS' },
+      reportKinds: {
+        structure_integrity: 'Целостность структуры',
+        clean_install: 'Чистая установка',
+        observed_launch: 'Наблюдаемый запуск',
+        manual_scenario: 'Ручной сценарий',
+        https_acquisition: 'Загрузка по HTTPS'
+      },
+      verify: {
+        title: 'Чистая проверка',
+        note: 'Проверяет подписанный архив выпуска и выполняет чистую установку во временной изолированной библиотеке без папки автора и ключа подписи.',
+        noProject: 'Открой проект в разделе «Основа», чтобы проверить собранные выпуски.',
+        noRelease: 'Для текущей ревизии проекта ещё нет подписанных выпусков.',
+        goToBuild: 'Перейти к «Основе»',
+        release: 'Выпуск',
+        manifestHash: 'BLAKE3 манифеста',
+        buildProfile: 'Профиль сборки',
+        controlsProfile: 'Профиль управления',
+        action: 'Проверить выпуск',
+        retry: 'Повторить проверку',
+        restart: 'Запустить заново в чистой библиотеке',
+        resumeNotice: 'У прерванного задания есть проверенная целостность структуры; можно продолжить чистую установку.',
+        restartOnlyNotice: 'Задание прервано до контрольной точки структуры. Продолжение не поддержано — запусти чистую проверку заново.',
+        envApprovalRequired: 'Чистая проверка остановлена: объявленные переменные окружения требуют локального одобрения с привязкой к хешу дескриптора и именам переменных.',
+        unsupported: 'Чистая проверка сейчас поддерживает только управляемые компоненты с разрешённым распространением и без неодобренных переменных окружения.',
+        passedStages: 'Этапы, пройденные до ошибки',
+        pairsTitle: 'Заявленные пары профилей',
+        resultsTitle: 'Результаты проверки',
+        inputVerified: 'Ввод проверен',
+        reportId: 'ID отчёта',
+        jobTitle: 'Задание проверки',
+        progress: 'Прогресс'
+      },
+      release: {
+        title: 'Экспорт и проверка HTTPS',
+        note: 'Экспортирует только разрешённые файлы подписанного выпуска из закреплённых CAS-байтов без приватных путей, ключей, ID устройств и сохранений. Перед экспортом каждая заявленная пара профилей должна пройти проверку.',
+        noProject: 'Открой проект в разделе «Основа», чтобы экспортировать выпуск или проверить HTTPS.',
+        noRelease: 'Для текущей ревизии проекта ещё нет подписанных выпусков.',
+        goToVerify: 'Перейти к «Проверке»',
+        release: 'Выпуск',
+        gateReady: 'Все заявленные пары профилей прошли проверку; выпуск готов к экспорту.',
+        gateBlocked: 'Экспорт заблокирован, пока каждая заявленная пара не пройдёт целостность структуры и чистую установку:',
+        exportSection: 'Экспорт каталога Source',
+        targetDirectory: 'Папка экспорта',
+        pickDirectory: 'Выбрать пустую папку экспорта',
+        selected: 'Выбрана папка',
+        missingDirectory: 'Выбери пустую папку назначения',
+        exportAction: 'Экспортировать выпуск',
+        exportJob: 'Задание экспорта',
+        httpsSection: 'Проверка размещённого HTTPS Source',
+        httpsUrl: 'URL индекса размещённого Source (HTTPS)',
+        httpsPlaceholder: 'https://example.org/my-source/source-index.json',
+        httpsAction: 'Проверить HTTPS',
+        httpsRetry: 'Повторить проверку HTTPS',
+        httpsJob: 'Задание проверки HTTPS',
+        httpsResult: 'Результат загрузки по HTTPS',
+        legacyNote: 'Если выпуск ранее был собран со ссылками offline.fusion.invalid, собери новый выпуск в «Основе» для получения переносимых ссылок.'
+      }
+    },
+    common: { unavailable: 'Недоступно', error: 'Ошибка', idle: 'Не запрошено', preview: 'Предпросмотр в браузере: команды Creator недоступны без нативного bridge.' }
+  },
+  input: {
+    title: 'Выбор и проверка устройства', open: 'Проверить устройство ввода', devices: 'Устройства', empty: 'Сервис ввода не сообщил об устройствах.',
+    connected: 'Подключено', disconnected: 'Отключено', known: 'Раскладка известна', unknown: 'Раскладка неизвестна — расположение кнопок не предполагается',
+    check: 'Начать проверку', stop: 'Остановить и освободить устройство', assignment: 'Назначение кнопок', assignmentNote: 'Недоступно: сохранение назначений требует профиля управления в дескрипторе. Этот диалог не сохраняет назначения.',
+    ownership: 'Диалог владеет навигационным вводом. Навигация shell приостановлена.',
+    releaseRequired: 'Освобождение устройства не подтверждено. Повтори остановку; владение вводом сохраняется до подтверждения handlesClosed.',
+    noSession: 'Сессия ввода не запущена.', session: 'Сессия', buttons: 'Логические кнопки', axes: 'Логические оси',
+    profileLabel: 'Профиль управления', selectProfile: 'Выбери SDL-профиль управления', noControlsProfile: 'Нет доступного SDL-профиля управления.',
+    capture: 'Назначить', capturing: 'Нажми кнопку или отклони стик…', cancelCapture: 'Отменить захват',
+    deadzones: 'Мёртвые зоны осей', saveBindings: 'Сохранить назначения контроллера', savedBindings: 'Назначения контроллера сохранены для этой сессии устройства.',
+    statuses: { active: 'Активно', disconnected: 'Отключено', stopping: 'Остановка', stopped: 'Остановлено', failed: 'Ошибка' }
+  },
   language: {
     label: 'Язык',
     description: 'Выбери язык интерфейса. Текст каталогов остается таким, каким его дает источник.',
@@ -777,7 +1080,9 @@ export const ru: UiText = {
     sources: 'Источники',
     updated: 'Обновлено',
     published: 'Опубликовано',
-    peers: 'peers'
+    peers: 'peers',
+    share: 'Поделиться',
+    filesPreserved: (paths: string[]) => `Часть файлов сохранена: безопасность удаления не подтверждена. ${paths.join('; ')}`
   },
   brand: {
     tagline: 'Ретро-библиотеки игр. Один Windows-лаунчер.',
@@ -795,6 +1100,7 @@ export const ru: UiText = {
   },
   statusLabels: {
     'Ready to Play': 'Готово к запуску',
+    'Update Available': 'Доступно обновление',
     'Game File Issue': 'Проблема с файлом',
     'Missing Requirements': 'Нужна настройка',
     'Download Error': 'Ошибка загрузки',
@@ -1031,8 +1337,18 @@ export const ru: UiText = {
     emptyHealth: 'Записей пока нет.'
   },
   dashboard: {
+    dropzone: {
+      title: 'Бросьте файл для установки или импорта',
+      description: 'Системные файлы (prod.keys, прошивки PS3, BIOS), образы игр (.nsp, .iso, .zip) или источники (.json)',
+      processing: 'Анализ и установка файла...',
+      installedSystem: (label: string) => `Установлен системный компонент: ${label}`,
+      installedGame: (title: string) => `Импортирована игра: ${title}`,
+      gamePayloadNotice: (fileName: string) => `Обнаружен образ игры: ${fileName}. Откройте игру в библиотеке для привязки.`,
+      sourceConnected: (name: string) => `Подключен источник: ${name}`
+    },
     filters: {
       all: 'Все игры',
+      ready: 'Готово к запуску',
       installed: 'Установленные',
       downloading: 'Загружаются',
       missing: 'Нужна настройка'
@@ -1046,6 +1362,10 @@ export const ru: UiText = {
     topbar: {
       searchAria: 'Поиск игр и коллекций',
       searchPlaceholder: 'Поиск игр, коллекций, друзей...',
+      clearSearch: 'Очистить поиск',
+      searchResults: 'Результаты поиска',
+      searchNoResults: 'Игры не найдены',
+      searchViewAll: (count: number) => `Показать все (${count}) в библиотеке`,
       refreshTitle: 'Обновить',
       settingsTitle: 'Открыть настройки',
       notificationsTitle: 'Открыть центр активности',
@@ -1078,6 +1398,7 @@ export const ru: UiText = {
     },
     rails: {
       continuePlaying: 'Продолжить играть',
+      exploreLibrary: 'Исследовать библиотеку',
       downloads: 'Загрузки',
       needsSetup: 'Нужна настройка',
       recentlyAdded: 'Недавно добавленные'
@@ -1110,6 +1431,7 @@ export const ru: UiText = {
       deleteFiles: 'Удалить файлы',
       deleteConfirm: (title: string) => `Удалить скачанные файлы для ${title}?`,
       statusHints: {
+        queued: 'В очереди загрузки.',
         interrupted: 'Восстановлено после перезапуска. Продолжи, чтобы скачать дальше.',
         paused: 'Пауза сохранена.',
         resolving: 'Ищем magnet-метаданные.',
@@ -1124,6 +1446,7 @@ export const ru: UiText = {
       home: 'Главная',
       library: 'Библиотека',
       downloads: 'Загрузки',
+      creator: 'Creator',
       settings: 'Настройки'
     },
     stats: {
@@ -1156,7 +1479,7 @@ export const ru: UiText = {
       ready: 'Готово к запуску',
       downloads: 'Загрузки',
       missing: 'Нужна настройка',
-      count: (count: number) => `${count} игр`
+      count: (count: number) => `${count} ${count % 10 === 1 && count % 100 !== 11 ? 'игра' : count % 10 >= 2 && count % 10 <= 4 && (count % 100 < 12 || count % 100 > 14) ? 'игры' : 'игр'}`
     }
   },
   onboarding: {
@@ -1323,6 +1646,7 @@ export const ru: UiText = {
   },
   gameDetails: {
     downloadTitles: {
+      queued: 'В очереди',
       resolving: 'Поиск метаданных',
       downloading: 'Загрузка',
       paused: 'Пауза',
@@ -1350,6 +1674,9 @@ export const ru: UiText = {
       systemFileImported: 'Системный файл импортирован.',
       downloadFolderNotReady: 'Папка скачанной игры пока не готова.',
       launchSent: 'Запуск отправлен.',
+      smartImportSuccess: (label: string) => `Успешно установлен компонент ${label}!`,
+      smartImportButton: 'Умный авто-импорт (Ключи / Прошивка / BIOS)',
+      smartImportDropPrompt: 'Перетащите ключи, прошивку или BIOS сюда',
       removeConfirm: (title: string) => `Удалить скачанные файлы для ${title}?`
     },
     closeTitle: 'Закрыть',
@@ -1449,6 +1776,99 @@ export const ru: UiText = {
     game: 'Устанавливаем игру',
     verify: 'Финальная проверка',
     done: 'Можно играть'
+  },
+  portingStudio: {
+    triggerButton: 'Портировать игру',
+    triggerButtonTooltip: 'Создание, оптимизация и экспорт конфигов игр в 1 клик',
+    modalTitle: 'Студия портирования и упаковки игр',
+    modalSubtitle: 'Упакуйте игру с обложками, 60 FPS патчами и ссылкой для друзей за 15 секунд.',
+    dragPrompt: 'Перетащите ROM или файл игры сюда',
+    dragSubtext: 'Поддерживаются .nsp, .xci, .iso, .chd, .sfc, .z64, .gba, .cue, .cso',
+    inspectingFile: 'Анализ файла и расчет SHA-256 хеша...',
+    inspectingFileMetadata: 'Проверяем выбранный файл...',
+    fileMetadataOnly: 'Контрольная сумма не вычислялась',
+    keepFileInPlace: 'Использовать файл на месте',
+    keepFileInPlaceDesc: 'Копия не создаётся. Сохраняйте файл по этому пути; удаление из Fusion оставляет оригинал. Снимите флажок, чтобы скопировать файл в библиотеку.',
+    fileLabel: 'Файл игры',
+    gameTitle: 'Название игры',
+    gameTitlePlaceholder: 'Например, Chrono Trigger',
+    platform: 'Платформа',
+    setupProfile: 'Профиль эмулятора',
+    sizeBytes: 'Размер файла',
+    sha256: 'Хеш SHA-256',
+    autoScrapeBtn: 'Авто-поиск обложек и инфо',
+    autoScraping: 'Поиск в SteamGridDB и ScreenScraper...',
+    coverUrl: 'Ссылка на обложку (Cover)',
+    heroUrl: 'Ссылка на фон (Hero)',
+    developer: 'Разработчик / Студия',
+    releaseYear: 'Год выпуска',
+    genres: 'Жанры (через запятую)',
+    description: 'Описание игры',
+    optimizationTitle: 'Оптимизация и пресеты',
+    enable60fps: '⚡ Включить 60 FPS патч и анлок',
+    enable60fpsDesc: 'Автоматически применяет 60 FPS патч перед запуском игры',
+    autoGamepad: '🎮 Авто-настройка геймпада',
+    autoGamepadDesc: 'Предустановленная раскладка для XInput / DualSense',
+    authorBrandingTitle: 'Атрибуция автора и сообщества',
+    authorBrandingDesc: 'Получите признание, приведите игроков в свой канал или страницу донатов.',
+    authorName: 'Ник автора / студии перевода',
+    authorNamePlaceholder: 'Например, @MechanicsVoiceOver, Dendy_Master',
+    authorUrl: 'Ссылка на канал / Boosty / Telegram / VK',
+    authorUrlPlaceholder: 'https://t.me/... или https://boosty.to/...',
+    patchVersion: 'Версия перевода или мода',
+    patchVersionPlaceholder: 'Например, Полная русская озвучка v1.2',
+    notes: 'Советы для игроков',
+    notesPlaceholder: 'Например, Рекомендуется рендер Vulkan и апскейл 2x.',
+    distributionTitle: 'Режим распространения',
+    modeUserProvided: '🟢 Чистый конфиг (Zero-Copyright Safe)',
+    modeUserProvidedDesc: '100% легально везде. Конфиг содержит настройки и арты; игроки используют свой ROM.',
+    modeDirect: '🔵 Прямая ссылка (HTTP / Облако)',
+    modeDirectPlaceholder: 'https://archive.org/... или https://my-server.com/...',
+    modeMagnet: '🟣 P2P Magnet-ссылка (Torrent)',
+    modeMagnetPlaceholder: 'magnet:?xt=urn:btih:...',
+    shareSectionTitle: 'Виральный шеринг и запуск',
+    copyDeepLink: 'Скопировать ссылку для друзей (fusion://)',
+    copyDeepLinkDesc: 'Игроки кликают по ссылке в браузере или мессенджере — и игра сразу в лаунчере!',
+    copyPostMarkdown: 'Скопировать пост для Telegram / Discord',
+    saveManifestJson: 'Сохранить файл .fusion.json',
+    addToLibraryBtn: 'Добавить в библиотеку и играть',
+    linkCopiedAlert: 'Ссылка скопирована в буфер обмена! Отправьте её друзьям или в сообщество.',
+    postCopiedAlert: 'Шаблон поста скопирован! Вставьте его в Telegram, Discord или VK.',
+    manifestSavedAlert: 'Файл манифеста успешно сохранен!',
+    addedSuccessAlert: 'Игра успешно добавлена в вашу библиотеку!',
+    authorCardBadge: (name: string) => `Конфиг подготовил: ${name}`,
+    authorCardLink: 'Страница автора',
+    previewCardTitle: 'Превью в лаунчере'
+  },
+  deepLinkModal: {
+    connectSourceTitle: 'Подключение внешнего репозитория',
+    inspectManifestTitle: 'Проверка манифеста игры',
+    confirmInstallTitle: 'Подтверждение установки игры',
+    stepIndicator: (step: number, total: number) => `Шаг ${step}/${total}`,
+    connectSourceDesc: 'Внешняя ссылка запросила добавление репозитория. Проверьте целевой хост перед продолжением.',
+    inspectManifestDesc: 'Внешняя ссылка запросила установку игры. Fusion Launcher проверит манифест до сохранения данных.',
+    confirmInstallDesc: 'Проверьте сведения об игре и источниках загрузки из удалённого манифеста.',
+    targetHost: 'Целевой хост',
+    fullResource: 'Полный HTTPS-ресурс',
+    selectGame: (count: number) => `Выберите игру (в манифесте доступно: ${count})`,
+    gameTitle: 'Название игры',
+    platform: 'Платформа',
+    downloadHosts: 'Источники загрузки / транспорт',
+    torrentMagnet: 'Торрент / Magnet',
+    noRemoteSource: 'Удалённые источники загрузки не указаны',
+    emulatorNotice: 'Эмулятор',
+    emulatorNoticeDesc: 'Используется настроенный или стандартный эмулятор платформы. Внешние источники не могут передавать исполняемые файлы.',
+    cancel: 'Отмена',
+    back: 'Назад',
+    inspectManifest: 'Проверить манифест',
+    inspectCooldown: 'Проверка через 1.5с...',
+    fetching: 'Загрузка...',
+    confirmProceed: 'Подтвердить и продолжить',
+    confirmInstall: 'Подтвердить и установить',
+    confirmCooldown: 'Подтверждение через 1.5с...',
+    installing: 'Установка...',
+    processing: 'Обработка...',
+    noGamesError: 'Манифест не содержит игр для установки.'
   }
 };
 

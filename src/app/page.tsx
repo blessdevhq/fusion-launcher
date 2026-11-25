@@ -5,6 +5,8 @@ import { Dashboard } from '@/components/Dashboard';
 import { I18nProvider } from '@/components/I18nProvider';
 import { OnboardingWizard } from '@/components/OnboardingWizard';
 import { api } from '@/lib/api';
+import { useFusionSourceStore } from '@/stores/fusionSourceStore';
+import { useLauncherStore } from '@/stores/launcherStore';
 import { DEFAULT_SETTINGS, loadSettings, type AppSettings } from '@/lib/settings';
 import type { CatalogGame, OnboardingState, RepositorySummary } from '@/types/repository';
 
@@ -15,21 +17,43 @@ export default function HomePage() {
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState<string | null>(null);
+  const fusionSources = useFusionSourceStore((state) => state.sources);
 
   const reload = useCallback(async () => {
     setLoading(true);
     try {
       await api.repairLibrary();
-      const [nextRepositories, nextCatalog, nextOnboardingState, nextSettings] = await Promise.all([
+      const [
+        nextRepositories,
+        nextCatalog,
+        nextOnboardingState,
+        nextSettings,
+        nextFusionSources,
+        nextFusionCatalog,
+        nextLibraryStatuses,
+        nextDownloads
+      ] = await Promise.all([
         api.listRepositories(),
         api.getCatalog(),
         api.getOnboardingState(),
-        loadSettings().catch(() => DEFAULT_SETTINGS)
+        loadSettings().catch(() => DEFAULT_SETTINGS),
+        api.fusionSourceList(),
+        api.fusionSourceListCatalog(),
+        api.getLibraryStatuses(),
+        api.listTorrentDownloads()
       ]);
       setRepositories(nextRepositories);
       setCatalog(nextCatalog);
       setOnboardingState(nextOnboardingState);
       setSettings(nextSettings);
+      const launcherStore = useLauncherStore.getState();
+      launcherStore.setRepositories(nextRepositories);
+      launcherStore.setCatalog(nextCatalog);
+      launcherStore.setLibraryStatuses(nextLibraryStatuses);
+      launcherStore.setDownloads(nextDownloads);
+      launcherStore.setSettings(nextSettings);
+      launcherStore.setFusionCatalog(nextFusionCatalog);
+      useFusionSourceStore.getState().setSourcesAndCatalog(nextFusionSources, nextFusionCatalog);
       setMessage(null);
     } catch (error) {
       setRepositories([]);
@@ -69,7 +93,7 @@ export default function HomePage() {
   // First run shows onboarding only until a source is connected. Metadata and
   // emulator setup are no longer gates here: the emulator installs on demand
   // when a game is installed, and metadata is configured in Settings.
-  if (repositories.length === 0) {
+  if (repositories.length === 0 && fusionSources.length === 0) {
     return (
       <I18nProvider locale={settings.language}>
         <OnboardingWizard
@@ -89,6 +113,7 @@ export default function HomePage() {
       initialSettings={settings}
       catalog={catalog}
       repositories={repositories}
+      initialHydrated={message === null}
       message={message}
       onDisconnectRepository={disconnectRepository}
       onRefresh={reload}

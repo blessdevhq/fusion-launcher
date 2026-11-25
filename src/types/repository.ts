@@ -160,6 +160,8 @@ export interface RepositoryGame {
 export interface GameLaunchConfig {
   argsTemplate?: string;
   preferredFile?: string;
+  injectMods?: string[];
+  shaderCacheUrl?: string;
 }
 
 export interface RepositorySummary {
@@ -257,6 +259,8 @@ export interface LibraryGameStatus {
 }
 
 export interface DownloadRecord {
+  attemptId?: string | null;
+  runId?: number | null;
   subjectId: string;
   subjectType: 'asset' | 'game';
   status: 'ready' | 'completed' | 'error';
@@ -283,6 +287,71 @@ export interface ImportAssetFileReport {
   status: ImportAssetFileStatus;
   installedPath: string;
   errorCode?: ImportAssetFileErrorCode;
+}
+
+export type DetectedSystemKind =
+  | 'switch_keys'
+  | 'switch_firmware'
+  | 'ps2_bios'
+  | 'ps1_bios'
+  | 'ps3_firmware'
+  | 'game_file'
+  | 'unknown';
+
+export interface SmartImportReport {
+  success: boolean;
+  detectedKind: DetectedSystemKind;
+  platform?: string;
+  profileId?: string;
+  requirementId?: string;
+  label: string;
+  installedPath?: string;
+  status: string;
+  message: string;
+}
+
+export type DeepLinkAction =
+  | { action: 'addSource'; params: { url: string } }
+  | { action: 'install'; params: { manifest: string } }
+  | { action: 'play'; params: { gameId: string } };
+
+export interface GameFileInspection {
+  path: string;
+  fileName: string;
+  suggestedTitle: string;
+  platform: string;
+  setupProfileId: string;
+  expectedExtensions: string[];
+  sizeBytes: number;
+  sha256: string;
+  crc32: string;
+}
+
+export interface CustomGameInput {
+  id?: string;
+  title: string;
+  platform: string;
+  description?: string;
+  coverImageUrl?: string;
+  heroImageUrl?: string;
+  releaseYear?: number;
+  developer?: string;
+  genres?: string[];
+  contentMode?: 'user_provided' | 'downloadable';
+  downloadUrl?: string;
+  magnetUri?: string;
+  sha256?: string;
+  sizeBytes?: number;
+  setupProfileId?: string;
+  expectedExtensions?: string[];
+  authorName?: string;
+  authorUrl?: string;
+  patchVersion?: string;
+  notes?: string;
+  enable60Fps?: boolean;
+  shaderCacheUrl?: string;
+  importSourcePath?: string;
+  importInPlace?: boolean;
 }
 
 export type ImportGameFileStatus = 'installed' | 'already_installed' | 'error';
@@ -313,6 +382,7 @@ export interface GameDownloadStartReport {
 }
 
 export type TorrentDownloadStatus =
+  | 'queued'
   | 'resolving'
   | 'downloading'
   | 'paused'
@@ -323,6 +393,8 @@ export type TorrentDownloadStatus =
   | 'error';
 
 export interface TorrentDownloadRecord {
+  attemptId?: string | null;
+  runId?: number | null;
   gameId: string;
   subjectType?: 'asset' | 'game' | null;
   displayName?: string | null;
@@ -382,6 +454,8 @@ export interface TorrentStatus {
 }
 
 export interface DownloadProgressEvent {
+  attemptId?: string | null;
+  runId?: number | null;
   gameId: string;
   subjectType?: 'asset' | 'game' | null;
   displayName?: string | null;
@@ -399,12 +473,30 @@ export interface DownloadProgressEvent {
   error?: string | null;
 }
 
+export interface DownloadRemovedEvent {
+  gameId: string;
+  attemptId?: string | null;
+}
+
+export interface RemovalReport {
+  changed: boolean;
+  preservedPaths: string[];
+}
+
+export interface OptimizationReport {
+  modsInjected: number;
+  shaderCacheInstalled: boolean;
+  gamepadConfigured?: boolean;
+  details: string[];
+}
+
 export interface LaunchReport {
   pid: number;
   executable: string;
   gamePath: string;
   resolvedGamePath: string;
   args: string[];
+  optimization?: OptimizationReport;
 }
 
 export type LaunchFailureKind =
@@ -698,7 +790,9 @@ export const repositoryGameSchema = z.object({
       .trim()
       .min(1)
       .regex(/^(?!\.?\/)(?!.*\\)(?!.*(?:^|\/)\.\.?(?:\/|$)).+$/, 'preferredFile must be a normalized relative path')
-      .optional()
+      .optional(),
+    injectMods: z.array(z.string()).optional(),
+    shaderCacheUrl: z.string().url().optional()
   }).optional()
 }).superRefine((game, ctx) => {
   const profileId = game.platformProfileId ?? game.setupProfileId;

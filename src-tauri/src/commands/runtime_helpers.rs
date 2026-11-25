@@ -46,7 +46,9 @@ pub(super) fn download_root_for_app_state(state: &AppState) -> Result<PathBuf, S
         .unwrap_or_else(|| default_games_root(&managed_storage_root_for_app_state(state))))
 }
 
-pub(crate) fn resolve_target_dir_override(target_dir: Option<&str>) -> Result<Option<PathBuf>, String> {
+pub(crate) fn resolve_target_dir_override(
+    target_dir: Option<&str>,
+) -> Result<Option<PathBuf>, String> {
     let Some(target_dir) = target_dir.map(str::trim).filter(|path| !path.is_empty()) else {
         return Ok(None);
     };
@@ -54,11 +56,7 @@ pub(crate) fn resolve_target_dir_override(target_dir: Option<&str>) -> Result<Op
     if !path.is_absolute() {
         return Err("Download destination must be an absolute path.".to_string());
     }
-    fs::create_dir_all(&path)
-        .map_err(|error| format!("Failed to create download destination: {error}"))?;
-    fs::canonicalize(&path)
-        .or(Ok(path))
-        .map(Some)
+    fs::canonicalize(&path).or(Ok(path)).map(Some)
 }
 
 pub(super) fn preflight_disk_space(root: &Path, needed_bytes: Option<u64>) -> Result<(), String> {
@@ -84,6 +82,8 @@ pub(super) fn emit_direct_download_record(app: &AppHandle, record: &TorrentDownl
     let _ = app.emit(
         "download:progress",
         crate::torrent::DownloadProgressEvent {
+            attempt_id: record.attempt_id.clone(),
+            run_id: record.run_id,
             game_id: record.game_id.clone(),
             parent_game_id: record.parent_game_id.clone(),
             subject_type: record.subject_type.clone(),

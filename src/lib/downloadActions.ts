@@ -11,3 +11,9 @@ export function isDirectGameDownload(
   const primarySource = game?.downloads[0];
   return primarySource?.kind === 'http' || primarySource?.kind === 'bundled';
 }
+
+export function shouldShowDownloadPeers(
+  record: Pick<TorrentDownloadRecord, 'magnetUri'> | null | undefined
+) {
+  return !record?.magnetUri.startsWith('direct:');
+}

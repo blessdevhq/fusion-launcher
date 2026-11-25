@@ -12,10 +12,11 @@ SteamGridDB artwork is cached in the existing `metadata_cache` table with `provi
 The app resolves the SteamGridDB key in this order:
 
 1. User-saved key from `steamgriddb.api_key`.
-2. Built-in compile-time key from `FUSION_LAUNCHER_STEAMGRIDDB_KEY`.
-3. No key, in which case SteamGridDB enrichment is skipped.
+2. Built-in compile-time key from `FUSION_LAUNCHER_STEAMGRIDDB_KEY` or the legacy `RETROHYDRA_STEAMGRIDDB_KEY`.
+3. Shipped default read-only key embedded in the app, used so tester builds work without per-user setup.
+4. No key, only if all built-in/default values are intentionally removed, in which case SteamGridDB enrichment is skipped.
 
-Leaving the settings field blank clears the user key and lets official builds use the built-in key when present.
+Leaving the settings field blank clears the user key and falls back to the built-in/default key.
 
 ## Batch scraping
 

@@ -3,7 +3,6 @@ import { useI18n } from '@/components/I18nProvider';
 import { LOCALES, type Locale } from '@/lib/i18n';
 import { EMULATOR_MANAGER_PLATFORMS } from '@/types/platform';
 import type { HealthReport } from '@/types/repository';
-import { SummaryCard } from './shared';
 import type { SettingsSection, UpdatePanelPhase } from './types';
 import { updatePhaseLabel } from './utils';
 
@@ -51,17 +50,25 @@ export function GeneralSection({
       + healthReport.repositories.length
       + 1
     : 0;
+  const overview = [
+    { label: t.settings.general.configured, value: `${configuredCount}/${EMULATOR_MANAGER_PLATFORMS.length}` },
+    { label: t.settings.general.ready, value: `${readyCount}/${EMULATOR_MANAGER_PLATFORMS.length}` },
+    { label: t.settings.general.sources, value: String(repositoriesCount) },
+    { label: t.settings.general.downloads, value: String(activeDownloadsCount) },
+    { label: t.settings.general.health, value: healthTotal > 0 ? `${healthReady}/${healthTotal}` : t.common.notRun },
+    { label: t.settings.general.update, value: updatePhaseLabel(updatePhase, t) }
+  ];
 
   return (
     <section className="grid gap-4">
-      <div className="grid gap-3 sm:grid-cols-3">
-        <SummaryCard label={t.settings.general.configured} value={`${configuredCount}/${EMULATOR_MANAGER_PLATFORMS.length}`} />
-        <SummaryCard label={t.settings.general.sources} value={String(repositoriesCount)} />
-        <SummaryCard label={t.settings.general.downloads} value={String(activeDownloadsCount)} />
-        <SummaryCard label={t.settings.general.ready} value={`${readyCount}/${EMULATOR_MANAGER_PLATFORMS.length}`} />
-        <SummaryCard label={t.settings.general.health} value={healthTotal > 0 ? `${healthReady}/${healthTotal}` : t.common.notRun} />
-        <SummaryCard label={t.settings.general.update} value={updatePhaseLabel(updatePhase, t)} />
-      </div>
+      <dl className="grid gap-x-8 sm:grid-cols-2">
+        {overview.map((item) => (
+          <div key={item.label} className="flex min-h-12 items-center justify-between gap-4 border-b border-white/[0.09] py-3">
+            <dt className="text-xs font-semibold text-white/[0.42]">{item.label}</dt>
+            <dd className="text-right text-sm font-black text-white/[0.88]">{item.value}</dd>
+          </div>
+        ))}
+      </dl>
       <label className="rounded-sm border border-white/10 bg-black/[0.34] p-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>

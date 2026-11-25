@@ -2,22 +2,34 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 mod app_update;
 mod archive;
 mod builtin_demo;
 mod commands;
+pub mod deep_link;
+mod download_installation;
+mod download_operations;
 mod downloads;
 mod emulator_profiles;
+pub(crate) mod exe_integrity;
+pub mod execution;
+pub mod fusion_creator;
+pub mod fusion_source;
 mod game_files;
 mod github_resolver;
+#[cfg(windows)]
+pub mod input;
+mod install_ownership;
 mod launcher;
 mod libtorrent_engine;
+mod local_sources;
 mod logging;
 mod manifest;
 mod net;
 mod orchestrator;
+pub mod prelaunch_optimizer;
 mod rom_hasher;
 mod schema;
 mod scraper;
@@ -25,8 +37,14 @@ mod scrapers;
 mod security;
 mod setup_profiles;
 mod storage;
+pub mod system_files_detector;
 mod torrent;
 mod torrent_engine;
+#[cfg(windows)]
+mod windows_sidecar;
+
+#[cfg(test)]
+mod creator_harness_consumer_tests;
 
 use storage::RepositoryStore;
 use torrent::TorrentManager;
@@ -42,6 +60,7 @@ pub struct AppState {
     /// `None` when the torrent engine failed to start this session. Direct HTTP
     /// downloads keep working.
     pub torrents: Option<TorrentManager>,
+    pub direct_downloads: downloads::DirectDownloadRegistry,
     pub running_games: Arc<Mutex<HashMap<String, u32>>>,
     pub library_scrape: scraper::LibraryScrapeRuntime,
 }
@@ -60,6 +79,10 @@ impl AppState {
 }
 
 pub fn run() {
+    #[cfg(windows)]
+    if input::run_probe_if_requested() {
+        return;
+    }
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
@@ -78,6 +101,12 @@ pub fn run() {
                 .map_err(|error| setup_error(error.to_string()))?;
             std::fs::create_dir_all(&local_data_dir)
                 .map_err(|error| setup_error(error.to_string()))?;
+            #[cfg(windows)]
+            input::ipc::initialize(
+                app.handle().clone(),
+                local_data_dir.join("fusion-input-private"),
+            )
+            .map_err(|error| setup_error(error.to_string()))?;
             let database_path = prepare_database_path(&data_dir).map_err(setup_error)?;
             logging::initialize(&data_dir);
             let mut repository_store =
@@ -116,10 +145,12 @@ pub fn run() {
             // launcher from opening. The libtorrent sidecar is spawned lazily per
             // download, so this rarely fails; direct HTTP downloads and the rest
             // of the app work regardless.
+            let operations = downloads::DirectDownloadRegistry::new();
             let torrents = match tauri::async_runtime::block_on(TorrentManager::new(
                 library_root.clone(),
                 Arc::clone(&store),
                 app.handle().clone(),
+                operations.clone(),
             )) {
                 Ok(manager) => Some(manager),
                 Err(message) => {
@@ -137,18 +168,86 @@ pub fn run() {
                 data_dir,
                 local_data_dir,
                 torrents,
+                direct_downloads: operations,
                 running_games: Arc::new(Mutex::new(HashMap::new())),
                 library_scrape: scraper::LibraryScrapeRuntime::new(),
             };
             app.manage(app_state.clone());
+            app.manage(
+                commands::fusion_source::FusionBridge::new(app.handle(), &app_state)
+                    .map_err(|error| setup_error(error.to_string()))?,
+            );
+            app.manage(
+                fusion_creator::bridge::CreatorBridge::new(app.handle(), &app_state)
+                    .map_err(|error| setup_error(error.to_string()))?,
+            );
 
             // Background cover backfill: fill in missing cover art for catalog
             // games on launch. No-op without a SteamGridDB key, and capped so a
             // large catalog never triggers a giant scrape.
             scraper::auto_scrape_missing_artwork(app.handle().clone(), app_state);
+
+            #[cfg(windows)]
+            let _ = deep_link::register_windows_protocol();
+
+            let app_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+                for arg in std::env::args().skip(1) {
+                    if arg.starts_with("fusion://") || arg.starts_with("fusion:") {
+                        if let Ok(action) = deep_link::parse_deep_link(&arg) {
+                            let _ = app_handle.emit("fusion:deep-link", action);
+                        }
+                    }
+                }
+            });
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            commands::fusion_creator::fusion_creator_project_list,
+            commands::fusion_creator::fusion_creator_project_open,
+            commands::fusion_creator::fusion_creator_project_save,
+            commands::fusion_creator::fusion_creator_private_bindings_save,
+            commands::fusion_creator::fusion_creator_scan,
+            commands::fusion_creator::fusion_creator_classify,
+            commands::fusion_creator::fusion_creator_build,
+            commands::fusion_creator::fusion_creator_verify,
+            commands::fusion_creator::fusion_creator_export,
+            commands::fusion_creator::fusion_creator_verify_https,
+            commands::fusion_creator::fusion_creator_job_get,
+            commands::fusion_creator::fusion_creator_job_cancel,
+            commands::fusion_creator::fusion_creator_job_resume,
+            commands::fusion_creator::fusion_creator_release_list,
+            commands::fusion_creator::fusion_creator_report_get,
+            commands::fusion_creator::fusion_input_devices,
+            commands::fusion_creator::fusion_input_session_start,
+            commands::fusion_creator::fusion_input_session_stop,
+            commands::fusion_creator::fusion_input_session_get,
+            commands::fusion_creator::fusion_input_bindings_save,
+            commands::fusion_creator::fusion_input_release_for_launch,
+            commands::fusion_source::fusion_source_preview,
+            commands::fusion_source::fusion_source_preview_local,
+            commands::fusion_source::fusion_source_add_local,
+            commands::fusion_source::fusion_source_add,
+            commands::fusion_source::fusion_source_list,
+            commands::fusion_source::fusion_source_refresh,
+            commands::fusion_source::fusion_source_remove,
+            commands::fusion_source::fusion_source_list_catalog,
+            commands::fusion_source::fusion_game_get_state,
+            commands::fusion_source::fusion_game_list_save_snapshots,
+            commands::fusion_source::fusion_game_create_save_snapshot,
+            commands::fusion_source::fusion_game_set_options,
+            commands::fusion_source::fusion_game_install,
+            commands::fusion_source::fusion_game_update,
+            commands::fusion_source::fusion_game_cancel,
+            commands::fusion_source::fusion_game_rollback,
+            commands::fusion_source::fusion_game_launch,
+            commands::fusion_source::fusion_game_remove,
+            commands::fusion_source::fusion_game_trust_executable,
+            commands::fusion_source::fusion_crash_preview,
+            commands::fusion_source::fusion_crash_send,
+            commands::fusion_source::fusion_crash_discard,
             commands::preview_repository,
             commands::preview_repository_file,
             commands::preview_builtin_demo_repository,
@@ -176,6 +275,7 @@ pub fn run() {
             commands::get_steamgriddb_status,
             commands::scrape_library,
             commands::cancel_library_scrape,
+            commands::cache_artwork,
             commands::check_requirements,
             commands::get_library_statuses,
             commands::list_platform_setup_profiles,
@@ -184,6 +284,13 @@ pub fn run() {
             commands::remove_profile_emulator,
             commands::select_profile_emulator,
             commands::import_profile_system_file,
+            commands::detect_system_file,
+            commands::auto_import_system_file,
+            commands::parse_deep_link,
+            commands::register_deep_link_protocol,
+            commands::inspect_game_file,
+            commands::add_custom_game,
+            commands::export_game_package,
             commands::list_emulator_configs,
             commands::save_emulator_config,
             commands::validate_emulator_config,
@@ -194,6 +301,7 @@ pub fn run() {
             commands::download_game,
             commands::start_game_download,
             commands::trust_executable,
+            commands::trust_updated_emulator,
             commands::get_download_root,
             commands::set_download_root,
             commands::get_library_root,

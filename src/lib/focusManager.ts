@@ -1,8 +1,36 @@
 export type FocusDirection = 'left' | 'right' | 'up' | 'down';
+export type FocusAction = 'activate' | 'back' | 'menu' | 'secondary';
+
+export type InputOwner = symbol;
+
+const inputOwners: { owner: InputOwner; scope?: HTMLElement }[] = [];
+
+/** Claim keyboard/controller navigation until released. Claims nest; cleanup is idempotent. */
+export function acquireInputOwner(owner: InputOwner = Symbol('input-owner'), scope?: HTMLElement): () => void {
+  const claim = { owner, scope };
+  // React layout effects mount children first. An ancestor must never cover its child.
+  const childIndex = scope ? inputOwners.findIndex((entry) => entry.scope && scope.contains(entry.scope)) : -1;
+  if (childIndex === -1) inputOwners.push(claim);
+  else inputOwners.splice(childIndex, 0, claim);
+  return () => {
+    const index = inputOwners.indexOf(claim);
+    if (index !== -1) inputOwners.splice(index, 1);
+  };
+}
+
+/** An omitted owner is the shell, active only when no dialog/capture owns input. */
+export function isInputOwnerActive(owner?: InputOwner): boolean {
+  return inputOwners.at(-1)?.owner === owner;
+}
+
+export function getActiveInputScope(): HTMLElement | undefined {
+  return inputOwners.at(-1)?.scope;
+}
 
 export interface FocusTarget {
   id: string;
   zone: string;
+  scope?: InputOwner;
   rect: {
     left: number;
     top: number;
@@ -15,19 +43,23 @@ export interface FocusActionMap {
   activate: string[];
   back: string[];
   menu: string[];
+  secondary: string[];
 }
 
 export const DEFAULT_FOCUS_ACTIONS: FocusActionMap = {
   activate: ['Enter', 'Space', 'GamepadA'],
   back: ['Escape', 'GamepadB'],
-  menu: ['KeyY', 'GamepadY']
+  menu: ['KeyY', 'GamepadY'],
+  secondary: ['GamepadX']
 };
 
 export function nextFocusTarget(
   targets: FocusTarget[],
   currentId: string | null,
-  direction: FocusDirection
+  direction: FocusDirection,
+  scope?: InputOwner
 ): FocusTarget | null {
+  if (scope !== undefined) targets = targets.filter((target) => target.scope === scope);
   if (targets.length === 0) return null;
   if (!currentId) return targets[0] ?? null;
 
@@ -44,17 +76,18 @@ export function nextFocusTarget(
     .filter(({ center: candidateCenter }) => isCandidateInDirection(currentCenter, candidateCenter, direction))
     .map(({ target, center: candidateCenter }) => ({
       target,
-      score: scoreCandidate(currentCenter, candidateCenter, direction)
+      score: scoreCandidate(currentCenter, candidateCenter, direction, target.zone === current.zone)
     }))
     .sort((a, b) => a.score - b.score);
 
   return candidates[0]?.target ?? wrapWithinZone(targets, current, direction);
 }
 
-export function actionForInput(code: string, actions: FocusActionMap = DEFAULT_FOCUS_ACTIONS) {
+export function actionForInput(code: string, actions: FocusActionMap = DEFAULT_FOCUS_ACTIONS): FocusAction | null {
   if (actions.activate.includes(code)) return 'activate';
   if (actions.back.includes(code)) return 'back';
   if (actions.menu.includes(code)) return 'menu';
+  if (actions.secondary.includes(code)) return 'secondary';
   return null;
 }
 
@@ -79,7 +112,8 @@ function isCandidateInDirection(
 function scoreCandidate(
   current: { x: number; y: number },
   candidate: { x: number; y: number },
-  direction: FocusDirection
+  direction: FocusDirection,
+  sameZone: boolean
 ) {
   const primary = direction === 'left' || direction === 'right'
     ? Math.abs(candidate.x - current.x)
@@ -88,7 +122,7 @@ function scoreCandidate(
     ? Math.abs(candidate.y - current.y)
     : Math.abs(candidate.x - current.x);
 
-  return primary * 3 + secondary;
+  return primary + secondary * 3 + (sameZone ? 0 : 12);
 }
 
 function wrapWithinZone(

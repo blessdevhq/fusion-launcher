@@ -258,6 +258,61 @@ fn batched_catalog_enrichment_matches_per_game_path() {
 }
 
 #[test]
+fn missing_artwork_backfill_retries_recoverable_scrape_states() {
+    for (status, message) in [
+        (
+            "failed",
+            "SteamGridDB artwork lookup failed: temporary network error",
+        ),
+        (
+            "skipped",
+            "ScreenScraper credentials are not configured. Configure SteamGridDB to fetch artwork only.",
+        ),
+    ] {
+        let dir = tempdir().unwrap();
+        let mut store = RepositoryStore::open(&dir.path().join("fusion-launcher.db")).unwrap();
+        store
+            .store_repository("https://example.com/index.json", &test_repo())
+            .unwrap();
+        store
+            .set_scrape_state("repo::game", status, Some("artwork"), &[], Some(message))
+            .unwrap();
+
+        let queued = store.mark_games_missing_artwork_pending_for_scrape(80).unwrap();
+
+        assert_eq!(queued, 1, "{status} should be retried");
+        let state = store.get_scrape_state("repo::game").unwrap().unwrap();
+        assert_eq!(state.status, "pending");
+        assert_eq!(state.message.as_deref(), Some("Queued for automatic cover art."));
+    }
+}
+
+#[test]
+fn missing_artwork_backfill_does_not_retry_confirmed_not_found_state() {
+    let dir = tempdir().unwrap();
+    let mut store = RepositoryStore::open(&dir.path().join("fusion-launcher.db")).unwrap();
+    store
+        .store_repository("https://example.com/index.json", &test_repo())
+        .unwrap();
+    store
+        .set_scrape_state(
+            "repo::game",
+            "skipped",
+            Some("artwork"),
+            &[],
+            Some("ScreenScraper credentials are not configured. SteamGridDB did not find artwork for this game."),
+        )
+        .unwrap();
+
+    let queued = store
+        .mark_games_missing_artwork_pending_for_scrape(80)
+        .unwrap();
+
+    assert_eq!(queued, 0);
+    let state = store.get_scrape_state("repo::game").unwrap().unwrap();
+    assert_eq!(state.status, "skipped");
+}
+#[test]
 fn stores_and_updates_emulator_configs() {
     let dir = tempdir().unwrap();
     let store = RepositoryStore::open(&dir.path().join("fusion-launcher.db")).unwrap();
@@ -370,6 +425,83 @@ fn migrates_legacy_emulator_configs_to_default_profiles() {
             .as_deref(),
         Some(std::path::Path::new(&exe_path))
     );
+}
+
+#[test]
+fn sanitizes_poisoned_manifest_emulator_records_across_all_tables() {
+    let dir = tempdir().unwrap();
+    let store = RepositoryStore::open(&dir.path().join("fusion-launcher.db")).unwrap();
+
+    // Insert poisoned records in legacy and profile tables as well as app_config
+    store
+        .conn
+        .execute(
+            r#"
+            INSERT INTO emulator_configs (platform, exe_path, status, last_validated_at, version, launch_args_template)
+            VALUES ('snes', 'C:/bad/snes.exe', 'valid', '2026-06-09T00:00:00Z', 'manifest', '{game_path}')
+            "#,
+            [],
+        )
+        .unwrap();
+
+    store
+        .conn
+        .execute(
+            r#"
+            INSERT INTO profile_emulator_configs (profile_id, platform, exe_path, status, last_validated_at, version, launch_args_template)
+            VALUES ('snes-mesen', 'snes', 'C:/bad/snes.exe', 'valid', '2026-06-09T00:00:00Z', 'manifest', '{game_path}')
+            "#,
+            [],
+        )
+        .unwrap();
+
+    store
+        .conn
+        .execute(
+            r#"
+            INSERT INTO app_config (key, value, updated_at)
+            VALUES ('manifest_emulator:game1', '{"url":"https://evil.com/core.zip"}', '2026-06-09T00:00:00Z')
+            "#,
+            [],
+        )
+        .unwrap();
+
+    let cleaned = store.sanitize_manifest_emulator_records().unwrap();
+    assert_eq!(cleaned, 3);
+
+    // Repeated run is idempotent
+    let second_run = store.sanitize_manifest_emulator_records().unwrap();
+    assert_eq!(second_run, 0);
+
+    let poisoned_legacy: i64 = store
+        .conn
+        .query_row(
+            "SELECT COUNT(*) FROM emulator_configs WHERE version = 'manifest'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(poisoned_legacy, 0);
+
+    let poisoned_profile: i64 = store
+        .conn
+        .query_row(
+            "SELECT COUNT(*) FROM profile_emulator_configs WHERE version = 'manifest'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(poisoned_profile, 0);
+
+    let poisoned_config: i64 = store
+        .conn
+        .query_row(
+            "SELECT COUNT(*) FROM app_config WHERE key LIKE 'manifest_emulator:%'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(poisoned_config, 0);
 }
 
 #[test]
@@ -580,4 +712,227 @@ fn lists_torrent_downloads_with_actionable_records_first() {
     assert!(position("error") < position("paused"));
     assert!(position("paused") < position("completed"));
     assert!(position("completed") < position("cancelled"));
+}
+
+#[test]
+fn sqlite_initializes_with_wal_and_busy_timeout() {
+    let dir = tempdir().unwrap();
+    let db_path = dir.path().join("fusion-launcher.db");
+    let store = RepositoryStore::open(&db_path).unwrap();
+
+    let journal_mode: String = store
+        .conn
+        .query_row("PRAGMA journal_mode;", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(journal_mode.to_lowercase(), "wal");
+
+    let busy_timeout: i64 = store
+        .conn
+        .query_row("PRAGMA busy_timeout;", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(busy_timeout, 5000);
+}
+
+#[test]
+fn manifest_emulator_records_preserved_across_store_reopen() {
+    let dir = tempdir().unwrap();
+    let db_path = dir.path().join("fusion-launcher.db");
+
+    // First open: creates schema, runs initial migration, sets user_version = 1
+    {
+        let store = RepositoryStore::open(&db_path).unwrap();
+        store
+            .set_config(
+                "manifest_emulator:switch-game-1",
+                r#"{"url":"https://example.com/eden.zip","archive_sha256":"abc"}"#,
+            )
+            .unwrap();
+    }
+
+    // Second open (launcher restart): user_version is already 1, must NOT wipe manifest_emulator config
+    {
+        let store = RepositoryStore::open(&db_path).unwrap();
+        let value = store.get_config("manifest_emulator:switch-game-1").unwrap();
+        assert!(
+            value.is_some(),
+            "manifest_emulator record must persist across store reopen"
+        );
+    }
+}
+
+#[test]
+fn migration_from_v0_legacy_database_with_mixed_records() {
+    let dir = tempdir().unwrap();
+    let db_path = dir.path().join("legacy-fusion.db");
+
+    // 1. Manually construct a raw legacy SQLite database at user_version = 0
+    {
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        conn.execute_batch(
+            r#"
+            PRAGMA user_version = 0;
+
+            CREATE TABLE emulator_configs (
+                platform TEXT PRIMARY KEY,
+                exe_path TEXT,
+                status TEXT NOT NULL,
+                last_validated_at TEXT,
+                version TEXT,
+                launch_args_template TEXT
+            );
+
+            CREATE TABLE profile_emulator_configs (
+                profile_id TEXT PRIMARY KEY,
+                platform TEXT NOT NULL,
+                exe_path TEXT,
+                status TEXT NOT NULL,
+                last_validated_at TEXT,
+                version TEXT,
+                launch_args_template TEXT
+            );
+
+            CREATE TABLE app_config (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE repositories (
+                id TEXT PRIMARY KEY,
+                url TEXT NOT NULL,
+                name TEXT NOT NULL,
+                version TEXT NOT NULL,
+                schema_version INTEGER NOT NULL,
+                trust_level TEXT NOT NULL DEFAULT 'unknown',
+                connected_at TEXT NOT NULL,
+                raw_json TEXT NOT NULL
+            );
+
+            -- Valid normal profile config that must be preserved
+            INSERT INTO profile_emulator_configs
+                (profile_id, platform, exe_path, status, last_validated_at, version, launch_args_template)
+            VALUES
+                ('nes-mesen', 'nes', 'C:/Games/Mesen.exe', 'valid', '2026-06-01T00:00:00Z', '2.1.1', '{game_path}');
+
+            -- Poisoned legacy record that must be wiped
+            INSERT INTO emulator_configs
+                (platform, exe_path, status, last_validated_at, version, launch_args_template)
+            VALUES
+                ('switch', 'C:/malicious/evil.exe', 'valid', '2026-06-01T00:00:00Z', 'manifest', '{game_path}');
+
+            -- Poisoned profile record that must be wiped
+            INSERT INTO profile_emulator_configs
+                (profile_id, platform, exe_path, status, last_validated_at, version, launch_args_template)
+            VALUES
+                ('switch-manual', 'switch', 'C:/malicious/evil.exe', 'valid', '2026-06-01T00:00:00Z', 'manifest', '{game_path}');
+
+            -- Poisoned app_config key that must be wiped
+            INSERT INTO app_config (key, value, updated_at)
+            VALUES ('manifest_emulator:poisoned-game', '{"url":"https://evil.com/core.zip"}', '2026-06-01T00:00:00Z');
+
+            -- Normal app_config key that must be preserved
+            INSERT INTO app_config (key, value, updated_at)
+            VALUES ('download_root', 'F:/CustomGames', '2026-06-01T00:00:00Z');
+
+            -- External repo falsely claiming 'official' trust level (must be demoted to 'community')
+            INSERT INTO repositories (id, url, name, version, schema_version, trust_level, connected_at, raw_json)
+            VALUES ('attacker-repo', 'https://attacker.com/repo.json', 'Attacker Repo', '1.0.0', 1, 'official', '2026-01-01', '{}');
+
+            -- Builtin demo repo claiming 'official' (must remain 'official')
+            INSERT INTO repositories (id, url, name, version, schema_version, trust_level, connected_at, raw_json)
+            VALUES ('builtin-repo', 'fusion-launcher://builtin/demo-repository.json', 'Builtin Demo', '1.0.0', 1, 'official', '2026-01-01', '{}');
+            "#,
+        )
+        .unwrap();
+
+        let v: i32 = conn
+            .query_row("PRAGMA user_version;", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(v, 0);
+    }
+
+    // 2. Open via RepositoryStore::open - executes full initialize() and migrations
+    {
+        let store = RepositoryStore::open(&db_path).unwrap();
+
+        // Verify all migrations, including operation identity, were applied.
+        let v: i32 = store
+            .conn
+            .query_row("PRAGMA user_version;", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(
+            v, 6,
+            "user_version must include local Source bindings and Creator storage"
+        );
+
+        // Verify attacker repo was demoted, but builtin was kept official
+        let attacker = store
+            .get_repository_trust_level("attacker-repo")
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            attacker, "community",
+            "External repo claiming official must be demoted by v2 migration"
+        );
+        let builtin = store
+            .get_repository_trust_level("builtin-repo")
+            .unwrap()
+            .unwrap();
+        assert_eq!(builtin, "official", "Builtin repo must remain official");
+
+        // Verify valid profile was preserved
+        let nes = store
+            .get_profile_emulator_config("nes-mesen")
+            .unwrap()
+            .unwrap();
+        assert_eq!(nes.exe_path.as_deref(), Some("C:/Games/Mesen.exe"));
+        assert_eq!(nes.version.as_deref(), Some("2.1.1"));
+
+        // Verify normal app_config key was preserved
+        assert_eq!(
+            store.get_config("download_root").unwrap().as_deref(),
+            Some("F:/CustomGames")
+        );
+
+        // Verify poisoned records were purged
+        let poisoned_switch = store.get_profile_emulator_config("switch-manual").unwrap();
+        assert!(
+            poisoned_switch.is_none(),
+            "Poisoned Switch manifest config must be wiped"
+        );
+
+        let poisoned_config = store.get_config("manifest_emulator:poisoned-game").unwrap();
+        assert!(
+            poisoned_config.is_none(),
+            "Poisoned manifest_emulator config must be wiped"
+        );
+
+        // 3. User now sets up a new legitimate Switch manifest emulator
+        store
+            .set_config(
+                "manifest_emulator:legit-switch-game",
+                r#"{"url":"https://example.com/eden.zip","archive_sha256":"123"}"#,
+            )
+            .unwrap();
+    }
+
+    // 4. Reopen database (simulating restart after migration)
+    {
+        let store = RepositoryStore::open(&db_path).unwrap();
+
+        // The newly saved Switch manifest emulator must NOT be wiped on restart!
+        let legit = store
+            .get_config("manifest_emulator:legit-switch-game")
+            .unwrap();
+        assert!(
+            legit.is_some(),
+            "Legitimate Switch emulator config must persist across restarts"
+        );
+
+        let nes = store
+            .get_profile_emulator_config("nes-mesen")
+            .unwrap()
+            .unwrap();
+        assert_eq!(nes.version.as_deref(), Some("2.1.1"));
+    }
 }

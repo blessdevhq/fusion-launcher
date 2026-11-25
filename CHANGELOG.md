@@ -19,7 +19,10 @@ Storage, sources, and artwork quality-of-life from tester feedback.
 
 ### Fixed
 
+- Packaged smoke now verifies that the default SteamGridDB key resolves as built-in and that the bundled torrent sidecar can start far enough to print `--help`.
+- Automatic cover-art backfill retries recoverable SteamGridDB no-key/failed scrape states while leaving confirmed no-artwork results skipped.
 - Torrent sidecar failures now surface the real **stderr** cause (e.g. a missing runtime) instead of a bare "exited unexpectedly (code 1)".
+- Diagnostics now call out the Microsoft Visual C++ Redistributable when the libtorrent sidecar fails during Python import/DLL loading.
 
 ### Notes
 

@@ -155,20 +155,16 @@ pub(crate) async fn fetch_manifest_inner(url: &str) -> Result<Manifest, AppError
     // Enforce the project's HTTPS-only policy before touching the network.
     let endpoint = validate_repository_url(url, false).map_err(AppError::InvalidUrl)?;
 
-    let client = reqwest::Client::builder()
-        .timeout(MANIFEST_TIMEOUT)
-        .user_agent(crate::net::HTTP_USER_AGENT)
-        .build()?; // reqwest::Error -> AppError (Network)
-
-    let response = client
-        .get(endpoint)
-        .send()
-        .await? // connection / timeout -> AppError::Network
-        .error_for_status()
-        .map_err(|error| AppError::Network(crate::net::format_reqwest_error("manifest", &error)))?;
-
-    // Invalid JSON or missing required fields -> AppError::Parse.
-    let manifest = response.json::<Manifest>().await?;
+    let bytes = crate::net::fetch_external_bytes(
+        &endpoint,
+        false,
+        MANIFEST_TIMEOUT,
+        crate::net::JSON_BODY_LIMIT,
+    )
+    .await
+    .map_err(AppError::Network)?;
+    let manifest = serde_json::from_slice::<Manifest>(&bytes)
+        .map_err(|error| AppError::Parse(format!("Manifest JSON is invalid: {error}")))?;
     validate_manifest(&manifest).map_err(AppError::Parse)?;
 
     Ok(manifest)
@@ -449,6 +445,8 @@ impl Game {
             launch: Some(GameLaunchConfig {
                 args_template,
                 preferred_file: None,
+                inject_mods: self.launch_config.inject_mods.clone(),
+                shader_cache_url: self.assets.shader_cache_url.clone(),
             }),
         }
     }
@@ -484,7 +482,7 @@ fn expected_extensions_for(platform: &str) -> Vec<String> {
         "dreamcast" => &["cdi", "gdi", "chd"],
         _ => &[],
     };
-    extensions.iter().map(|ext| ext.to_string()).collect()
+    extensions.iter().map(|ext| format!(".{ext}")).collect()
 }
 
 #[cfg(test)]
@@ -633,7 +631,7 @@ mod tests {
         let game = &schema.catalog[0];
         assert_eq!(game.id, "0100F2C0115B6000");
         assert_eq!(game.platform, "switch");
-        assert_eq!(game.expected_extensions, vec!["nsp", "xci"]);
+        assert_eq!(game.expected_extensions, vec![".nsp", ".xci"]);
 
         // The ROM magnet becomes the single download source.
         match &game.downloads[..] {

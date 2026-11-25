@@ -1,6 +1,7 @@
-import { mergeRailItems, type HomeRail } from '@/components/shell/CockpitPanels';
+import type { HomeRail } from '@/components/shell/CockpitPanels';
 import { updateErrorText, type UiText } from '@/lib/i18n';
 import { filterLibraryItems, type GameLibraryItem, type LibraryFilter } from '@/lib/libraryStatus';
+import { selectHomeShowcase, type UnifiedLibraryItem } from '@/lib/unifiedLibrary';
 import type { TorrentDownloadRecord, UpdateCheckError } from '@/types/repository';
 import { ACTIVE_DOWNLOAD_STATUSES } from './constants';
 import type { UpdatePanelState } from './types';
@@ -15,42 +16,39 @@ export function updateNotificationText(state: UpdatePanelState, t: UiText, local
 }
 
 export function composeHomeRails(
-  items: GameLibraryItem[],
+  items: UnifiedLibraryItem[],
   t: UiText
-): { heroItem: GameLibraryItem | null; rails: HomeRail[] } {
-  const ready = items.filter((item) => item.readyToPlay);
-  const downloading = items.filter((item) => item.isDownloading || item.isPaused || item.hasError);
-  const needsSetup = items.filter((item) => item.missingRequirements.length > 0);
-  const heroItem = ready[0] ?? downloading[0] ?? items[0] ?? null;
+): { heroItem: UnifiedLibraryItem | null; rails: HomeRail[] } {
+  const showcase = selectHomeShowcase(items, 12);
 
   const rails: HomeRail[] = [
     {
-      title: t.dashboard.rails.continuePlaying,
-      testId: 'home-rail-ready',
-      zone: 'ready',
-      items: mergeRailItems(ready, [], 12)
+      title: t.dashboard.rails.exploreLibrary,
+      testId: 'home-rail-library',
+      zone: 'library',
+      items: showcase.explore
     },
     {
       title: t.dashboard.rails.downloads,
       testId: 'home-rail-downloads',
       zone: 'downloads',
-      items: mergeRailItems(downloading, [], 12)
+      items: showcase.downloads
     },
     {
       title: t.dashboard.rails.needsSetup,
       testId: 'home-rail-setup',
       zone: 'setup',
-      items: mergeRailItems(needsSetup, [], 12)
+      items: showcase.needsSetup
     },
     {
       title: t.dashboard.rails.recentlyAdded,
       testId: 'home-rail-recent',
       zone: 'recent',
-      items: mergeRailItems(items, [], 12)
+      items: showcase.recent
     }
   ];
 
-  return { heroItem, rails };
+  return { heroItem: showcase.heroItem, rails };
 }
 
 export function displayActivityTitle(title: string, t: UiText) {
@@ -119,6 +117,7 @@ export function summarizeDownloads(downloads: TorrentDownloadRecord[]) {
 }
 
 export function downloadStatusHint(download: TorrentDownloadRecord, t: UiText) {
+  if (download.status === 'queued') return t.dashboard.downloads.statusHints.queued;
   if (download.status === 'interrupted') return t.dashboard.downloads.statusHints.interrupted;
   if (download.status === 'paused') return t.dashboard.downloads.statusHints.paused;
   if (download.status === 'resolving') return t.dashboard.downloads.statusHints.resolving;

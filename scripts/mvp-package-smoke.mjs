@@ -8,20 +8,24 @@ const smokeDir = path.join(root, '.tmp', 'package-smoke');
 const releaseDir = resolveReleaseDir();
 const expectedVersion = await readPackageVersion();
 const binaryPath = await resolveBinaryPath(releaseDir);
+const sidecarPath = await resolveSidecarPath(releaseDir);
 const nsisDir = path.join(releaseDir, 'bundle', 'nsis');
 
 async function main() {
   await assertFile(binaryPath, 'release binary');
+  await assertFile(sidecarPath, 'torrent sidecar');
   const installers = await listNsisInstallers(expectedVersion);
   assert.ok(
     installers.length > 0,
     `Tauri NSIS installer artifact for ${expectedVersion} is missing. Run npm run tauri:build first.`
   );
 
+  await runSidecarHelp();
   await rm(smokeDir, { recursive: true, force: true });
   const output = await runSmokeBinary();
 
   console.log(`PASS release binary: ${path.relative(root, binaryPath)}`);
+  console.log(`PASS torrent sidecar: ${path.relative(root, sidecarPath)}`);
   console.log(`PASS NSIS artifact: ${path.relative(root, installers[0])}`);
   console.log(`PASS package smoke data: ${path.relative(root, smokeDir)}`);
   if (output.trim()) console.log(output.trim());
@@ -63,6 +67,39 @@ async function resolveBinaryPath(releaseDir) {
   return path.join(releaseDir, candidates[0]);
 }
 
+async function resolveSidecarPath(releaseDir) {
+  const exactName = process.platform === 'win32' ? 'fusion-torrent.exe' : 'fusion-torrent';
+  const candidates = [exactName];
+  try {
+    const entries = await readdir(releaseDir);
+    candidates.push(
+      ...entries
+        .filter(isSidecarCandidate)
+        .sort((a, b) => a.localeCompare(b))
+    );
+  } catch {
+    // assertFile prints the actionable missing-path error below.
+  }
+
+  for (const candidate of [...new Set(candidates)]) {
+    const filePath = path.join(releaseDir, candidate);
+    try {
+      const info = await stat(filePath);
+      if (info.isFile()) return filePath;
+    } catch {
+      // Try the next possible Tauri sidecar name.
+    }
+  }
+  return path.join(releaseDir, exactName);
+}
+
+function isSidecarCandidate(entry) {
+  const lower = entry.toLowerCase();
+  if (process.platform === 'win32') {
+    return lower === 'fusion-torrent.exe' || (lower.startsWith('fusion-torrent-') && lower.endsWith('.exe'));
+  }
+  return lower === 'fusion-torrent' || lower.startsWith('fusion-torrent-');
+}
 async function readPackageVersion() {
   const packageJson = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
   assert.equal(typeof packageJson.version, 'string', 'package.json version must be a string');
@@ -80,6 +117,30 @@ async function listNsisInstallers(version) {
   }
 }
 
+function runSidecarHelp() {
+  return new Promise((resolve, reject) => {
+    const child = spawn(sidecarPath, ['--help'], {
+      cwd: root,
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (chunk) => {
+      stdout += chunk.toString();
+    });
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk.toString();
+    });
+    child.on('error', reject);
+    child.on('exit', (code) => {
+      if (code === 0) {
+        resolve(stdout);
+        return;
+      }
+      reject(new Error(`Torrent sidecar --help exited with ${code}.\n${stdout}\n${stderr}`));
+    });
+  });
+}
 function runSmokeBinary() {
   return new Promise((resolve, reject) => {
     const child = spawn(binaryPath, [], {

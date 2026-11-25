@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { Ban, FolderOpen, Loader2, RefreshCcw, ShieldAlert } from 'lucide-react';
 import { useI18n } from '@/components/I18nProvider';
 import { displayProductText } from '@/lib/brandText';
@@ -6,6 +7,12 @@ import type { RepositoryPreview, RepositorySummary } from '@/types/repository';
 import { AddSourceCard } from './AddSourceCard';
 import type { BusyAction } from './types';
 import { formatDateTime, shortHash, trustBadgeClass } from './utils';
+import { useFusionSourceStore } from '@/stores/fusionSourceStore';
+import { fusionErrorMessage, type FusionSourceSummary } from '@/types/fusionSource';
+import { fusionText } from '@/lib/fusionText';
+import { api } from '@/lib/api';
+import { open } from '@tauri-apps/plugin-dialog';
+import { isTauriRuntime } from '@/lib/runtime';
 
 export function SourcesSection({
   repositories,
@@ -29,6 +36,7 @@ export function SourcesSection({
 }) {
   const { t } = useI18n();
   const sourceBusy = busyAction === 'repo-file';
+  const fusionSources = useFusionSourceStore((state) => state.sources);
 
   return (
     <section className="grid gap-4" data-testid="settings-modal-sources-panel">
@@ -58,7 +66,7 @@ export function SourcesSection({
           {sourceBusy && <div className="text-[10px] font-bold uppercase text-white/[0.36]">{t.settings.sourcesPanel.busy}</div>}
         </div>
         <div className="grid gap-3 lg:grid-cols-2">
-          {repositories.length === 0 ? (
+          {repositories.length === 0 && fusionSources.length === 0 ? (
             <div className="rh-empty-compact lg:col-span-2">{t.settings.sourcesPanel.empty}</div>
           ) : repositories.map((repository) => (
             <RepositorySourceCard
@@ -69,10 +77,44 @@ export function SourcesSection({
               onDisconnect={onDisconnect}
             />
           ))}
+          {fusionSources.map((source) => <FusionSourceCard key={source.sourceId} source={source} onRefresh={onManifestInstalled} />)}
         </div>
       </div>
     </section>
   );
+}
+
+function FusionSourceCard({ source, onRefresh }: { source: FusionSourceSummary; onRefresh: () => Promise<void> }) {
+  const { locale, t } = useI18n();
+  const text = fusionText(locale);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const run = async (action: () => Promise<unknown>) => {
+    setBusy(true); setError(null);
+    try { await action(); await onRefresh(); }
+    catch (caught) { setError(fusionErrorMessage(caught)); }
+    finally { setBusy(false); }
+  };
+  const replaceDirectory = () => run(async () => {
+    const selected = isTauriRuntime()
+      ? await open({ directory: true, multiple: false, title: text.replaceFolder })
+      : 'preview://Sources/local-release-v2';
+    if (typeof selected === 'string') await api.fusionSourceAddLocal(selected, source.sourceId, source.prepareEden ?? false);
+  });
+  return <div className="min-w-0 rounded-sm border border-fusion-line bg-fusion-raised p-4" data-testid="fusion-source-card">
+    <div className="truncate text-sm font-bold">{source.name}</div>
+    <div className="mt-1 break-all select-text text-xs text-white/40" data-testid="fusion-source-location">{source.localDirectory ?? source.url}</div>
+    {source.localDirectory && <p className="mt-2 text-xs text-[var(--rh-muted)]">{text.localSource}{source.prepareEden ? ` · ${text.prepareEden}` : ''}</p>}
+    <p className="mt-2 text-xs text-white/60">Fusion Source v1.0 · {source.gameCount} {t.common.games}</p>
+    <p className="mt-2 break-all text-xs text-white/40">{text.publicKey}: {source.publicKey ?? text.noKey}</p>
+    <p className="mt-2 text-xs text-white/40">{text.signatureNote}</p>
+    <div className="mt-4 flex flex-wrap gap-2">
+      <button type="button" disabled={busy} className="rh-mini-action rh-focusable" onClick={() => void run(() => api.fusionSourceRefresh(source.sourceId))} data-testid="fusion-source-refresh">{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCcw className="h-4 w-4" />}{text.refresh}</button>
+      {source.localDirectory && <button type="button" disabled={busy} className="rh-mini-action rh-focusable" onClick={() => void replaceDirectory()} data-testid="fusion-source-replace-folder"><FolderOpen className="h-4 w-4" />{text.replaceFolder}</button>}
+      <button type="button" disabled={busy} className="rh-mini-action rh-focusable" onClick={() => { if (window.confirm(text.removeSourceConfirm)) void run(() => api.fusionSourceRemove(source.sourceId)); }} data-testid="fusion-source-remove"><Ban className="h-4 w-4" />{text.disconnect}</button>
+    </div>
+    {error && <p role="alert" className="mt-3 select-text break-words text-xs text-[var(--rh-warning)]">{error}</p>}
+  </div>;
 }
 
 function RepositorySourceCard({

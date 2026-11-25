@@ -1,0 +1,220 @@
+{
+  "head_before_report": "832648c503683986a2d4ec462b84ecd4f27446f9",
+  "test_threads": 4,
+  "execution": "sequential separate cargo invocations; each test ten consecutive times",
+  "source_sha256": "5009153153b4f4449a9aa61a38649324b5eaffd5b88d3e7ae2d6bc6fec098fa6",
+  "runs": [
+    {
+      "test": "fusion_source::supervisor::tests::native::partial_graph_startup_failure_stops_started_support_and_releases_lease",
+      "attempt": 1,
+      "exit_code": 0,
+      "valid_one_test_execution": true,
+      "passed": true,
+      "seconds": 53.39437639998505,
+      "log": "partial_graph_startup_failure_stops_started_support_and_releases_lease-01.log",
+      "log_sha256": "40fd2903e752b0594301fb25dd59768dae2fe6145052170d55fd1e3549ee4580"
+    },
+    {
+      "test": "fusion_source::supervisor::tests::native::partial_graph_startup_failure_stops_started_support_and_releases_lease",
+      "attempt": 2,
+      "exit_code": 0,
+      "valid_one_test_execution": true,
+      "passed": true,
+      "seconds": 3.8062583000282757,
+      "log": "partial_graph_startup_failure_stops_started_support_and_releases_lease-02.log",
+      "log_sha256": "bba8204af02b09bb8bc648682e505cfa70f525bcde05d9e20f2ee98a19ce222a"
+    },
+    {
+      "test": "fusion_source::supervisor::tests::native::partial_graph_startup_failure_stops_started_support_and_releases_lease",
+      "attempt": 3,
+      "exit_code": 0,
+      "valid_one_test_execution": true,
+      "passed": true,
+      "seconds": 3.324302200053353,
+      "log": "partial_graph_startup_failure_stops_started_support_and_releases_lease-03.log",
+      "log_sha256": "0e94a8e5cadef4d603f1a723534c7d497a4e38f43977534054998e6b09629cfc"
+    },
+    {
+      "test": "fusion_source::supervisor::tests::native::partial_graph_startup_failure_stops_started_support_and_releases_lease",
+      "attempt": 4,
+      "exit_code": 0,
+      "valid_one_test_execution": true,
+      "passed": true,
+      "seconds": 3.2625009999610484,
+      "log": "partial_graph_startup_failure_stops_started_support_and_releases_lease-04.log",
+      "log_sha256": "437e039b534a9467712581f7059bbfb144e1b50ed2532c78cbd9fda7d8dbbe17"
+    },
+    {
+      "test": "fusion_source::supervisor::tests::native::partial_graph_startup_failure_stops_started_support_and_releases_lease",
+      "attempt": 5,
+      "exit_code": 0,
+      "valid_one_test_execution": true,
+      "passed": true,
+      "seconds": 3.316241300024558,
+      "log": "partial_graph_startup_failure_stops_started_support_and_releases_lease-05.log",
+      "log_sha256": "a31d85dd9892a0000b5be60b69a9cf9b72ae3c438833c28ff600ae6305bfa0fa"
+    },
+    {
+      "test": "fusion_source::supervisor::tests::native::partial_graph_startup_failure_stops_started_support_and_releases_lease",
+      "attempt": 6,
+      "exit_code": 0,
+      "valid_one_test_execution": true,
+      "passed": true,
+      "seconds": 3.2058834999916144,
+      "log": "partial_graph_startup_failure_stops_started_support_and_releases_lease-06.log",
+      "log_sha256": "94ff3b8fd2feff8078348ae82ddf889c1248391107e70c57f3e36d6eb7b659c6"
+    },
+    {
+      "test": "fusion_source::supervisor::tests::native::partial_graph_startup_failure_stops_started_support_and_releases_lease",
+      "attempt": 7,
+      "exit_code": 0,
+      "valid_one_test_execution": true,
+      "passed": true,
+      "seconds": 2.901829699985683,
+      "log": "partial_graph_startup_failure_stops_started_support_and_releases_lease-07.log",
+      "log_sha256": "43ed1484a53cce0c287a0d1227e8d0fcec58234b1fddc38d6c0c140b2fa9a8c7"
+    },
+    {
+      "test": "fusion_source::supervisor::tests::native::partial_graph_startup_failure_stops_started_support_and_releases_lease",
+      "attempt": 8,
+      "exit_code": 0,
+      "valid_one_test_execution": true,
+      "passed": true,
+      "seconds": 3.327926999947522,
+      "log": "partial_graph_startup_failure_stops_started_support_and_releases_lease-08.log",
+      "log_sha256": "64848d1daec6ddf3575727c7866ec517e9e1edaed9713c0ce6d0e462f2a81ff0"
+    },
+    {
+      "test": "fusion_source::supervisor::tests::native::partial_graph_startup_failure_stops_started_support_and_releases_lease",
+      "attempt": 9,
+      "exit_code": 0,
+      "valid_one_test_execution": true,
+      "passed": true,
+      "seconds": 3.412467999965884,
+      "log": "partial_graph_startup_failure_stops_started_support_and_releases_lease-09.log",
+      "log_sha256": "45352b9756e626aaa579a5a8a0704ccc89d7988ba8361c0e2570af63118ada95"
+    },
+    {
+      "test": "fusion_source::supervisor::tests::native::partial_graph_startup_failure_stops_started_support_and_releases_lease",
+      "attempt": 10,
+      "exit_code": 0,
+      "valid_one_test_execution": true,
+      "passed": true,
+      "seconds": 3.3724452999886125,
+      "log": "partial_graph_startup_failure_stops_started_support_and_releases_lease-10.log",
+      "log_sha256": "dee0967d198ea9e227ebfb7ed7b31da1b5634d941314a234d1495adc8beeb5c8"
+    },
+    {
+      "test": "fusion_source::supervisor::tests::native::cancelling_job_waits_for_actual_descendants_and_drops_all_base_locks",
+      "attempt": 1,
+      "exit_code": 0,
+      "valid_one_test_execution": true,
+      "passed": true,
+      "seconds": 3.3174064000486396,
+      "log": "cancelling_job_waits_for_actual_descendants_and_drops_all_base_locks-01.log",
+      "log_sha256": "2715a03e2f8b90e062d424cf88a9d08398165abbd2011eba18616a177e744b00"
+    },
+    {
+      "test": "fusion_source::supervisor::tests::native::cancelling_job_waits_for_actual_descendants_and_drops_all_base_locks",
+      "attempt": 2,
+      "exit_code": 0,
+      "valid_one_test_execution": true,
+      "passed": true,
+      "seconds": 3.446912700019311,
+      "log": "cancelling_job_waits_for_actual_descendants_and_drops_all_base_locks-02.log",
+      "log_sha256": "714e28f8dc140ca4fc2670c2f8a71ca35d7a9008d7ba402d0058bfe328eb0682"
+    },
+    {
+      "test": "fusion_source::supervisor::tests::native::cancelling_job_waits_for_actual_descendants_and_drops_all_base_locks",
+      "attempt": 3,
+      "exit_code": 0,
+      "valid_one_test_execution": true,
+      "passed": true,
+      "seconds": 3.486481999978423,
+      "log": "cancelling_job_waits_for_actual_descendants_and_drops_all_base_locks-03.log",
+      "log_sha256": "ef55bfa933f8c4288ff4fd20a36608061f52b7e89e1ad4f1da20e379a10f70f1"
+    },
+    {
+      "test": "fusion_source::supervisor::tests::native::cancelling_job_waits_for_actual_descendants_and_drops_all_base_locks",
+      "attempt": 4,
+      "exit_code": 0,
+      "valid_one_test_execution": true,
+      "passed": true,
+      "seconds": 3.640821600041818,
+      "log": "cancelling_job_waits_for_actual_descendants_and_drops_all_base_locks-04.log",
+      "log_sha256": "b4ac3a9e7eb83b423cd3a6a59645bdf6f19090e44ae5844f7022071e3a3ceeb9"
+    },
+    {
+      "test": "fusion_source::supervisor::tests::native::cancelling_job_waits_for_actual_descendants_and_drops_all_base_locks",
+      "attempt": 5,
+      "exit_code": 0,
+      "valid_one_test_execution": true,
+      "passed": true,
+      "seconds": 3.517243599984795,
+      "log": "cancelling_job_waits_for_actual_descendants_and_drops_all_base_locks-05.log",
+      "log_sha256": "8f8233f44e197d15fa9c9ce963847adcc9e0469a1d730b7491c93ec305b79f6f"
+    },
+    {
+      "test": "fusion_source::supervisor::tests::native::cancelling_job_waits_for_actual_descendants_and_drops_all_base_locks",
+      "attempt": 6,
+      "exit_code": 0,
+      "valid_one_test_execution": true,
+      "passed": true,
+      "seconds": 3.297062100027688,
+      "log": "cancelling_job_waits_for_actual_descendants_and_drops_all_base_locks-06.log",
+      "log_sha256": "b36f6cea6faf5f59c4d5d16bd0b1cde99b556b69adae443215935230cdb5dbf6"
+    },
+    {
+      "test": "fusion_source::supervisor::tests::native::cancelling_job_waits_for_actual_descendants_and_drops_all_base_locks",
+      "attempt": 7,
+      "exit_code": 0,
+      "valid_one_test_execution": true,
+      "passed": true,
+      "seconds": 3.305082399980165,
+      "log": "cancelling_job_waits_for_actual_descendants_and_drops_all_base_locks-07.log",
+      "log_sha256": "3d9b1e13626176323cb8a296d6124b8a3b81cea5320483865e2a2f257ebc4b01"
+    },
+    {
+      "test": "fusion_source::supervisor::tests::native::cancelling_job_waits_for_actual_descendants_and_drops_all_base_locks",
+      "attempt": 8,
+      "exit_code": 0,
+      "valid_one_test_execution": true,
+      "passed": true,
+      "seconds": 3.7106065999832936,
+      "log": "cancelling_job_waits_for_actual_descendants_and_drops_all_base_locks-08.log",
+      "log_sha256": "63699b98dfb42ea8c31758e443d5ee98dc65236df194c57117cee1e511761a2e"
+    },
+    {
+      "test": "fusion_source::supervisor::tests::native::cancelling_job_waits_for_actual_descendants_and_drops_all_base_locks",
+      "attempt": 9,
+      "exit_code": 0,
+      "valid_one_test_execution": true,
+      "passed": true,
+      "seconds": 2.9115835999837145,
+      "log": "cancelling_job_waits_for_actual_descendants_and_drops_all_base_locks-09.log",
+      "log_sha256": "aaa8ed9261ac2585ae67549292906cd07d318ee30f76a43bbbb789b5dd5173e1"
+    },
+    {
+      "test": "fusion_source::supervisor::tests::native::cancelling_job_waits_for_actual_descendants_and_drops_all_base_locks",
+      "attempt": 10,
+      "exit_code": 0,
+      "valid_one_test_execution": true,
+      "passed": true,
+      "seconds": 2.9250873000128195,
+      "log": "cancelling_job_waits_for_actual_descendants_and_drops_all_base_locks-10.log",
+      "log_sha256": "c6a140fcf86934e2408e7b7cddfea7c06893a64a5e6f2bff7e648a4b18214809"
+    }
+  ],
+  "summary": {
+    "fusion_source::supervisor::tests::native::partial_graph_startup_failure_stops_started_support_and_releases_lease": {
+      "attempts": 10,
+      "passed": 10,
+      "failed": 0
+    },
+    "fusion_source::supervisor::tests::native::cancelling_job_waits_for_actual_descendants_and_drops_all_base_locks": {
+      "attempts": 10,
+      "passed": 10,
+      "failed": 0
+    }
+  }
+}

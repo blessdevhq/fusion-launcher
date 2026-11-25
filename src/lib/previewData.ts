@@ -1,5 +1,6 @@
 import type {
   CatalogGame,
+  DeepLinkAction,
   DiagnosticsBundle,
   DiagnosticsPaths,
   DownloadRecord,
@@ -9,6 +10,7 @@ import type {
   HealthReport,
   ImportAssetFileReport,
   ImportGameFileReport,
+  SmartImportReport,
   LibraryScrapeStatus,
   LaunchReport,
   LibraryGameStatus,
@@ -18,6 +20,7 @@ import type {
   ProfileEmulatorConfig,
   ProfileEmulatorRemovalReport,
   RepairLibraryReport,
+  RemovalReport,
   RepositoryPreview,
   RepositorySummary,
   RequirementsReport,
@@ -126,6 +129,7 @@ const catalog: CatalogGame[] = [
 
 let downloadRoot = PREVIEW_GAMES_ROOT;
 let libraryRoot = 'C:\\Users\\preview\\AppData\\Local\\Fusion Launcher';
+let previewAttemptSequence = 0;
 let downloads: TorrentDownloadRecord[] = [
   torrent('crystal-caverns', 'completed', 100, 46_000_000, 46_000_000, 0, 0, null),
   torrent('neon-rally', 'downloading', 68, 2_400_000_000, 3_500_000_000, 12_000_000, 7, null),
@@ -143,8 +147,8 @@ let scraperStatus: ScreenScraperStatus = {
   dailyLimit: 20_000
 };
 let steamgriddbStatus: SteamGridDbStatus = {
-  configured: false,
-  keySource: 'none',
+  configured: true,
+  keySource: 'built-in',
   dailyRequests: 0,
   dailyLimit: 1_000,
   pendingBatch: 0,
@@ -305,10 +309,11 @@ export const previewApi = {
     return scraperStatus;
   },
   async saveSteamgriddbKey(apiKey: string): Promise<SteamGridDbStatus> {
+    const hasUserKey = Boolean(apiKey.trim());
     steamgriddbStatus = {
       ...steamgriddbStatus,
-      configured: Boolean(apiKey.trim()),
-      keySource: apiKey.trim() ? 'user' : 'none'
+      configured: true,
+      keySource: hasUserKey ? 'user' : 'built-in'
     };
     return steamgriddbStatus;
   },
@@ -343,6 +348,9 @@ export const previewApi = {
       batchRunning: false
     };
     return { running: false, pending: steamgriddbStatus.pendingBatch };
+  },
+  async cacheArtwork(url: string): Promise<string> {
+    return url;
   },
   async checkRequirements(gameId: string): Promise<RequirementsReport> {
     const setup = await previewApi.getGameSetupState(gameId);
@@ -526,6 +534,78 @@ export const previewApi = {
     profileSystemFileImports[`${profile.id}:${requirement.id}`] = installedPath;
     return { status: 'installed', installedPath };
   },
+  async detectSystemFile(sourcePath: string): Promise<SmartImportReport> {
+    const normalized = sourcePath.toLowerCase();
+    if (normalized.endsWith('prod.keys') || normalized.endsWith('.keys')) {
+      return {
+        success: true,
+        detectedKind: 'switch_keys',
+        platform: 'switch',
+        profileId: 'switch-manual',
+        requirementId: 'switch-prod-keys',
+        label: 'Switch prod.keys',
+        status: 'ready',
+        message: 'Nintendo Switch keys recognized.'
+      };
+    }
+    if (normalized.endsWith('firmware.zip') || normalized.includes('firmware')) {
+      return {
+        success: true,
+        detectedKind: 'switch_firmware',
+        platform: 'switch',
+        profileId: 'switch-manual',
+        requirementId: 'switch-firmware',
+        label: 'Switch firmware',
+        status: 'ready',
+        message: 'Nintendo Switch firmware recognized.'
+      };
+    }
+    if (normalized.endsWith('.pup') || normalized.includes('ps3updat')) {
+      return {
+        success: true,
+        detectedKind: 'ps3_firmware',
+        platform: 'ps3',
+        profileId: 'ps3-manual',
+        requirementId: 'ps3-firmware',
+        label: 'PlayStation 3 Firmware',
+        status: 'ready',
+        message: 'PlayStation 3 firmware recognized.'
+      };
+    }
+    if (normalized.includes('ps2') || normalized.includes('scph')) {
+      return {
+        success: true,
+        detectedKind: 'ps2_bios',
+        platform: 'ps2',
+        profileId: 'ps2-pcsx2',
+        requirementId: 'ps2-bios',
+        label: 'PlayStation 2 BIOS',
+        status: 'ready',
+        message: 'PlayStation 2 BIOS recognized.'
+      };
+    }
+    return {
+      success: false,
+      detectedKind: 'unknown',
+      label: 'Unknown file',
+      status: 'unrecognized',
+      message: 'File not recognized as a system requirement.'
+    };
+  },
+  async autoImportSystemFile(sourcePath: string): Promise<SmartImportReport> {
+    const detection = await this.detectSystemFile(sourcePath);
+    if (!detection.success || !detection.profileId || !detection.requirementId) {
+      return detection;
+    }
+    const installedPath = previewJoin(PREVIEW_SYSTEM_ROOT, detection.platform ?? 'system', detection.label);
+    profileSystemFileImports[`${detection.profileId}:${detection.requirementId}`] = installedPath;
+    return {
+      ...detection,
+      installedPath,
+      status: 'installed',
+      message: `Successfully installed ${detection.label}`
+    };
+  },
   async listEmulatorConfigs(): Promise<EmulatorConfig[]> {
     return listDefaultEmulatorConfigs();
   },
@@ -668,12 +748,12 @@ export const previewApi = {
     libraryRoot = path || libraryRoot;
     return libraryRoot;
   },
-  async removeGame(gameId: string, _deleteFiles: boolean): Promise<boolean> {
+  async removeGame(gameId: string, _deleteFiles: boolean): Promise<RemovalReport> {
     const before = downloads.length;
     downloads = downloads.filter((item) => item.gameId !== gameId);
-    return downloads.length !== before;
+    return { changed: downloads.length !== before, preservedPaths: [] };
   },
-  async removeDownload(downloadId: string, deleteFiles: boolean): Promise<boolean> {
+  async removeDownload(downloadId: string, deleteFiles: boolean): Promise<RemovalReport> {
     return previewApi.removeGame(downloadId, deleteFiles);
   },
   async redownloadAsset(assetId: string, targetDir?: string): Promise<DownloadRecord> {
@@ -708,6 +788,8 @@ export const previewApi = {
     downloads = [
       {
         gameId,
+        attemptId: `preview-attempt-${++previewAttemptSequence}`,
+        runId: 1,
         magnetUri,
         saveDir,
         status: 'downloading',
@@ -787,6 +869,32 @@ export const previewApi = {
     };
   },
   async installAppUpdate(): Promise<void> {
+    return undefined;
+  },
+  async parseDeepLink(uri: string): Promise<DeepLinkAction> {
+    const url = new URL(uri);
+    const host = url.host.toLowerCase();
+    const path = url.pathname.replace(/^\//, '').toLowerCase();
+    const params = Object.fromEntries(url.searchParams.entries());
+
+    if (host === 'source' || path.startsWith('source')) {
+      if (params.url && params.url.startsWith('https://')) {
+        return { action: 'addSource', params: { url: params.url } };
+      }
+    } else if (host === 'install' || path.startsWith('install')) {
+      const manifest = params.manifest || params.url;
+      if (manifest && manifest.startsWith('https://')) {
+        return { action: 'install', params: { manifest } };
+      }
+    } else if (host === 'play' || path.startsWith('play')) {
+      const gameId = params.game || params.id;
+      if (gameId) {
+        return { action: 'play', params: { gameId } };
+      }
+    }
+    throw new Error('deep_link_invalid');
+  },
+  async registerDeepLinkProtocol(): Promise<void> {
     return undefined;
   }
 };
@@ -927,6 +1035,8 @@ function torrent(
 ): TorrentDownloadRecord {
   return {
     gameId,
+    attemptId: `preview-attempt-${++previewAttemptSequence}`,
+    runId: 1,
     magnetUri: `magnet:?xt=urn:btih:${gameId.replaceAll('-', '')}`,
     saveDir: previewGameTorrentDir(gameId),
     status,
@@ -955,6 +1065,8 @@ function directDownloadRecord(
   const timestamp = new Date().toISOString();
   return {
     gameId,
+    attemptId: `preview-attempt-${++previewAttemptSequence}`,
+    runId: 1,
     subjectType,
     displayName: displayName ?? gameId,
     magnetUri: `direct:${sourceKind}`,
@@ -1111,6 +1223,7 @@ function updateTorrentStatus(
   if (!record) throw new Error(`Unknown preview torrent: ${gameId}`);
   const updated = {
     ...record,
+    runId: status === 'downloading' ? (record.runId ?? 0) + 1 : record.runId,
     status,
     errorMessage,
     downloadSpeedBytesPerSec,

@@ -5,7 +5,6 @@ use std::time::{Duration, Instant};
 use reqwest::header::RANGE;
 use reqwest::StatusCode;
 use sha2::{Digest, Sha256};
-use tokio::io::AsyncWriteExt;
 use url::Url;
 
 use crate::builtin_demo;
@@ -15,17 +14,53 @@ use crate::schema::SourceUri;
 /// timeout: large game/emulator archives can legitimately take a long time.
 const DOWNLOAD_CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// Some hosts (notably the GitHub API/redirect chain) reject requests without a
-/// User-Agent, so every download identifies itself.
-const DOWNLOAD_USER_AGENT: &str = concat!("FusionLauncher/", env!("CARGO_PKG_VERSION"));
-
 /// Minimum gap between streaming progress callbacks, to avoid flooding the IPC
 /// channel and SQLite on fast connections.
 const PROGRESS_REPORT_INTERVAL: Duration = Duration::from_millis(400);
+pub const DOWNLOAD_CANCELLED_MESSAGE: &str = "Download cancelled.";
 
+#[derive(Debug)]
 pub struct DownloadedFile {
     pub path: PathBuf,
     pub sha256: String,
+}
+
+pub use crate::download_operations::OperationCoordinator as DirectDownloadRegistry;
+
+pub fn is_download_cancelled_error(error: &str) -> bool {
+    error == DOWNLOAD_CANCELLED_MESSAGE
+}
+
+pub(crate) struct DirectDownloadSpeedMeter {
+    previous: Option<(u64, Instant)>,
+}
+
+impl DirectDownloadSpeedMeter {
+    pub(crate) fn new() -> Self {
+        Self { previous: None }
+    }
+
+    pub(crate) fn sample(&mut self, downloaded_bytes: u64) -> u64 {
+        self.sample_at(downloaded_bytes, Instant::now())
+    }
+
+    fn sample_at(&mut self, downloaded_bytes: u64, now: Instant) -> u64 {
+        let Some((previous_bytes, previous_at)) = self.previous.replace((downloaded_bytes, now))
+        else {
+            return 0;
+        };
+
+        if downloaded_bytes <= previous_bytes {
+            return 0;
+        }
+
+        let elapsed = now.saturating_duration_since(previous_at);
+        if elapsed.is_zero() {
+            return 0;
+        }
+
+        ((downloaded_bytes - previous_bytes) as f64 / elapsed.as_secs_f64()).round() as u64
+    }
 }
 
 /// Options controlling a streaming HTTP download.
@@ -45,6 +80,7 @@ pub struct StreamOptions<'a> {
     pub resume: bool,
 }
 
+#[cfg(test)]
 pub async fn download_source_to_file(
     source: &SourceUri,
     destination: &Path,
@@ -55,10 +91,24 @@ pub async fn download_source_to_file(
 /// Like [`download_source_to_file`], but reports streaming progress
 /// (`downloaded_bytes`, `total_bytes`) for HTTP sources. Bundled/magnet/
 /// user-provided sources do not stream and never invoke `on_progress`.
+#[cfg(test)]
 pub async fn download_source_to_file_with_progress(
     source: &SourceUri,
     destination: &Path,
     on_progress: impl FnMut(u64, Option<u64>),
+) -> Result<DownloadedFile, String> {
+    download_source_to_file_with_progress_and_cancel(source, destination, on_progress, || false)
+        .await
+}
+
+/// Like [`download_source_to_file_with_progress`], but lets callers abort a
+/// streaming direct download without waiting for the process to exit.
+#[cfg(test)]
+pub async fn download_source_to_file_with_progress_and_cancel(
+    source: &SourceUri,
+    destination: &Path,
+    on_progress: impl FnMut(u64, Option<u64>),
+    mut is_cancelled: impl FnMut() -> bool,
 ) -> Result<DownloadedFile, String> {
     match source {
         SourceUri::Http {
@@ -81,6 +131,7 @@ pub async fn download_source_to_file_with_progress(
                     resume: true,
                 },
                 on_progress,
+                is_cancelled,
             )
             .await
         }
@@ -88,7 +139,12 @@ pub async fn download_source_to_file_with_progress(
             path,
             sha256,
             size_bytes,
-        } => copy_bundled_to_file(path, sha256, *size_bytes, destination).await,
+        } => {
+            if is_cancelled() {
+                return Err(DOWNLOAD_CANCELLED_MESSAGE.to_string());
+            }
+            copy_bundled_to_file(path, sha256, *size_bytes, destination).await
+        }
         SourceUri::Magnet { uri, .. } => handle_torrent(uri).await,
         SourceUri::UserProvided { .. } => {
             Err("This source is user-provided and cannot be downloaded automatically.".to_string())
@@ -146,161 +202,10 @@ pub fn hash_file(path: &Path) -> Result<String, String> {
     Ok(hex::encode(hasher.finalize()))
 }
 
-/// Streams an HTTP body to `destination` without buffering the whole file in
-/// memory. Writes to a sibling `<name>.part` file and atomically renames it
-/// into place only after size/hash verification succeeds, so a crash never
-/// leaves a partial file that looks complete.
-pub async fn download_http_streaming(
-    url: &str,
-    destination: &Path,
-    options: StreamOptions<'_>,
-    mut on_progress: impl FnMut(u64, Option<u64>),
-) -> Result<DownloadedFile, String> {
-    if let Some(parent) = destination.parent() {
-        tokio::fs::create_dir_all(parent)
-            .await
-            .map_err(|error| format!("Failed to create download folder: {error}"))?;
-    }
-    let part_path = part_path_for(destination);
-
-    // Decide whether we can resume an existing partial file. If anything looks
-    // off we fall back to a clean download instead of risking a corrupt resume.
-    let mut hasher = Sha256::new();
-    let mut downloaded: u64 = 0;
-    let mut resume_offset: u64 = 0;
-    if options.resume {
-        if let Ok(metadata) = tokio::fs::metadata(&part_path).await {
-            if metadata.is_file() && metadata.len() > 0 {
-                match hash_existing_part(&part_path, hasher).await {
-                    Ok((existing_hasher, existing_len)) => {
-                        hasher = existing_hasher;
-                        downloaded = existing_len;
-                        resume_offset = existing_len;
-                    }
-                    Err(_) => {
-                        let _ = tokio::fs::remove_file(&part_path).await;
-                        hasher = Sha256::new();
-                    }
-                }
-            }
-        }
-    } else {
-        let _ = tokio::fs::remove_file(&part_path).await;
-    }
-
-    let client = reqwest::Client::builder()
-        .connect_timeout(DOWNLOAD_CONNECT_TIMEOUT)
-        .user_agent(DOWNLOAD_USER_AGENT)
-        .build()
-        .map_err(|error| format!("Failed to initialize downloader: {error}"))?;
-    let mut request = client.get(url);
-    if resume_offset > 0 {
-        request = request.header(RANGE, format!("bytes={resume_offset}-"));
-    }
-    let response = request
-        .send()
-        .await
-        .map_err(|error| format!("Failed to fetch source: {error}"))?;
-
-    // If we asked for a range but the server replied 200 OK, it ignored the
-    // Range header and is sending the whole file again: restart from scratch.
-    let mut append = false;
-    if resume_offset > 0 {
-        if response.status() == StatusCode::PARTIAL_CONTENT {
-            append = true;
-        } else if response.status().is_success() {
-            hasher = Sha256::new();
-            downloaded = 0;
-            let _ = tokio::fs::remove_file(&part_path).await;
-        }
-    }
-    let mut response = response
-        .error_for_status()
-        .map_err(|error| format!("Source returned an error: {error}"))?;
-
-    // For a 206 resume the body is only the remaining bytes, so add what we
-    // already have on disk to report a meaningful total.
-    let total_bytes = response
-        .content_length()
-        .map(|len| len + resume_offset)
-        .or(options.expected_size_bytes);
-
-    let mut file = tokio::fs::OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(!append)
-        .append(append)
-        .open(&part_path)
-        .await
-        .map_err(|error| format!("Failed to open download file: {error}"))?;
-
-    on_progress(downloaded, total_bytes);
-    let mut last_report = Instant::now();
-
-    loop {
-        let chunk = match response.chunk().await {
-            Ok(Some(chunk)) => chunk,
-            Ok(None) => break,
-            Err(error) => return Err(format!("Failed to read source body: {error}")),
-        };
-        downloaded += chunk.len() as u64;
-        if let Some(max_bytes) = options.max_bytes {
-            if downloaded > max_bytes {
-                drop(file);
-                let _ = tokio::fs::remove_file(&part_path).await;
-                return Err(format!(
-                    "Download exceeded the size limit of {max_bytes} bytes."
-                ));
-            }
-        }
-        hasher.update(&chunk);
-        file.write_all(&chunk)
-            .await
-            .map_err(|error| format!("Failed to write download: {error}"))?;
-
-        if last_report.elapsed() >= PROGRESS_REPORT_INTERVAL {
-            on_progress(downloaded, total_bytes);
-            last_report = Instant::now();
-        }
-    }
-
-    on_progress(downloaded, total_bytes);
-
-    file.flush()
-        .await
-        .map_err(|error| format!("Failed to flush download: {error}"))?;
-    file.sync_all()
-        .await
-        .map_err(|error| format!("Failed to persist download: {error}"))?;
-    drop(file);
-
-    if let Err(error) = validate_size(downloaded, options.expected_size_bytes) {
-        let _ = tokio::fs::remove_file(&part_path).await;
-        return Err(error);
-    }
-
-    let actual_sha256 = hex::encode(hasher.finalize());
-    if let Some(expected_sha256) = options.expected_sha256 {
-        if !actual_sha256.eq_ignore_ascii_case(expected_sha256) {
-            let _ = tokio::fs::remove_file(&part_path).await;
-            return Err(format!(
-                "SHA256 mismatch: expected {expected_sha256}, got {actual_sha256}"
-            ));
-        }
-    }
-
-    if tokio::fs::metadata(destination).await.is_ok() {
-        let _ = tokio::fs::remove_file(destination).await;
-    }
-    tokio::fs::rename(&part_path, destination)
-        .await
-        .map_err(|error| format!("Failed to finalize download: {error}"))?;
-
-    Ok(DownloadedFile {
-        path: destination.to_path_buf(),
-        sha256: actual_sha256,
-    })
-}
+include!("download_http.rs");
+#[cfg(test)]
+#[path = "download_http_tests.rs"]
+mod http_tests;
 
 fn part_path_for(destination: &Path) -> PathBuf {
     let mut file_name = destination
@@ -313,6 +218,7 @@ fn part_path_for(destination: &Path) -> PathBuf {
 
 /// Re-hashes an existing `.part` file off the async runtime so a resumed
 /// download continues the SHA-256 from exactly where it left off.
+#[cfg(test)]
 async fn hash_existing_part(path: &Path, hasher: Sha256) -> Result<(Sha256, u64), String> {
     let path = path.to_path_buf();
     tokio::task::spawn_blocking(move || {
@@ -337,6 +243,7 @@ async fn hash_existing_part(path: &Path, hasher: Sha256) -> Result<(Sha256, u64)
     .map_err(|error| format!("Failed to inspect partial download: {error}"))?
 }
 
+#[cfg(test)]
 async fn copy_bundled_to_file(
     path: &str,
     expected_sha256: &str,
@@ -380,6 +287,7 @@ fn validate_size(actual_size_bytes: u64, expected_size_bytes: Option<u64>) -> Re
     Ok(())
 }
 
+#[cfg(test)]
 async fn handle_torrent(_magnet: &str) -> Result<DownloadedFile, String> {
     Err("Torrent handler is not implemented in v1.".to_string())
 }
@@ -435,6 +343,112 @@ mod tests {
     fn part_path_is_sibling_with_part_suffix() {
         let part = part_path_for(Path::new("C:/games/nes/sonic.nes"));
         assert_eq!(part, Path::new("C:/games/nes/sonic.nes.part"));
+    }
+
+    #[test]
+    fn direct_download_registry_cancels_and_forgets_token() {
+        let registry = DirectDownloadRegistry::new();
+        let guard = registry.start("repo::game").unwrap();
+        let token = guard.token();
+
+        assert!(!token.is_cancelled());
+        assert!(registry.cancel("repo::game").unwrap());
+        assert!(token.is_cancelled());
+
+        drop(guard);
+        assert!(
+            registry.cancel("repo::game").unwrap(),
+            "a cloned lease still owns resources"
+        );
+        drop(token);
+        assert!(!registry.cancel("repo::game").unwrap());
+    }
+
+    #[test]
+    fn direct_download_speed_meter_reports_delta_per_second() {
+        let mut meter = DirectDownloadSpeedMeter::new();
+        let start = Instant::now();
+
+        assert_eq!(meter.sample_at(1_000, start), 0);
+        assert_eq!(
+            meter.sample_at(3_000, start + Duration::from_millis(500)),
+            4_000
+        );
+    }
+
+    #[test]
+    fn direct_download_speed_meter_ignores_invalid_samples() {
+        let mut meter = DirectDownloadSpeedMeter::new();
+        let start = Instant::now();
+
+        assert_eq!(meter.sample_at(2_000, start), 0);
+        assert_eq!(meter.sample_at(2_000, start + Duration::from_secs(1)), 0);
+        assert_eq!(meter.sample_at(1_000, start + Duration::from_secs(2)), 0);
+        assert_eq!(meter.sample_at(2_000, start + Duration::from_secs(2)), 0);
+    }
+
+    #[tokio::test]
+    async fn cancelled_http_download_preserves_partial_file_before_request() {
+        let temp = tempfile::tempdir().unwrap();
+        let destination = temp.path().join("game.bin");
+        let part = part_path_for(&destination);
+        std::fs::write(&part, b"partial").unwrap();
+
+        let error = download_http_streaming(
+            "https://example.com/game.bin",
+            &destination,
+            StreamOptions {
+                expected_sha256: None,
+                expected_size_bytes: None,
+                max_bytes: None,
+                resume: true,
+            },
+            |_, _| {},
+            || true,
+        )
+        .await
+        .unwrap_err();
+
+        assert_eq!(error, DOWNLOAD_CANCELLED_MESSAGE);
+        assert_eq!(std::fs::read(&part).unwrap(), b"partial");
+    }
+
+    #[tokio::test]
+    async fn rejects_http_download_to_forbidden_or_insecure_host() {
+        let temp = tempfile::tempdir().unwrap();
+        let destination = temp.path().join("file.bin");
+
+        let err_http = download_http_streaming(
+            "http://example.com/file.bin",
+            &destination,
+            StreamOptions {
+                expected_sha256: None,
+                expected_size_bytes: None,
+                max_bytes: None,
+                resume: false,
+            },
+            |_, _| {},
+            || false,
+        )
+        .await
+        .unwrap_err();
+        assert!(err_http.contains("only HTTPS is permitted"));
+
+        let err_ssrf = download_http_streaming(
+            "https://127.0.0.1/file.bin",
+            &destination,
+            StreamOptions {
+                expected_sha256: None,
+                expected_size_bytes: None,
+                max_bytes: None,
+                resume: false,
+            },
+            |_, _| {},
+            || false,
+        )
+        .await
+        .unwrap_err();
+        assert!(err_ssrf.contains("forbidden"));
     }
 
     #[tokio::test]

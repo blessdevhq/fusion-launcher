@@ -16,7 +16,15 @@ impl RepositoryStore {
         self.conn.execute_batch(
             r#"
             PRAGMA foreign_keys = ON;
-
+            PRAGMA busy_timeout = 5000;
+            PRAGMA synchronous = NORMAL;
+            "#,
+        )?;
+        let _: String = self
+            .conn
+            .query_row("PRAGMA journal_mode = WAL;", [], |row| row.get(0))?;
+        self.conn.execute_batch(
+            r#"
             CREATE TABLE IF NOT EXISTS repositories (
               id TEXT PRIMARY KEY,
               url TEXT NOT NULL,
@@ -85,6 +93,7 @@ impl RepositoryStore {
               save_dir TEXT NOT NULL,
               status TEXT NOT NULL CHECK (
                 status IN (
+                  'queued',
                   'resolving',
                   'downloading',
                   'paused',
@@ -217,6 +226,7 @@ impl RepositoryStore {
         )?;
 
         self.migrate_downloads_schema()?;
+        self.migrate_torrent_downloads_schema()?;
         self.ensure_column(
             "catalog_games",
             "expected_extensions_json",
@@ -237,9 +247,352 @@ impl RepositoryStore {
         )?;
         self.ensure_column("repositories", "content_hash", "TEXT")?;
         self.ensure_column("repositories", "last_refreshed_at", "TEXT")?;
-        self.migrate_legacy_emulator_configs_inner()?;
+
+        let user_version: i32 = self
+            .conn
+            .query_row("PRAGMA user_version;", [], |row| row.get(0))?;
+        if user_version < 1 {
+            self.migrate_v0_to_v1_inner()?;
+        }
+        if user_version < 2 {
+            self.migrate_v1_to_v2_inner()?;
+        }
+        if user_version < 3 {
+            self.conn.execute_batch("BEGIN IMMEDIATE")?;
+            let result = (|| -> rusqlite::Result<()> {
+                self.ensure_column("torrent_downloads", "attempt_id", "TEXT")?;
+                self.ensure_column("torrent_downloads", "run_id", "INTEGER NOT NULL DEFAULT 0")?;
+                self.conn.execute_batch("PRAGMA user_version = 3;")
+            })();
+            match result {
+                Ok(()) => self.conn.execute_batch("COMMIT")?,
+                Err(error) => {
+                    let _ = self.conn.execute_batch("ROLLBACK");
+                    return Err(error);
+                }
+            }
+        }
+
+        if user_version < 4 {
+            self.migrate_v3_to_v4_inner()?;
+        }
+
+        if user_version < 5 {
+            self.conn.execute_batch("BEGIN IMMEDIATE")?;
+            let result = self.conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS fusion_local_sources (
+                    source_id TEXT PRIMARY KEY REFERENCES fusion_sources(id),
+                    directory TEXT NOT NULL,
+                    prepare_eden INTEGER NOT NULL DEFAULT 0 CHECK (prepare_eden IN (0, 1))
+                 ); PRAGMA user_version = 5;",
+            );
+            match result {
+                Ok(()) => self.conn.execute_batch("COMMIT")?,
+                Err(error) => {
+                    let _ = self.conn.execute_batch("ROLLBACK");
+                    return Err(error);
+                }
+            }
+        }
+
+        if user_version < 6 {
+            self.migrate_v5_to_v6_inner()?;
+        }
 
         Ok(())
+    }
+
+    /// Creator has one authoritative SQLite document, not a file/DB dual write.
+    /// Re-read under the write lock so simultaneous openers cannot race DDL.
+    fn migrate_v5_to_v6_inner(&self) -> rusqlite::Result<()> {
+        let transaction = rusqlite::Transaction::new_unchecked(
+            &self.conn,
+            rusqlite::TransactionBehavior::Immediate,
+        )?;
+        let version: i64 = transaction.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+        if version < 6 {
+            transaction.execute_batch(
+                r#"
+                CREATE TABLE creator_program_projects (
+                    project_id TEXT PRIMARY KEY NOT NULL,
+                    revision INTEGER NOT NULL CHECK (revision BETWEEN 0 AND 9007199254740991),
+                    document BLOB NOT NULL CHECK (length(document) <= 2097152),
+                    document_blake3 TEXT NOT NULL CHECK (length(document_blake3) = 64)
+                );
+                CREATE TABLE creator_private_bindings (
+                    project_id TEXT PRIMARY KEY NOT NULL
+                        REFERENCES creator_program_projects(project_id) ON DELETE CASCADE,
+                    revision INTEGER NOT NULL CHECK (revision BETWEEN 0 AND 9007199254740991),
+                    bindings_json BLOB NOT NULL CHECK (length(bindings_json) <= 2097152)
+                );
+                PRAGMA user_version = 6;
+                "#,
+            )?;
+        }
+        transaction.commit()
+    }
+
+    fn migrate_v3_to_v4_inner(&self) -> rusqlite::Result<()> {
+        self.conn.execute_batch("BEGIN IMMEDIATE")?;
+        let result = self.conn.execute_batch(
+            r#"
+            CREATE TABLE fusion_sources (
+              id TEXT PRIMARY KEY,
+              url TEXT NOT NULL,
+              public_key TEXT,
+              name TEXT NOT NULL,
+              index_json TEXT NOT NULL,
+              connected INTEGER NOT NULL DEFAULT 1 CHECK (connected IN (0, 1)),
+              connected_at TEXT NOT NULL,
+              refreshed_at TEXT NOT NULL
+            );
+            CREATE TABLE fusion_source_entries (
+              source_id TEXT NOT NULL,
+              game_id TEXT NOT NULL,
+              entry_json TEXT NOT NULL,
+              PRIMARY KEY (source_id, game_id),
+              FOREIGN KEY (source_id) REFERENCES fusion_sources(id)
+            );
+            CREATE TABLE fusion_manifest_snapshots (
+              source_id TEXT NOT NULL,
+              game_id TEXT NOT NULL,
+              manifest_blake3 TEXT NOT NULL,
+              raw_bytes BLOB NOT NULL,
+              canonical_json TEXT NOT NULL,
+              canonical_blake3 TEXT NOT NULL,
+              verified_at TEXT NOT NULL,
+              PRIMARY KEY (source_id, game_id, manifest_blake3)
+            );
+            CREATE TABLE fusion_cas_objects (
+              digest TEXT PRIMARY KEY,
+              size_bytes INTEGER NOT NULL DEFAULT 0 CHECK (size_bytes >= 0),
+              ref_count INTEGER NOT NULL DEFAULT 0 CHECK (ref_count >= 0)
+            );
+            CREATE TABLE fusion_installations (
+              source_id TEXT NOT NULL,
+              game_id TEXT NOT NULL,
+              options_json TEXT NOT NULL DEFAULT '{}',
+              active_snapshot_id TEXT,
+              library_root TEXT,
+              external_workspace_root TEXT,
+              active_version TEXT,
+              active_manifest_blake3 TEXT,
+              status TEXT NOT NULL DEFAULT 'not_installed',
+              updated_at TEXT NOT NULL,
+              PRIMARY KEY (source_id, game_id)
+            );
+            CREATE TABLE fusion_workspace_snapshots (
+              id TEXT PRIMARY KEY,
+              source_id TEXT NOT NULL,
+              game_id TEXT NOT NULL,
+              manifest_blake3 TEXT,
+              snapshot_json TEXT NOT NULL,
+              snapshot_blake3 TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              FOREIGN KEY (source_id, game_id) REFERENCES fusion_installations(source_id, game_id)
+            );
+            CREATE TABLE fusion_layer_refs (
+              snapshot_id TEXT NOT NULL,
+              layer_id TEXT NOT NULL,
+              cas_digest TEXT NOT NULL,
+              PRIMARY KEY (snapshot_id, layer_id),
+              FOREIGN KEY (snapshot_id) REFERENCES fusion_workspace_snapshots(id) ON DELETE CASCADE,
+              FOREIGN KEY (cas_digest) REFERENCES fusion_cas_objects(digest)
+            );
+            CREATE TABLE fusion_operations (
+              id TEXT PRIMARY KEY,
+              source_id TEXT NOT NULL,
+              game_id TEXT NOT NULL,
+              kind TEXT NOT NULL,
+              phase TEXT NOT NULL,
+              sequence INTEGER NOT NULL DEFAULT 0 CHECK (sequence >= 0),
+              status TEXT NOT NULL CHECK (status IN ('queued','running','cancelling','completed','cancelled','failed','interrupted')),
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL
+            );
+            CREATE UNIQUE INDEX idx_fusion_active_operation
+              ON fusion_operations(source_id, game_id)
+              WHERE status IN ('queued','running','cancelling');
+            CREATE TABLE fusion_save_snapshots (
+              id TEXT PRIMARY KEY,
+              source_id TEXT NOT NULL,
+              game_id TEXT NOT NULL,
+              snapshot_json TEXT NOT NULL,
+              created_at TEXT NOT NULL
+            );
+            CREATE TABLE fusion_crash_reports (
+              id TEXT PRIMARY KEY,
+              source_id TEXT NOT NULL,
+              game_id TEXT NOT NULL,
+              signature TEXT NOT NULL,
+              report_json TEXT NOT NULL,
+              occurrences INTEGER NOT NULL DEFAULT 1 CHECK (occurrences > 0),
+              status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','sent','discarded')),
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL,
+              UNIQUE (source_id, game_id, signature)
+            );
+            CREATE INDEX idx_fusion_snapshots_game ON fusion_workspace_snapshots(source_id, game_id);
+            CREATE INDEX idx_fusion_crash_game ON fusion_crash_reports(source_id, game_id, status);
+            PRAGMA user_version = 4;
+            "#,
+        );
+        match result {
+            Ok(()) => self.conn.execute_batch("COMMIT"),
+            Err(error) => {
+                let _ = self.conn.execute_batch("ROLLBACK");
+                Err(error)
+            }
+        }
+    }
+
+    fn migrate_v0_to_v1_inner(&self) -> rusqlite::Result<()> {
+        self.conn.execute_batch("BEGIN IMMEDIATE")?;
+        let result = (|| -> rusqlite::Result<()> {
+            self.conn.execute(
+                "DELETE FROM profile_emulator_configs WHERE version = 'manifest'",
+                [],
+            )?;
+            self.conn.execute(
+                "DELETE FROM emulator_configs WHERE version = 'manifest'",
+                [],
+            )?;
+            self.conn.execute(
+                "DELETE FROM app_config WHERE key LIKE 'manifest_emulator:%'",
+                [],
+            )?;
+
+            let legacy_configs = {
+                let mut statement = self.conn.prepare(
+                    r#"
+                    SELECT platform, exe_path, status, last_validated_at, version, launch_args_template
+                    FROM emulator_configs
+                    ORDER BY platform
+                    "#,
+                )?;
+                let rows = statement.query_map([], map_emulator_config_row)?;
+                rows.collect::<rusqlite::Result<Vec<_>>>()?
+            };
+
+            for config in legacy_configs {
+                if config.version.as_deref() == Some("manifest") {
+                    continue;
+                }
+                let Some(profile) =
+                    setup_profiles::get_default_platform_setup_profile(&config.platform)
+                else {
+                    continue;
+                };
+                let exists = self
+                    .conn
+                    .query_row(
+                        "SELECT 1 FROM profile_emulator_configs WHERE profile_id = ?1",
+                        params![profile.id],
+                        |row| row.get::<_, i64>(0),
+                    )
+                    .optional()?;
+                if exists.is_some() {
+                    continue;
+                }
+                self.conn.execute(
+                    r#"
+                    INSERT INTO profile_emulator_configs (
+                      profile_id, platform, exe_path, status, last_validated_at, version, launch_args_template
+                    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                    "#,
+                    params![
+                        profile.id,
+                        config.platform,
+                        config.exe_path,
+                        config.status,
+                        config.last_validated_at,
+                        config.version,
+                        config.launch_args_template
+                    ],
+                )?;
+            }
+
+            self.conn.execute_batch("PRAGMA user_version = 1;")?;
+            Ok(())
+        })();
+
+        match result {
+            Ok(()) => {
+                self.conn.execute_batch("COMMIT")?;
+                Ok(())
+            }
+            Err(error) => {
+                let _ = self.conn.execute_batch("ROLLBACK");
+                Err(error)
+            }
+        }
+    }
+
+    fn migrate_v1_to_v2_inner(&self) -> rusqlite::Result<()> {
+        self.conn.execute_batch("BEGIN IMMEDIATE")?;
+        let result = (|| -> rusqlite::Result<()> {
+            let builtin_urls = [
+                crate::builtin_demo::BUILTIN_DEMO_REPOSITORY_URL,
+                crate::builtin_demo::LEGACY_BUILTIN_DEMO_REPOSITORY_URL,
+            ];
+            self.conn.execute(
+                r#"
+                UPDATE repositories
+                SET trust_level = 'community'
+                WHERE trust_level = 'official'
+                  AND url NOT IN (?1, ?2)
+                "#,
+                params![builtin_urls[0], builtin_urls[1]],
+            )?;
+
+            self.conn.execute_batch("PRAGMA user_version = 2;")?;
+            Ok(())
+        })();
+
+        match result {
+            Ok(()) => {
+                self.conn.execute_batch("COMMIT")?;
+                Ok(())
+            }
+            Err(error) => {
+                let _ = self.conn.execute_batch("ROLLBACK");
+                Err(error)
+            }
+        }
+    }
+
+    pub fn sanitize_manifest_emulator_records(&self) -> Result<usize, String> {
+        self.sanitize_manifest_emulator_records_inner()
+            .map_err(|error| error.to_string())
+    }
+
+    fn sanitize_manifest_emulator_records_inner(&self) -> rusqlite::Result<usize> {
+        self.conn.execute_batch("BEGIN IMMEDIATE")?;
+        let res = (|| -> rusqlite::Result<usize> {
+            let count1 = self.conn.execute(
+                "DELETE FROM profile_emulator_configs WHERE version = 'manifest'",
+                [],
+            )?;
+            let count2 = self.conn.execute(
+                "DELETE FROM emulator_configs WHERE version = 'manifest'",
+                [],
+            )?;
+            let count3 = self.conn.execute(
+                "DELETE FROM app_config WHERE key LIKE 'manifest_emulator:%'",
+                [],
+            )?;
+            Ok(count1 + count2 + count3)
+        })();
+        match res {
+            Ok(count) => {
+                self.conn.execute_batch("COMMIT")?;
+                Ok(count)
+            }
+            Err(err) => {
+                let _ = self.conn.execute_batch("ROLLBACK");
+                Err(err)
+            }
+        }
     }
 
     pub fn migrate_legacy_emulator_configs(&self) -> Result<usize, String> {
@@ -264,6 +617,9 @@ impl RepositoryStore {
 
             let mut migrated = 0;
             for config in legacy_configs {
+                if config.version.as_deref() == Some("manifest") {
+                    continue;
+                }
                 let Some(profile) =
                     setup_profiles::get_default_platform_setup_profile(&config.platform)
                 else {
@@ -373,6 +729,85 @@ impl RepositoryStore {
                 r#"
                 DROP TABLE downloads;
                 ALTER TABLE downloads_next RENAME TO downloads;
+                "#,
+            )?;
+            Ok(())
+        })();
+
+        if let Err(error) = result {
+            let _ = self.conn.execute_batch("ROLLBACK");
+            return Err(error);
+        }
+
+        self.conn.execute_batch("COMMIT")?;
+        Ok(())
+    }
+
+    fn migrate_torrent_downloads_schema(&self) -> rusqlite::Result<()> {
+        let create_sql = self
+            .conn
+            .query_row(
+                "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'torrent_downloads'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?
+            .unwrap_or_default();
+
+        if create_sql.contains("'queued'") {
+            return Ok(());
+        }
+
+        self.conn.execute_batch("BEGIN IMMEDIATE")?;
+        let result = (|| -> rusqlite::Result<()> {
+            self.conn.execute_batch(
+                r#"
+                DROP TABLE IF EXISTS torrent_downloads_next;
+                CREATE TABLE torrent_downloads_next (
+                  game_id TEXT PRIMARY KEY,
+                  magnet_uri TEXT NOT NULL,
+                  save_dir TEXT NOT NULL,
+                  status TEXT NOT NULL CHECK (
+                    status IN (
+                      'queued',
+                      'resolving',
+                      'downloading',
+                      'paused',
+                      'interrupted',
+                      'completed',
+                      'cancelling',
+                      'cancelled',
+                      'error'
+                    )
+                  ),
+                  progress_percent REAL NOT NULL DEFAULT 0,
+                  downloaded_bytes INTEGER NOT NULL DEFAULT 0,
+                  total_bytes INTEGER NOT NULL DEFAULT 0,
+                  download_speed_bytes_per_sec INTEGER NOT NULL DEFAULT 0,
+                  upload_speed_bytes_per_sec INTEGER NOT NULL DEFAULT 0,
+                  peers_count INTEGER NOT NULL DEFAULT 0,
+                  torrent_id INTEGER,
+                  error_message TEXT,
+                  created_at TEXT NOT NULL,
+                  updated_at TEXT NOT NULL,
+                  completed_at TEXT
+                );
+                INSERT INTO torrent_downloads_next (
+                  game_id, magnet_uri, save_dir, status, progress_percent,
+                  downloaded_bytes, total_bytes, download_speed_bytes_per_sec,
+                  upload_speed_bytes_per_sec, peers_count, torrent_id, error_message,
+                  created_at, updated_at, completed_at
+                )
+                SELECT
+                  game_id, magnet_uri, save_dir, status, progress_percent,
+                  downloaded_bytes, total_bytes, download_speed_bytes_per_sec,
+                  upload_speed_bytes_per_sec, peers_count, torrent_id, error_message,
+                  created_at, updated_at, completed_at
+                FROM torrent_downloads;
+
+                DROP TABLE torrent_downloads;
+                ALTER TABLE torrent_downloads_next RENAME TO torrent_downloads;
+                CREATE INDEX IF NOT EXISTS idx_torrent_downloads_status ON torrent_downloads(status);
                 "#,
             )?;
             Ok(())

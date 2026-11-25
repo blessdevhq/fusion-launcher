@@ -1,0 +1,76 @@
+{
+  "schema_version": "1.0",
+  "id": "switch-zelda",
+  "title": "Switch / Zelda (user-owned example)",
+  "version": "1.0.0",
+  "platform": "switch",
+  "capabilities": {
+    "required": ["core.layers.v1", "vfs.hardlink.v1", "resolver.https.v1"],
+    "optional": []
+  },
+  "layers": [
+    {
+      "id": "base",
+      "kind": "base",
+      "source": {"kind": "user_provided", "instructions": "Select your own legally obtained game dump."},
+      "mount_path": "game"
+    },
+    {
+      "id": "switch-firmware",
+      "kind": "shared_deps",
+      "content": "firmware",
+      "source": {"kind": "user_provided", "instructions": "Import firmware from your own console; reusable shared dependency."},
+      "mount_path": "runtime/system/firmware"
+    },
+    {
+      "id": "switch-keys",
+      "kind": "shared_deps",
+      "content": "keys",
+      "source": {"kind": "user_provided", "instructions": "Import keys from your own console; never distributed by this source."},
+      "mount_path": "runtime/system/keys"
+    },
+    {
+      "id": "runtime",
+      "kind": "runtime",
+      "depends_on": ["switch-firmware", "switch-keys"],
+      "source": {"kind": "remote", "mirrors": ["https://example.org/fusion-fixtures/runtime.zip"], "archive": "zip"},
+      "transport_digest": {"algorithm": "blake3", "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+      "mount_path": "runtime",
+      "writable_copy_paths": ["config/**", "cache/*.bin"],
+      "critical_files": [
+        {"path": "emulator.exe", "blake3": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "role": "main_executable"},
+        {"path": "core.dll", "blake3": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", "role": "core_library"}
+      ]
+    },
+    {
+      "id": "addon-60fps",
+      "kind": "addon",
+      "depends_on": ["base"],
+      "source": {"kind": "remote", "mirrors": ["https://example.org/fusion-fixtures/example-mod.zip"], "archive": "zip"},
+      "transport_digest": {"algorithm": "sha256", "value": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"},
+      "mount_path": "runtime/mods/60fps",
+      "optional": true,
+      "default_enabled": true
+    },
+    {
+      "id": "shader-cache",
+      "kind": "shader_cache",
+      "depends_on": ["runtime"],
+      "source": {"kind": "user_provided", "instructions": "Optionally reuse your own generated shader cache."},
+      "mount_path": "runtime/cache/shaders",
+      "optional": true,
+      "default_enabled": false,
+      "writable_copy_paths": ["**"]
+    }
+  ],
+  "runtime": {
+    "layer_id": "runtime",
+    "executable": "runtime/emulator.exe",
+    "args": ["--game", "{{WORKSPACE_DIR}}/game/game.nsp"],
+    "default_channel": "pinned"
+  },
+  "persistence": {"saves_paths": ["workspace/runtime/user/save", "{{APPDATA}}/FusionExample/zelda/saves"]},
+  "config_templates": [
+    {"id": "display", "path": "runtime/config/display.toml", "format": "toml", "template": "width = {{DISPLAY_WIDTH}}\nheight = {{DISPLAY_HEIGHT}}\nrefresh_rate = {{REFRESH_RATE}}\nmod_60fps = {{ADDON_ENABLED:addon-60fps}}\n"}
+  ]
+}

@@ -22,292 +22,343 @@ pub(crate) async fn download_asset_internal(
             .get_asset(asset_id)?
             .ok_or_else(|| format!("Unknown asset: {asset_id}"))?
     };
-
+    // Reserve before target creation and before any failure/status write.
+    let lease = state.direct_downloads.start(&asset.id)?;
+    let identity = crate::storage::DownloadAttempt {
+        subject: asset.id.clone(),
+        attempt: lease.attempt().to_string(),
+        run: 1,
+    };
     let source = asset
         .sources
         .first()
         .ok_or_else(|| format!("Asset {} has no sources.", asset.display_name))?;
-    if matches!(source, SourceUri::UserProvided { .. }) {
-        let destination = {
-            let store = lock_app_store(state)?;
-            resolve_asset_target_with_override(&store, &content_dir, &asset, source, target_dir)
-                .map_err(|blocked| blocked.message)?
-        };
-        let target_path = destination.to_string_lossy().to_string();
-        let message = format!(
-            "{} is user-provided. Place the file at {} or use Import file.",
-            asset.display_name, target_path
-        );
-        let store = lock_app_store(state)?;
-        let _ = store.record_asset_installation(
-            &asset.id,
-            Some(&target_path),
-            "missing",
-            None,
-            Some(&message),
-        );
-        let _ = store.record_download(&asset.id, "asset", None, None, Some(&message));
-        return Err(message);
-    }
     let destination = {
         let store = lock_app_store(state)?;
-        match resolve_asset_target_with_override(&store, &content_dir, &asset, source, target_dir) {
-            Ok(path) => path,
-            Err(blocked) => {
-                let _ = store.record_asset_installation(
-                    &asset.id,
-                    blocked.target_path.as_deref(),
-                    "blocked",
-                    None,
-                    Some(&blocked.message),
-                );
-                let _ =
-                    store.record_download(&asset.id, "asset", None, None, Some(&blocked.message));
-                return Err(blocked.message);
-            }
-        }
+        resolve_asset_target_with_override(&store, &content_dir, &asset, source, target_dir)
+            .map_err(|blocked| blocked.message)?
     };
-
-    let source_kind = direct_source_kind(source);
-    let target_path = destination.to_string_lossy().to_string();
+    if matches!(source, SourceUri::UserProvided { .. }) {
+        return Err(format!(
+            "{} is user-provided. Place the file at {} or use Import file.",
+            asset.display_name,
+            destination.display()
+        ));
+    }
+    let is_bundle = is_manifest_emulator_bundle(&asset);
+    // System files retain their required emulator-relative path. Never replace
+    // a preexisting user file, including a symlink or an earlier installation.
+    if !is_bundle && fs::symlink_metadata(&destination).is_ok() {
+        return Err(format!(
+            "Asset destination already exists; existing file preserved: {}",
+            destination.display()
+        ));
+    }
+    let parent = destination
+        .parent()
+        .ok_or("Asset target has no parent directory.")?;
+    let staging_parent = if is_bundle {
+        parent.to_path_buf()
+    } else {
+        parent.join(".fusion-staging")
+    };
+    let ownership = {
+        let store = lock_app_store(state)?;
+        crate::download_installation::allocate(&store, &asset.id, &lease, &staging_parent)?
+    };
+    let staged_destination = ownership.root().join(
+        destination
+            .file_name()
+            .ok_or("Asset target has no filename.")?,
+    );
+    let target_path = if is_bundle {
+        staged_destination.to_string_lossy().to_string()
+    } else {
+        destination.to_string_lossy().to_string()
+    };
     let expected_bytes = source_size_bytes(source).unwrap_or(0);
-
-    let started = lock_app_store(state)?.record_direct_asset_download_started(
-        &asset.id,
-        source_kind,
-        &target_path,
-        expected_bytes,
-    )?;
-    emit_direct_download_record(app, &started);
-    let download_result = {
-        let asset_id = asset.id.clone();
-        crate::downloads::download_source_to_file_with_progress(
-            source,
-            &destination,
-            |downloaded, total| {
-                let percent = match total {
-                    Some(total) if total > 0 => (downloaded as f64 / total as f64) * 100.0,
-                    _ => 0.0,
-                };
-                if let Ok(store) = lock_app_store(state) {
-                    if let Ok(record) = store.update_torrent_progress(
-                        &asset_id,
-                        "downloading",
-                        percent,
-                        downloaded,
-                        total.unwrap_or(0),
-                        0,
-                        0,
-                        0,
-                    ) {
-                        drop(store);
-                        emit_direct_download_record(app, &record);
-                    }
-                }
-            },
-        )
-        .await
+    let started = {
+        let store = lock_app_store(state)?;
+        store.record_direct_asset_download_started(
+            &asset.id,
+            direct_source_kind(source),
+            &target_path,
+            expected_bytes,
+        )?;
+        store.assign_download_attempt(&identity)?;
+        store
+            .get_torrent_download(&asset.id)?
+            .ok_or("Asset download state disappeared.")?
     };
-
-    match download_result {
-        Ok(file) => {
-            let total_bytes = source_size_bytes(source).unwrap_or_else(|| file_size(&file.path));
-            let final_path = if is_manifest_emulator_bundle(&asset) {
-                match post_process_manifest_emulator_bundle_archive(&asset, &file.path).await {
-                    Ok(path) => path,
-                    Err(error) => {
-                        let target_path = file.path.to_string_lossy().to_string();
-                        let store = lock_app_store(state)?;
-                        let _ = store.record_asset_installation(
-                            &asset.id,
-                            Some(&target_path),
-                            "error",
-                            Some(&file.sha256),
-                            Some(&error),
-                        );
-                        if let Ok(record) = store.record_direct_asset_download_failed(
-                            &asset.id,
-                            source_kind,
-                            &target_path,
-                            expected_bytes,
-                            &error,
+    emit_direct_download_record(app, &started);
+    let cancel_token = lease.token();
+    let result: Result<DownloadRecord, String> = async {
+        let asset_id = asset.id.clone();
+        let asset_name = asset.display_name.clone();
+        let progress_identity = identity.clone();
+        let progress_lease = lease.clone();
+        let progress_target = target_path.clone();
+        let mut speed_meter = crate::downloads::DirectDownloadSpeedMeter::new();
+        let mut last_sqlite_flush = std::time::Instant::now();
+        let file = crate::downloads::download_source_to_file_guarded(
+            source,
+            &staged_destination,
+            move |downloaded, total| {
+                if progress_lease.is_cancelled() {
+                    return;
+                }
+                let speed = speed_meter.sample(downloaded);
+                let percent = total
+                    .filter(|total| *total > 0)
+                    .map_or(0.0, |total| downloaded as f64 / total as f64 * 100.0);
+                if last_sqlite_flush.elapsed() >= std::time::Duration::from_millis(1500) {
+                    last_sqlite_flush = std::time::Instant::now();
+                    if let Ok(store) = lock_app_store(state) {
+                        if let Ok(record) = store.attempt_progress(
+                            &progress_identity,
+                            crate::storage::WorkerProgress {
+                                percent,
+                                downloaded,
+                                total: total.unwrap_or(0),
+                                speed,
+                                upload: 0,
+                                peers: 0,
+                            },
                         ) {
                             drop(store);
                             emit_direct_download_record(app, &record);
                         }
-                        return Err(error);
                     }
+                    return;
                 }
-            } else {
-                file.path.clone()
-            };
-            record_completed_asset_download(
-                state,
-                app,
+                emit_direct_download_record(
+                    app,
+                    &TorrentDownloadRecord {
+                        attempt_id: Some(progress_identity.attempt.clone()),
+                        run_id: Some(progress_identity.run),
+                        game_id: asset_id.clone(),
+                        subject_type: Some("asset".to_string()),
+                        display_name: Some(asset_name.clone()),
+                        parent_game_id: None,
+                        magnet_uri: String::new(),
+                        save_dir: progress_target.clone(),
+                        status: "downloading".to_string(),
+                        progress_percent: percent,
+                        downloaded_bytes: downloaded,
+                        total_bytes: total.unwrap_or(0),
+                        download_speed_bytes_per_sec: speed,
+                        upload_speed_bytes_per_sec: 0,
+                        peers_count: 0,
+                        torrent_id: None,
+                        error_message: None,
+                        created_at: String::new(),
+                        updated_at: String::new(),
+                        completed_at: None,
+                    },
+                );
+            },
+            &lease,
+        )
+        .await?;
+        let total_bytes = source_size_bytes(source).unwrap_or_else(|| file_size(&file.path));
+        let final_path = if is_bundle {
+            post_process_manifest_emulator_bundle_archive(
                 &asset,
-                source_kind,
-                &final_path,
-                Some(&file.sha256),
-                total_bytes,
+                &file.path,
+                &file.sha256,
+                lease.clone(),
             )
+            .await?
+        } else {
+            install_staged_asset_without_overwrite(
+                &file.path,
+                &destination,
+                &file.sha256,
+                lease.clone(),
+            )
+            .await?
+        };
+        if lease.is_cancelled() {
+            return Err(crate::downloads::DOWNLOAD_CANCELLED_MESSAGE.into());
+        }
+        crate::download_installation::snapshot(
+            state.store.clone(),
+            asset.id.clone(),
+            lease.clone(),
+        )
+        .await?;
+        record_completed_asset_download(
+            state,
+            app,
+            &identity,
+            &lease,
+            &final_path,
+            Some(&file.sha256),
+            total_bytes,
+        )
+    }
+    .await;
+    if result.is_err() {
+        // Capture partial staging artifacts after our writers have returned.
+        let _ = crate::download_installation::snapshot(
+            state.store.clone(),
+            asset.id.clone(),
+            lease.clone(),
+        )
+        .await;
+    }
+    match result {
+        Ok(record) => Ok(record),
+        Err(error)
+            if cancel_token.is_cancelled()
+                || crate::downloads::is_download_cancelled_error(&error) =>
+        {
+            // Removal owns the row. Keep its generation/state until every writer exits.
+            Err(crate::downloads::DOWNLOAD_CANCELLED_MESSAGE.to_string())
         }
         Err(error) => {
-            let store = lock_app_store(state)?;
-            let target_path = destination.to_string_lossy().to_string();
-            let _ = store.record_asset_installation(
-                &asset.id,
-                Some(&target_path),
-                "error",
-                None,
-                Some(&error),
-            );
-            if let Ok(record) = store.record_direct_asset_download_failed(
-                &asset.id,
-                source_kind,
-                &target_path,
-                expected_bytes,
-                &error,
-            ) {
-                drop(store);
-                emit_direct_download_record(app, &record);
+            if let Ok(store) = lock_app_store(state) {
+                if let Ok(record) = store.fail_attempt(&identity, "asset", &error) {
+                    drop(store);
+                    emit_direct_download_record(app, &record);
+                }
             }
             Err(error)
         }
     }
 }
 
-pub(crate) async fn prepare_manifest_emulator_bundle_asset(
-    asset_id: &str,
-    state: &AppState,
-    app: &AppHandle,
-    target_dir: Option<&Path>,
-) -> Result<PathBuf, String> {
-    let content_dir = library_root_for_app_state(state);
-    let (asset, existing, expected_bundle_dir) = {
-        let store = lock_app_store(state)?;
-        let asset = store
-            .get_asset(asset_id)?
-            .ok_or_else(|| format!("Unknown asset: {asset_id}"))?;
-        if !is_manifest_emulator_bundle(&asset) {
-            return Err(format!(
-                "asset_is_not_manifest_emulator_bundle:{}",
-                asset.id
-            ));
-        }
-        let source = asset
-            .sources
-            .first()
-            .ok_or_else(|| format!("Asset {} has no sources.", asset.display_name))?;
-        let expected_bundle_dir = resolve_asset_target_with_override(
-            &store,
-            &content_dir,
-            &asset,
-            source,
-            target_dir,
-        )
-        .map_err(|blocked| blocked.message)?
-        .parent()
-        .map(Path::to_path_buf)
-        .ok_or_else(|| format!("Emulator asset target has no parent: {}", asset.id))?;
-        let existing = store
-            .get_download(&asset.id)?
-            .filter(|record| is_download_ready_status(&record.status));
-        (asset, existing, expected_bundle_dir)
-    };
-
-    if let Some(record) = existing {
-        let path = record
-            .local_path
-            .as_deref()
-            .map(PathBuf::from)
-            .ok_or_else(|| format!("emulator_asset_download_missing_path:{asset_id}"))?;
-        if path.is_dir() && path_is_existing_bundle_dir(&expected_bundle_dir, &path) {
-            return Ok(path);
-        }
-        if path.is_file()
-            && path
-                .parent()
-                .is_some_and(|parent| path_is_existing_bundle_dir(&expected_bundle_dir, parent))
-        {
-            let total_bytes = file_size(&path);
-            let source_kind = asset
-                .sources
-                .first()
-                .map(direct_source_kind)
-                .unwrap_or("http");
-            let final_path = post_process_manifest_emulator_bundle_archive(&asset, &path).await?;
-            let record = record_completed_asset_download(
-                state,
-                app,
-                &asset,
-                source_kind,
-                &final_path,
-                record.sha256.as_deref(),
-                total_bytes,
-            )?;
-            return record
-                .local_path
-                .map(PathBuf::from)
-                .ok_or_else(|| format!("emulator_asset_download_missing_path:{asset_id}"));
-        }
-    }
-
-    let record = download_asset_internal(asset_id, state, app, target_dir).await?;
-    let path = record
-        .local_path
-        .map(PathBuf::from)
-        .ok_or_else(|| format!("emulator_asset_download_missing_path:{asset_id}"))?;
-    if path.is_dir() {
-        Ok(path)
-    } else {
-        Err(format!(
-            "emulator_asset_not_extracted:{}",
-            path.display()
-        ))
-    }
-}
-
 fn record_completed_asset_download(
     state: &AppState,
     app: &AppHandle,
-    asset: &AssetView,
-    source_kind: &str,
+    identity: &crate::storage::DownloadAttempt,
+    lease: &crate::download_operations::OperationLease,
     local_path: &Path,
     sha256: Option<&str>,
     total_bytes: u64,
 ) -> Result<DownloadRecord, String> {
-    let local_path = local_path.to_string_lossy().to_string();
-    let store = lock_app_store(state)?;
-    store.record_asset_installation(&asset.id, Some(&local_path), "ready", sha256, None)?;
-    if let Some(sha256) = sha256 {
-        let (record, torrent) = store.record_direct_asset_download_completed(
-            &asset.id,
-            source_kind,
-            &local_path,
-            sha256,
-            total_bytes,
-        )?;
-        drop(store);
-        emit_direct_download_record(app, &torrent);
-        Ok(record)
-    } else {
-        store.record_download(&asset.id, "asset", Some(&local_path), None, None)
+    if lease.is_cancelled() {
+        return Err(crate::downloads::DOWNLOAD_CANCELLED_MESSAGE.into());
     }
+    state.direct_downloads.ensure_active(lease)?;
+    let store = lock_app_store(state)?;
+    let (record, torrent) = store.complete_attempt(
+        identity,
+        "asset",
+        &local_path.to_string_lossy(),
+        sha256,
+        total_bytes,
+    )?;
+    drop(store);
+    emit_direct_download_record(app, &torrent);
+    Ok(record)
+}
+
+async fn install_staged_asset_without_overwrite(
+    staged_path: &Path,
+    final_path: &Path,
+    expected_sha256: &str,
+    lease: crate::download_operations::OperationLease,
+) -> Result<PathBuf, String> {
+    let staged_path = staged_path.to_path_buf();
+    let final_path = final_path.to_path_buf();
+    let expected_sha256 = expected_sha256.to_string();
+    tokio::task::spawn_blocking(move || {
+        let _protection = lease.protect_writes()?;
+        publish_staged_asset_without_overwrite(&staged_path, &final_path, &expected_sha256, || {
+            lease.is_cancelled()
+        })
+    })
+    .await
+    .map_err(|error| format!("Asset installation task failed: {error}"))?
+}
+
+fn publish_staged_asset_without_overwrite(
+    staged_path: &Path,
+    final_path: &Path,
+    expected_sha256: &str,
+    is_cancelled: impl Fn() -> bool,
+) -> Result<PathBuf, String> {
+    if is_cancelled() {
+        return Err(crate::downloads::DOWNLOAD_CANCELLED_MESSAGE.into());
+    }
+    let parent = staged_path.parent().ok_or("Staged asset has no parent.")?;
+    let _source_guard = crate::install_ownership::lock_plain_directory(parent)?;
+    let file = open_verified_download(staged_path, expected_sha256, &is_cancelled)?;
+    if is_cancelled() {
+        return Err(crate::downloads::DOWNLOAD_CANCELLED_MESSAGE.into());
+    }
+    crate::install_ownership::publish_rename_no_replace(&file, final_path)?;
+    // Required system-file destinations are outside owned staging and remain
+    // preserved/reported by removal until they have separate ownership records.
+    Ok(final_path.to_path_buf())
+}
+
+fn open_verified_download(
+    path: &Path,
+    expected: &str,
+    is_cancelled: &impl Fn() -> bool,
+) -> Result<fs::File, String> {
+    use std::io::Read;
+    let mut file = crate::install_ownership::open_publication_file(path)?;
+    let mut hash = Sha256::new();
+    let mut buffer = [0u8; 64 * 1024];
+    loop {
+        if is_cancelled() {
+            return Err(crate::downloads::DOWNLOAD_CANCELLED_MESSAGE.into());
+        }
+        let count = file.read(&mut buffer).map_err(|e| e.to_string())?;
+        if count == 0 {
+            break;
+        }
+        hash.update(&buffer[..count]);
+    }
+    if !hex::encode(hash.finalize()).eq_ignore_ascii_case(expected) {
+        return Err("Downloaded file changed before installation.".into());
+    }
+    Ok(file)
 }
 
 async fn post_process_manifest_emulator_bundle_archive(
     asset: &AssetView,
     archive_path: &Path,
+    expected_sha256: &str,
+    lease: crate::download_operations::OperationLease,
 ) -> Result<PathBuf, String> {
     let asset = asset.clone();
     let archive_path = archive_path.to_path_buf();
+    let expected_sha256 = expected_sha256.to_string();
     tokio::task::spawn_blocking(move || {
-        extract_manifest_emulator_bundle_archive(&asset, &archive_path)
+        if !is_manifest_emulator_bundle(&asset) {
+            return Err("Asset is not a manifest emulator bundle.".into());
+        }
+        if !archive_path
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("zip"))
+        {
+            return Err(format!(
+                "unsupported_manifest_emulator_archive:{}",
+                archive_path.display()
+            ));
+        }
+        let extract_dir = archive_path
+            .parent()
+            .ok_or("Emulator archive has no parent.")?
+            .to_path_buf();
+        let _protection = lease.protect_writes()?;
+        let verified =
+            open_verified_download(&archive_path, &expected_sha256, &|| lease.is_cancelled())?;
+        crate::archive::extract_archive_safely_guarded(&archive_path, &extract_dir, lease.clone())?;
+        if lease.is_cancelled() {
+            return Err(crate::downloads::DOWNLOAD_CANCELLED_MESSAGE.into());
+        }
+        crate::install_ownership::delete_open_file(&verified)?;
+        Ok(extract_dir)
     })
     .await
     .map_err(|error| format!("Emulator bundle extraction task failed: {error}"))?
 }
-
+#[cfg(test)]
 pub(super) fn extract_manifest_emulator_bundle_archive(
     asset: &AssetView,
     archive_path: &Path,
@@ -338,14 +389,177 @@ pub(super) fn extract_manifest_emulator_bundle_archive(
     Ok(extract_dir)
 }
 
-fn path_is_existing_bundle_dir(expected: &Path, actual: &Path) -> bool {
-    if !expected.exists() || !actual.exists() {
-        return false;
+#[cfg(test)]
+mod asset_download_lifecycle_tests {
+    use super::*;
+
+    #[test]
+    fn staged_asset_replacement_after_download_is_not_published() {
+        let temp = tempfile::tempdir().unwrap();
+        let staged = temp.path().join("staged.bin");
+        let target = temp.path().join("system.bin");
+        fs::write(&staged, b"verified").unwrap();
+        let hash = hash_file(&staged).unwrap();
+        fs::write(&staged, b"substituted").unwrap();
+        assert!(publish_staged_asset_without_overwrite(&staged, &target, &hash, || false).is_err());
+        assert!(!target.exists());
     }
-    match (fs::canonicalize(expected), fs::canonicalize(actual)) {
-        (Ok(expected), Ok(actual)) => expected == actual,
-        _ => false,
+
+    #[test]
+    fn asset_publication_cancelled_at_final_boundary_creates_no_target() {
+        let temp = tempfile::tempdir().unwrap();
+        let staged = temp.path().join("staged.bin");
+        let target = temp.path().join("system.bin");
+        fs::write(&staged, b"complete download").unwrap();
+        let checks = std::cell::Cell::new(0);
+        let result = publish_staged_asset_without_overwrite(
+            &staged,
+            &target,
+            &hash_file(&staged).unwrap(),
+            || {
+                checks.set(checks.get() + 1);
+                checks.get() == 2
+            },
+        );
+        assert_eq!(
+            result.unwrap_err(),
+            crate::downloads::DOWNLOAD_CANCELLED_MESSAGE
+        );
+        assert!(!target.exists());
+        assert_eq!(fs::read(&staged).unwrap(), b"complete download");
     }
+
+    #[tokio::test]
+    async fn asset_publication_failure_creates_no_partial_target() {
+        let temp = tempfile::tempdir().unwrap();
+        let staged = temp.path().join("staged.bin");
+        let target = temp.path().join("missing-parent").join("system.bin");
+        fs::write(&staged, b"complete download").unwrap();
+        let registry = crate::download_operations::OperationCoordinator::new();
+        let result = install_staged_asset_without_overwrite(
+            &staged,
+            &target,
+            &hash_file(&staged).unwrap(),
+            registry.start("asset").unwrap(),
+        )
+        .await;
+        assert!(result.is_err());
+        assert!(!target.exists());
+        assert_eq!(fs::read(&staged).unwrap(), b"complete download");
+    }
+
+    #[tokio::test]
+    async fn staged_asset_install_preserves_existing_user_target() {
+        let temp = tempfile::tempdir().unwrap();
+        let staged = temp.path().join("staged.bin");
+        let target = temp.path().join("system.bin");
+        fs::write(&staged, b"download").unwrap();
+        fs::write(&target, b"user sentinel").unwrap();
+        let registry = crate::download_operations::OperationCoordinator::new();
+        let lease = registry.start("asset").unwrap();
+        let result = install_staged_asset_without_overwrite(
+            &staged,
+            &target,
+            &hash_file(&staged).unwrap(),
+            lease,
+        )
+        .await;
+        assert!(result.is_err());
+        assert_eq!(fs::read(&target).unwrap(), b"user sentinel");
+    }
+
+    #[tokio::test]
+    async fn cancelled_staged_asset_install_does_not_create_target() {
+        let temp = tempfile::tempdir().unwrap();
+        let staged = temp.path().join("staged.bin");
+        let target = temp.path().join("system.bin");
+        fs::write(&staged, b"download").unwrap();
+        let registry = crate::download_operations::OperationCoordinator::new();
+        let lease = registry.start("asset").unwrap();
+        registry.cancel("asset").unwrap();
+        let error = install_staged_asset_without_overwrite(
+            &staged,
+            &target,
+            &hash_file(&staged).unwrap(),
+            lease,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error, crate::downloads::DOWNLOAD_CANCELLED_MESSAGE);
+        assert!(!target.exists());
+    }
+
+    #[tokio::test]
+    async fn staged_asset_install_moves_verified_file_to_required_target() {
+        let temp = tempfile::tempdir().unwrap();
+        let staged = temp.path().join("staged.bin");
+        let target = temp.path().join("system.bin");
+        let bytes = vec![42_u8; 128 * 1024];
+        fs::write(&staged, &bytes).unwrap();
+        let registry = crate::download_operations::OperationCoordinator::new();
+        let lease = registry.start("asset").unwrap();
+        assert_eq!(
+            install_staged_asset_without_overwrite(
+                &staged,
+                &target,
+                &hash_file(&staged).unwrap(),
+                lease
+            )
+            .await
+            .unwrap(),
+            target
+        );
+        assert_eq!(fs::read(&target).unwrap(), bytes);
+        assert!(!staged.exists());
+    }
+}
+
+#[cfg(test)]
+pub(super) fn extract_game_archive_if_needed(
+    game: &CatalogGameView,
+    downloaded_path: &Path,
+) -> Result<PathBuf, String> {
+    let extension = downloaded_path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .unwrap_or_default();
+
+    if !extension.eq_ignore_ascii_case("zip") && !extension.eq_ignore_ascii_case("7z") {
+        return Ok(downloaded_path.to_path_buf());
+    }
+
+    if game.expected_extensions.iter().any(|ext| {
+        ext.eq_ignore_ascii_case(".zip")
+            || ext.eq_ignore_ascii_case("zip")
+            || ext.eq_ignore_ascii_case(".7z")
+            || ext.eq_ignore_ascii_case("7z")
+    }) {
+        return Ok(downloaded_path.to_path_buf());
+    }
+
+    let extract_dir = downloaded_path
+        .parent()
+        .map(Path::to_path_buf)
+        .ok_or_else(|| format!("Game archive has no parent: {}", downloaded_path.display()))?;
+
+    crate::archive::extract_archive_safely(downloaded_path, &extract_dir)?;
+    let _ = fs::remove_file(downloaded_path);
+
+    if let Ok(normalized_extensions) =
+        crate::game_files::normalize_expected_extensions(&game.expected_extensions)
+    {
+        if let Ok(resolved) = crate::game_files::resolve_game_path(
+            &extract_dir,
+            &normalized_extensions,
+            game.launch
+                .as_ref()
+                .and_then(|launch| launch.preferred_file.as_deref()),
+        ) {
+            return Ok(resolved);
+        }
+    }
+
+    Ok(extract_dir)
 }
 
 #[tauri::command]
@@ -354,6 +568,7 @@ pub fn import_asset_file(
     source_path: String,
     state: State<'_, AppState>,
 ) -> Result<ImportAssetFileReport, String> {
+    let _lease = state.direct_downloads.start(&asset_id)?;
     let content_dir = library_root_for_app_state(&state);
     let store = match lock_store(&state) {
         Ok(store) => store,
@@ -377,6 +592,7 @@ pub fn import_game_file(
     state: State<'_, AppState>,
     app: AppHandle,
 ) -> Result<ImportGameFileReport, String> {
+    let lease = state.direct_downloads.start(&game_id)?;
     let download_root = match download_root(&state) {
         Ok(path) => path,
         Err(_) => return Ok(import_game_error(&game_id, "", "store_failed", None)),
@@ -393,257 +609,41 @@ pub fn import_game_file(
         Path::new(source_path.trim()),
     );
     if report.error_code.is_none() {
+        store.assign_download_attempt(&crate::storage::DownloadAttempt {
+            subject: game_id.clone(),
+            attempt: lease.attempt().into(),
+            run: 1,
+        })?;
         spawn_metadata_scrape(&app, state.inner(), report.game_id.clone());
     }
     Ok(report)
 }
 
-#[tauri::command]
-pub async fn download_game(
-    game_id: String,
-    target_dir: Option<String>,
-    state: State<'_, AppState>,
-) -> Result<DownloadRecord, String> {
-    let target_dir = resolve_target_dir_override(target_dir.as_deref())?;
-    let game = {
-        let store = lock_store(&state)?;
-        store
-            .get_game(&game_id)?
-            .ok_or_else(|| format!("Unknown game: {game_id}"))?
+include!("game_download_runtime.rs");
+
+#[cfg(test)]
+fn persist_direct_download_progress(
+    store: &RepositoryStore,
+    subject_id: &str,
+    downloaded: u64,
+    total: Option<u64>,
+    download_speed_bytes_per_sec: u64,
+) -> Result<TorrentDownloadRecord, String> {
+    let progress_percent = match total {
+        Some(total) if total > 0 => (downloaded as f64 / total as f64) * 100.0,
+        _ => 0.0,
     };
 
-    let source = game
-        .downloads
-        .first()
-        .ok_or_else(|| format!("Game {} has no download sources.", game.title))?;
-    if matches!(
-        game.content_mode.as_deref(),
-        Some("user_provided" | "metadata_only")
-    ) || matches!(source, SourceUri::UserProvided { .. })
-    {
-        return Err(format!(
-            "{} is user-provided content. Import your local game file instead of starting an automatic download.",
-            game.title
-        ));
-    }
-    let destination = game_direct_download_destination(
-        download_root_for_app_state(state.inner())?,
-        target_dir.as_deref(),
-        &game,
-        source,
-    );
-
-    match download_source_to_file(source, &destination).await {
-        Ok(file) => {
-            let local_path = file.path.to_string_lossy().to_string();
-            let total_bytes = source_size_bytes(source).unwrap_or_else(|| file_size(&file.path));
-            let (record, _) = lock_store(&state)?.record_direct_game_download_completed(
-                &game.id,
-                direct_source_kind(source),
-                &local_path,
-                &file.sha256,
-                total_bytes,
-            )?;
-            Ok(record)
-        }
-        Err(error) => {
-            let _ = lock_store(&state)?.record_download(&game.id, "game", None, None, Some(&error));
-            Err(error)
-        }
-    }
-}
-
-#[tauri::command]
-pub async fn start_game_download(
-    game_id: String,
-    target_dir: Option<String>,
-    state: State<'_, AppState>,
-    app: AppHandle,
-) -> Result<GameDownloadStartReport, String> {
-    let target_dir = resolve_target_dir_override(target_dir.as_deref())?;
-    start_game_download_internal(&game_id, &state, &app, target_dir.as_deref()).await
-}
-
-pub(crate) async fn start_game_download_internal(
-    game_id: &str,
-    state: &AppState,
-    app: &AppHandle,
-    target_dir: Option<&Path>,
-) -> Result<GameDownloadStartReport, String> {
-    let game = {
-        let store = lock_app_store(state)?;
-        store
-            .get_game(game_id)?
-            .ok_or_else(|| format!("Unknown game: {game_id}"))?
-    };
-    let source = game
-        .downloads
-        .first()
-        .ok_or_else(|| format!("Game {} has no download sources.", game.title))?;
-    if matches!(
-        game.content_mode.as_deref(),
-        Some("user_provided" | "metadata_only")
-    ) || matches!(source, SourceUri::UserProvided { .. })
-    {
-        return Err(format!(
-            "{} is user-provided content. Import your local game file instead of starting an automatic download.",
-            game.title
-        ));
-    }
-    let download_root = download_root_for_app_state(state)?;
-
-    match source {
-        SourceUri::Magnet {
-            uri, size_bytes, ..
-        } => {
-            let save_root = target_dir.unwrap_or(download_root.as_path());
-            preflight_disk_space(save_root, *size_bytes)?;
-            let save_dir = game_torrent_save_dir(&download_root, target_dir, &game);
-            let save_dir_string = save_dir.to_string_lossy().to_string();
-            let torrent = state
-                .torrents()?
-                .start_magnet_download(game.id.clone(), uri.clone(), save_dir_string.clone())
-                .await?;
-            logging::log_event(
-                &state.data_dir,
-                "game_download_started",
-                &[("game_id", game.id.as_str()), ("source", "magnet")],
-            );
-            Ok(GameDownloadStartReport {
-                game_id: game.id,
-                source_kind: "magnet".to_string(),
-                save_dir: torrent.save_dir.clone(),
-                record: None,
-                torrent: state.torrents()?.get_game_download(game_id)?,
-            })
-        }
-        SourceUri::Http { size_bytes, .. } | SourceUri::Bundled { size_bytes, .. } => {
-            let source_kind = direct_source_kind(source);
-            let destination =
-                game_direct_download_destination(download_root.clone(), target_dir, &game, source);
-            let target_path = destination.to_string_lossy().to_string();
-            let expected_bytes = size_bytes.unwrap_or(0);
-
-            let preflight_root = target_dir.unwrap_or(download_root.as_path());
-            if let Err(error) = preflight_disk_space(preflight_root, *size_bytes) {
-                if let Ok(store) = lock_app_store(state) {
-                    if let Ok(record) = store.record_direct_game_download_failed(
-                        &game.id,
-                        source_kind,
-                        &target_path,
-                        expected_bytes,
-                        &error,
-                    ) {
-                        emit_direct_download_record(app, &record);
-                    }
-                }
-                return Err(error);
-            }
-
-            lock_app_store(state)?.record_direct_game_download_started(
-                &game.id,
-                source_kind,
-                &target_path,
-                expected_bytes,
-            )?;
-            logging::log_event(
-                &state.data_dir,
-                "game_download_started",
-                &[("game_id", game.id.as_str()), ("source", source_kind)],
-            );
-
-            let download_result = {
-                let game_id = game.id.clone();
-                crate::downloads::download_source_to_file_with_progress(
-                    source,
-                    &destination,
-                    |downloaded, total| {
-                        let percent = match total {
-                            Some(total) if total > 0 => (downloaded as f64 / total as f64) * 100.0,
-                            _ => 0.0,
-                        };
-                        if let Ok(store) = lock_app_store(state) {
-                            if let Ok(record) = store.update_torrent_progress(
-                                &game_id,
-                                "downloading",
-                                percent,
-                                downloaded,
-                                total.unwrap_or(0),
-                                0,
-                                0,
-                                0,
-                            ) {
-                                drop(store);
-                                emit_direct_download_record(app, &record);
-                            }
-                        }
-                    },
-                )
-                .await
-            };
-            let file = match download_result {
-                Ok(file) => file,
-                Err(error) => {
-                    let failed = lock_app_store(state)?.record_direct_game_download_failed(
-                        &game.id,
-                        source_kind,
-                        &target_path,
-                        expected_bytes,
-                        &error,
-                    )?;
-                    emit_direct_download_record(app, &failed);
-                    logging::log_event(
-                        &state.data_dir,
-                        "game_download_failed",
-                        &[
-                            ("game_id", game.id.as_str()),
-                            ("source", source_kind),
-                            ("error", error.as_str()),
-                        ],
-                    );
-                    return Err(error);
-                }
-            };
-            let local_path = file.path.to_string_lossy().to_string();
-            let total_bytes = size_bytes.unwrap_or_else(|| file_size(&file.path));
-            let (record, torrent) = lock_app_store(state)?.record_direct_game_download_completed(
-                &game.id,
-                source_kind,
-                &local_path,
-                &file.sha256,
-                total_bytes,
-            )?;
-            emit_direct_download_record(app, &torrent);
-            logging::log_event(
-                &state.data_dir,
-                "game_download_completed",
-                &[("game_id", game.id.as_str()), ("source", source_kind)],
-            );
-            spawn_metadata_scrape(app, state, game.id.clone());
-            Ok(GameDownloadStartReport {
-                game_id: game.id,
-                source_kind: source_kind.to_string(),
-                save_dir: local_path,
-                record: Some(record),
-                torrent: Some(torrent),
-            })
-        }
-        SourceUri::UserProvided { .. } => {
-            Err("Game downloads cannot be user-provided.".to_string())
-        }
-    }
-}
-
-fn game_direct_download_destination(
-    default_root: PathBuf,
-    target_dir: Option<&Path>,
-    game: &CatalogGameView,
-    source: &SourceUri,
-) -> PathBuf {
-    if let Some(target_dir) = target_dir {
-        return target_dir.join(file_name_for_source(source, &game.title));
-    }
-    destination_for_source(&default_root, &game.platform, &game.id, source, &game.title)
+    store.update_torrent_progress(
+        subject_id,
+        "downloading",
+        progress_percent,
+        downloaded,
+        total.unwrap_or(0),
+        download_speed_bytes_per_sec,
+        0,
+        0,
+    )
 }
 
 fn game_torrent_save_dir(
@@ -704,87 +704,7 @@ pub fn trust_executable(
     store.trust_executable(&asset.id, &local_path, &sha256)
 }
 
-#[tauri::command]
-pub async fn remove_game(
-    game_id: String,
-    delete_files: bool,
-    state: State<'_, AppState>,
-) -> Result<bool, String> {
-    remove_download_internal(&game_id, delete_files, state.inner(), "game_removed").await
-}
-
-#[tauri::command]
-pub async fn remove_download(
-    download_id: String,
-    delete_files: bool,
-    state: State<'_, AppState>,
-) -> Result<bool, String> {
-    remove_download_internal(&download_id, delete_files, state.inner(), "download_removed").await
-}
-
-async fn remove_download_internal(
-    download_id: &str,
-    delete_files: bool,
-    state: &AppState,
-    event_name: &str,
-) -> Result<bool, String> {
-    let download = {
-        let store = lock_app_store(state)?;
-        (
-            store.get_download(download_id)?,
-            store.get_torrent_download(download_id)?,
-        )
-    };
-
-    if let Some(torrent) = download.1.as_ref() {
-        if !matches!(torrent.status.as_str(), "completed" | "cancelled") {
-            if let Ok(torrents) = state.torrents() {
-                let _ = torrents.cancel_download(download_id.to_string()).await;
-            }
-        }
-    }
-
-    if delete_files {
-        let mut candidates = Vec::new();
-        if let Some(record) = download.0.as_ref() {
-            if let Some(path) = record.local_path.as_ref() {
-                candidates.push(PathBuf::from(path));
-            }
-        }
-        if let Some(torrent) = download.1.as_ref() {
-            candidates.push(PathBuf::from(&torrent.save_dir));
-        }
-        for candidate in candidates {
-            remove_recorded_download_path(&candidate)?;
-        }
-    }
-
-    let store = lock_app_store(state)?;
-    let is_asset = download
-        .0
-        .as_ref()
-        .is_some_and(|record| record.subject_type == "asset")
-        || download
-            .1
-            .as_ref()
-            .and_then(|record| record.subject_type.as_deref())
-            == Some("asset");
-    let mut changed = download.0.is_some() || download.1.is_some();
-    if is_asset {
-        store.delete_asset_state(download_id)?;
-        changed = store.delete_torrent_download(download_id)? || changed;
-    } else {
-        changed = store.delete_download(download_id)? || changed;
-        changed = store.delete_torrent_download(download_id)? || changed;
-        changed = store.delete_scrape_artifacts(download_id)? || changed;
-    }
-    logging::log_event(
-        &state.data_dir,
-        event_name,
-        &[("download_id", download_id)],
-    );
-    Ok(changed)
-}
+include!("download_removal.rs");
 
 #[tauri::command]
 pub async fn redownload_asset(
@@ -794,14 +714,6 @@ pub async fn redownload_asset(
     app: AppHandle,
 ) -> Result<DownloadRecord, String> {
     let target_dir = resolve_target_dir_override(target_dir.as_deref())?;
-    let current = {
-        let store = lock_store(&state)?;
-        store.get_download(&asset_id)?
-    };
-    if let Some(path) = current.and_then(|record| record.local_path) {
-        let candidate = PathBuf::from(path);
-        let _ = remove_recorded_download_path(&candidate);
-    }
     download_asset_internal(&asset_id, state.inner(), &app, target_dir.as_deref()).await
 }
 

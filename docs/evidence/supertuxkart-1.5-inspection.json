@@ -1,0 +1,26 @@
+{
+  "observed_on": "2026-10-31",
+  "release": "https://github.com/supertuxkart/stk-code/releases/tag/1.5",
+  "release_published_at": "2025-10-20T16:48:01Z",
+  "upstream_commit": "1fb491f507216c5d181ccd85f29ff08eca003827",
+  "archive": "https://github.com/supertuxkart/stk-code/releases/download/1.5/SuperTuxKart-1.5-win.zip",
+  "archive_size_bytes": 922430727,
+  "sha256": "9df7e2d67e8562127a3bb633030f1bd4ee77fa9e7f0ae110897473025af8acdc",
+  "upstream_sha256_matches": true,
+  "zip_directory_entries": 6098,
+  "normalized_source_root": "SuperTuxKart-1.5-win",
+  "normalized_file_count": 5763,
+  "normalized_total_file_bytes": 1586076164,
+  "transport_blake3": "ea5830dc60aad988fa045259220a88e71a121c7bb3359fbee00e59c413114ad6",
+  "normalized_inventory_blake3": "9f1b886deb979f6b6c2d59b4d6ae820faf5f900b5877066e8798300e57676bf9",
+  "inventory_algorithm": "blake3(UTF8('fusion-source-cas-tree-v1') || 0x00 || compact UTF8 JSON sorted CasFile array, field order path,blake3,size)",
+  "canonical_cas_inventory_sha256": "cd2b99d7f0261397108d9e9460f79dcbc653814bda9fa533a82fe6f64173e9f7",
+  "verification_method": "Archive streamed to disk; SHA256 and transport BLAKE3 streamed; every non-directory ZIP member streamed and CRC verified; normalized paths checked and sorted; existing cas.rs inventory identity algorithm reproduced, not a call to the future Creator normalizer.",
+  "critical_sample": [
+    { "path": "stk-code/build-x86_64/bin/libcurl.dll", "blake3": "9b6ca8172c90f53a0ce286ee2eda1d0046de79122ea7a020d18d46b4bab57c36", "size": 804864 },
+    { "path": "stk-code/build-x86_64/bin/supertuxkart.exe", "blake3": "1441790121499819360e697b0760b961e92fc709df132e6f318a2d82b7f2c0e6", "size": 14807148 },
+    { "path": "stk-code/data/stk_config.xml", "blake3": "10f5266a9e6876fca05db0daf5cc7a939c160493caaf00737c2096136dfd126e", "size": 30235 }
+  ],
+  "runtime_launch": "NOT TESTED",
+  "creator_lifecycle": "NOT TESTED"
+}

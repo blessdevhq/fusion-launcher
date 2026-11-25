@@ -1,0 +1,465 @@
+//! Project IPC services over the authoritative typed project store.
+//! The job runner initializes schema v7 before these services are called.
+use super::declarative::compiler::validate_descriptor_metadata;
+use super::project_storage;
+use super::{
+    CreatorProjectOpenResponse, CreatorProjectSaveRequest, CreatorProjectSaveResponse,
+    CreatorProjectSummary, CreatorRelease, CreatorReport, CreatorReportKind, CreatorReportStatus,
+};
+use crate::fusion_source::creator_schema::ComponentOrigin;
+use crate::fusion_source::errors::{ErrorCode, FusionError};
+use crate::fusion_source::fs_safety;
+use crate::fusion_source::program_schema::{
+    parse_unique_json, CreatorProgramProject, MAX_PROGRAM_BYTES, MAX_REVISION,
+};
+use crate::storage::RepositoryStore;
+use rusqlite::params;
+use serde::de::DeserializeOwned;
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::Path;
+
+fn invalid_stored() -> FusionError {
+    FusionError::new(
+        ErrorCode::IntegrityViolation,
+        "Stored Creator metadata is inconsistent.",
+    )
+}
+
+fn sql_error(_: rusqlite::Error) -> FusionError {
+    FusionError::new(ErrorCode::Io, "Creator storage operation failed.")
+}
+
+/// Structural/semantic metadata checks only: saving is not acquisition or build.
+pub(crate) fn save(
+    store: &mut RepositoryStore,
+    request: CreatorProjectSaveRequest,
+) -> Result<CreatorProjectSaveResponse, FusionError> {
+    if request.expected_revision.is_some_and(|n| n > MAX_REVISION) {
+        return Err(FusionError::new(
+            ErrorCode::InvalidManifest,
+            "Creator revision is outside the wire range.",
+        ));
+    }
+    request
+        .project
+        .validate()
+        .and_then(|()| validate_descriptor_metadata(&request.project.program_descriptor))
+        .map_err(|_| {
+            FusionError::new(
+                ErrorCode::InvalidManifest,
+                "Invalid Creator project metadata.",
+            )
+        })?;
+    let bytes = serde_json::to_vec(&request.project).map_err(|_| {
+        FusionError::new(
+            ErrorCode::InvalidManifest,
+            "Invalid Creator project metadata.",
+        )
+    })?;
+    // Storage owns the immediate transaction, CAS and the existing private row.
+    // v7 triggers write modified_at in that same transaction.
+    let project = project_storage::save_project_bytes(store, &bytes, request.expected_revision)?;
+    Ok(CreatorProjectSaveResponse {
+        revision: project.revision,
+    })
+}
+
+pub(crate) fn open(
+    store: &RepositoryStore,
+    project_id: &str,
+) -> Result<CreatorProjectOpenResponse, FusionError> {
+    let snapshot = store.conn.unchecked_transaction().map_err(sql_error)?;
+    let project = project_storage::open_project(store, project_id)?.ok_or_else(|| {
+        FusionError::new(
+            ErrorCode::SnapshotNotFound,
+            "Creator project was not found.",
+        )
+    })?;
+    validate_stored_project(&project)?;
+    let mut private_bindings = project_storage::open_private_bindings(store, project_id)?;
+    // Preserve the revision for explicit repair, without showing an obsolete
+    // component path or mutating the database on open.
+    if let Some(saved) = &mut private_bindings {
+        saved
+            .bindings
+            .component_paths
+            .retain(|id, _| project_storage::project_has_component(&project, id));
+    }
+    let mut missing_inputs = Vec::new();
+    for component in &project.program_descriptor.components {
+        let available = private_bindings
+            .as_ref()
+            .and_then(|saved| saved.bindings.component_paths.get(&component.id))
+            .is_some_and(|path| {
+                let path = Path::new(path);
+                if super::build::supported_component(component) {
+                    fs_safety::guard(path).is_ok()
+                } else {
+                    local_input_available(path)
+                }
+            });
+        if available {
+            continue;
+        }
+        match &component.origin {
+            ComponentOrigin::UserProvided { .. } => missing_inputs.push(component.id.clone()),
+            ComponentOrigin::Managed { .. } if super::build::supported_component(component) => {
+                missing_inputs.push(component.id.clone());
+            }
+            // No artifact/cache resolver is installed in this service. A missing
+            // private row is not evidence that a managed or external input is missing.
+            ComponentOrigin::Managed { .. } | ComponentOrigin::External { .. } => {
+                return Err(FusionError::new(
+                    ErrorCode::ActionUnavailable,
+                    "Creator input availability cannot currently be resolved.",
+                )
+                .with_detail("command", "fusion_creator_project_open"));
+            }
+        }
+    }
+    snapshot.commit().map_err(sql_error)?;
+    Ok(CreatorProjectOpenResponse {
+        project,
+        private_bindings,
+        missing_inputs,
+    })
+}
+
+/// A point-in-time availability check, not a pin check or reusable IO approval.
+/// Every future acquisition must independently reopen and verify its own handle.
+fn local_input_available(path: &Path) -> bool {
+    if !path.is_absolute() {
+        return false;
+    }
+    let Ok(metadata) = std::fs::symlink_metadata(path) else {
+        return false;
+    };
+    if fs_safety::check_metadata(&metadata, path).is_err() {
+        return false;
+    }
+    if metadata.is_dir() {
+        fs_safety::guard(path).is_ok()
+    } else {
+        fs_safety::open_read(path).is_ok()
+    }
+}
+
+/// Return all bounded storage pages under one read snapshot, in project-ID order.
+pub(crate) fn list(store: &RepositoryStore) -> Result<Vec<CreatorProjectSummary>, FusionError> {
+    let snapshot = store.conn.unchecked_transaction().map_err(sql_error)?;
+    let mut summaries = Vec::new();
+    let mut offset = 0_u32;
+    loop {
+        let projects = project_storage::list_projects(store, 32, offset)?;
+        let last_page = projects.len() < 32;
+        for project in projects {
+            validate_stored_project(&project)?;
+            let modified_at = modified_at(store, &project.project_id)?;
+            let verification_status = verification_status(store, &project)?;
+            summaries.push(CreatorProjectSummary {
+                project_id: project.project_id,
+                title: project.title,
+                revision: project.revision,
+                verification_status,
+                modified_at,
+            });
+        }
+        if last_page {
+            break;
+        }
+        offset = offset.checked_add(32).ok_or_else(invalid_stored)?;
+    }
+    snapshot.commit().map_err(sql_error)?;
+    Ok(summaries)
+}
+
+/// History is a read projection, not the byte-audit or export authority.
+pub(crate) fn release_list(
+    store: &RepositoryStore,
+    project_id: &str,
+) -> Result<Vec<CreatorRelease>, FusionError> {
+    let snapshot = store.conn.unchecked_transaction().map_err(sql_error)?;
+    let project =
+        project_storage::open_project(store, project_id)?.ok_or_else(history_not_found)?;
+    validate_stored_project(&project)?;
+    let mut releases = Vec::new();
+    let mut positions = BTreeMap::new();
+    {
+        let mut statement = store.conn.prepare(
+            "SELECT release_id,project_revision,release_json FROM creator_releases WHERE project_id=?1 ORDER BY project_revision DESC,release_id",
+        ).map_err(sql_error)?;
+        let mut rows = statement.query([project_id]).map_err(sql_error)?;
+        while let Some(row) = rows.next().map_err(sql_error)? {
+            let id: String = row.get(0).map_err(|_| invalid_stored())?;
+            let revision: u64 = row.get(1).map_err(|_| invalid_stored())?;
+            let bytes: Vec<u8> = row.get(2).map_err(|_| invalid_stored())?;
+            let mut release: CreatorRelease = stored_json(&bytes)?;
+            validate_release_row(&release, &id, project_id, revision, project.revision)?;
+            // Derive the presentation-only backlinks from reports under the same snapshot.
+            release.report_ids.clear();
+            positions.insert(id, releases.len());
+            releases.push(release);
+        }
+    }
+    {
+        let mut statement = store.conn.prepare(
+            "SELECT report_id,project_revision,report_json FROM creator_reports WHERE project_id=?1 ORDER BY report_id",
+        ).map_err(sql_error)?;
+        let mut rows = statement.query([project_id]).map_err(sql_error)?;
+        while let Some(row) = rows.next().map_err(sql_error)? {
+            let id: String = row.get(0).map_err(|_| invalid_stored())?;
+            let revision: u64 = row.get(1).map_err(|_| invalid_stored())?;
+            let bytes: Vec<u8> = row.get(2).map_err(|_| invalid_stored())?;
+            let report: CreatorReport = stored_json(&bytes)?;
+            let index = positions
+                .get(&report.release_id)
+                .ok_or_else(invalid_stored)?;
+            let release = &mut releases[*index];
+            validate_history_report(&report, &id, revision, release, &project)?;
+            release.report_ids.push(id);
+        }
+    }
+    snapshot.commit().map_err(sql_error)?;
+    Ok(releases)
+}
+
+pub(crate) fn report_get(store: &RepositoryStore, id: &str) -> Result<CreatorReport, FusionError> {
+    let snapshot = store.conn.unchecked_transaction().map_err(sql_error)?;
+    let (project_id, revision, bytes): (String, u64, Vec<u8>) = {
+        let mut statement = store.conn.prepare(
+            "SELECT project_id,project_revision,report_json FROM creator_reports WHERE report_id=?1",
+        ).map_err(sql_error)?;
+        let mut rows = statement.query([id]).map_err(sql_error)?;
+        let row = rows
+            .next()
+            .map_err(sql_error)?
+            .ok_or_else(history_not_found)?;
+        (
+            row.get(0).map_err(|_| invalid_stored())?,
+            row.get(1).map_err(|_| invalid_stored())?,
+            row.get(2).map_err(|_| invalid_stored())?,
+        )
+    };
+    let report: CreatorReport = stored_json(&bytes)?;
+    let project = project_storage::open_project(store, &project_id)?.ok_or_else(invalid_stored)?;
+    validate_stored_project(&project)?;
+    let release = report_release(store, &project, &report.release_id, revision)?;
+    validate_history_report(&report, id, revision, &release, &project)?;
+    snapshot.commit().map_err(sql_error)?;
+    Ok(report)
+}
+
+fn history_not_found() -> FusionError {
+    FusionError::new(
+        ErrorCode::SnapshotNotFound,
+        "Creator history entry was not found.",
+    )
+}
+
+fn validate_stored_project(project: &CreatorProgramProject) -> Result<(), FusionError> {
+    validate_descriptor_metadata(&project.program_descriptor).map_err(|_| invalid_stored())
+}
+
+fn modified_at(store: &RepositoryStore, project_id: &str) -> Result<u64, FusionError> {
+    let mut statement = store
+        .conn
+        .prepare("SELECT modified_at FROM creator_project_metadata WHERE project_id=?1")
+        .map_err(sql_error)?;
+    let mut rows = statement.query([project_id]).map_err(sql_error)?;
+    let row = rows.next().map_err(sql_error)?.ok_or_else(invalid_stored)?;
+    let value: i64 = row.get(0).map_err(|_| invalid_stored())?;
+    if value < 0 || value as u64 > MAX_REVISION {
+        return Err(invalid_stored());
+    }
+    Ok(value as u64)
+}
+
+fn stored_json<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, FusionError> {
+    let json = std::str::from_utf8(bytes).map_err(|_| invalid_stored())?;
+    let value = parse_unique_json(json, MAX_PROGRAM_BYTES).map_err(|_| invalid_stored())?;
+    serde_json::from_value(value).map_err(|_| invalid_stored())
+}
+
+fn valid_hash(hash: &str) -> bool {
+    hash.len() == 64
+        && hash
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
+fn valid_history_id(id: &str) -> bool {
+    !id.is_empty() && id.chars().nth(128).is_none()
+}
+
+fn verification_status(
+    store: &RepositoryStore,
+    project: &CreatorProgramProject,
+) -> Result<CreatorReportStatus, FusionError> {
+    let mut statement = store.conn.prepare(
+        "SELECT report_id,report_json FROM creator_reports WHERE project_id=?1 AND project_revision=?2 ORDER BY report_id",
+    ).map_err(sql_error)?;
+    let mut rows = statement
+        .query(params![project.project_id, project.revision])
+        .map_err(sql_error)?;
+    let mut any_failed = false;
+    let mut structure_passed: BTreeMap<String, BTreeSet<(String, String)>> = BTreeMap::new();
+    let mut clean_install_passed: BTreeMap<String, BTreeSet<(String, String)>> = BTreeMap::new();
+    while let Some(row) = rows.next().map_err(sql_error)? {
+        let id: String = row.get(0).map_err(|_| invalid_stored())?;
+        let bytes: Vec<u8> = row.get(1).map_err(|_| invalid_stored())?;
+        let report: CreatorReport = stored_json(&bytes)?;
+        if report.report_id != id || report.project_revision != project.revision {
+            return Err(invalid_stored());
+        }
+        validate_report_release(store, project, &report)?;
+        if !matches!(
+            report.kind,
+            CreatorReportKind::StructureIntegrity | CreatorReportKind::CleanInstall
+        ) {
+            continue;
+        }
+        match report.status {
+            CreatorReportStatus::Failed => any_failed = true,
+            CreatorReportStatus::Passed => {
+                let pair = (report.build_profile_id, report.controls_profile_id);
+                let map = match report.kind {
+                    CreatorReportKind::StructureIntegrity => &mut structure_passed,
+                    CreatorReportKind::CleanInstall => &mut clean_install_passed,
+                    _ => unreachable!(),
+                };
+                map.entry(report.release_id).or_default().insert(pair);
+            }
+            CreatorReportStatus::NotTested => {}
+        }
+    }
+    if any_failed {
+        return Ok(CreatorReportStatus::Failed);
+    }
+    let required_pairs: BTreeSet<(String, String)> = project
+        .program_descriptor
+        .build_profiles
+        .iter()
+        .flat_map(|build| {
+            build
+                .controls_profile_ids
+                .iter()
+                .map(move |controls_id| (build.id.clone(), controls_id.clone()))
+        })
+        .collect();
+    if !required_pairs.is_empty()
+        && structure_passed
+            .iter()
+            .any(|(release_id, structure_pairs)| {
+                required_pairs.is_subset(structure_pairs)
+                    && clean_install_passed
+                        .get(release_id)
+                        .is_some_and(|clean_pairs| required_pairs.is_subset(clean_pairs))
+            })
+    {
+        Ok(CreatorReportStatus::Passed)
+    } else {
+        Ok(CreatorReportStatus::NotTested)
+    }
+}
+
+fn validate_report_release(
+    store: &RepositoryStore,
+    project: &CreatorProgramProject,
+    report: &CreatorReport,
+) -> Result<(), FusionError> {
+    let release = report_release(store, project, &report.release_id, project.revision)?;
+    validate_history_report(
+        report,
+        &report.report_id,
+        project.revision,
+        &release,
+        project,
+    )
+}
+
+fn validate_history_report(
+    report: &CreatorReport,
+    id: &str,
+    revision: u64,
+    release: &CreatorRelease,
+    project: &CreatorProgramProject,
+) -> Result<(), FusionError> {
+    if !valid_history_id(id)
+        || report.report_id != id
+        || !valid_history_id(&report.build_profile_id)
+        || !valid_history_id(&report.controls_profile_id)
+        || report.release_id != release.release_id
+        || report.project_revision != revision
+        || revision != release.project_revision
+        || report.release_blake3 != release.manifest_blake3
+    {
+        return Err(invalid_stored());
+    }
+    // Published historical reports were validated against their own project at write time.
+    // The current descriptor cannot authorize (or invalidate) historical profile IDs.
+    if revision != project.revision {
+        return Ok(());
+    }
+    let descriptor = &project.program_descriptor;
+    let allowed_pair = descriptor.build_profiles.iter().any(|build| {
+        build.id == report.build_profile_id
+            && build
+                .controls_profile_ids
+                .contains(&report.controls_profile_id)
+    }) && descriptor
+        .controls_profiles
+        .iter()
+        .any(|controls| controls.id() == report.controls_profile_id);
+    if report.executor != descriptor.executor || !allowed_pair {
+        return Err(invalid_stored());
+    }
+    Ok(())
+}
+
+fn report_release(
+    store: &RepositoryStore,
+    project: &CreatorProgramProject,
+    release_id: &str,
+    revision: u64,
+) -> Result<CreatorRelease, FusionError> {
+    let mut statement = store.conn.prepare(
+        "SELECT release_json FROM creator_releases WHERE release_id=?1 AND project_id=?2 AND project_revision=?3",
+    ).map_err(sql_error)?;
+    let mut rows = statement
+        .query(params![release_id, project.project_id, revision])
+        .map_err(sql_error)?;
+    let row = rows.next().map_err(sql_error)?.ok_or_else(invalid_stored)?;
+    let bytes: Vec<u8> = row.get(0).map_err(|_| invalid_stored())?;
+    let release: CreatorRelease = stored_json(&bytes)?;
+    validate_release_row(
+        &release,
+        release_id,
+        &project.project_id,
+        revision,
+        project.revision,
+    )?;
+    Ok(release)
+}
+
+fn validate_release_row(
+    release: &CreatorRelease,
+    id: &str,
+    project_id: &str,
+    revision: u64,
+    current_revision: u64,
+) -> Result<(), FusionError> {
+    if !valid_history_id(id)
+        || revision > current_revision
+        || release.release_id != id
+        || release.project_id != project_id
+        || release.project_revision != revision
+        || !valid_hash(&release.manifest_blake3)
+        || release
+            .artifact_hashes
+            .values()
+            .any(|hash| !valid_hash(hash))
+    {
+        return Err(invalid_stored());
+    }
+    Ok(())
+}

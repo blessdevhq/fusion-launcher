@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { listen } from '@tauri-apps/api/event';
 import {
@@ -14,21 +14,26 @@ import {
   RotateCw,
   ShieldAlert,
   ShieldCheck,
-  X
+  X,
+  Zap,
+  ExternalLink,
+  Share2
 } from 'lucide-react';
 import { useI18n } from '@/components/I18nProvider';
 import { LaunchErrorModal } from '@/components/LaunchErrorModal';
 import { InstallProgressOverlay } from '@/components/InstallProgressOverlay';
 import { GameArt } from '@/components/shell/GamePoster';
 import { useDownloadState } from '@/hooks/useDownloadState';
+import { useModalFocusTrap } from '@/hooks/useModalFocusTrap';
 import { api } from '@/lib/api';
 import { displayProductText } from '@/lib/brandText';
-import { isDirectGameDownload } from '@/lib/downloadActions';
+import { isDirectGameDownload, shouldShowDownloadPeers } from '@/lib/downloadActions';
 import { normalizeLaunchFailure } from '@/lib/launchErrors';
 import { useInstallGame } from '@/lib/orchestratorApi';
 import { defaultSaveDirForGame } from '@/lib/paths';
 import { getEmulatorConfig, getEmulatorPath, type AppSettings } from '@/lib/settings';
 import { isTauriRuntime } from '@/lib/runtime';
+import { useLauncherStore } from '@/stores/launcherStore';
 import type {
   CatalogGame,
   GameSetupState,
@@ -47,6 +52,7 @@ interface GameDetailsModalProps {
   onClose: () => void;
   onOpenSettings: () => void;
   onRefresh: () => Promise<void>;
+  onCreateBuild?: () => void;
 }
 
 export function GameDetailsModal({
@@ -54,7 +60,8 @@ export function GameDetailsModal({
   settings,
   onClose,
   onOpenSettings,
-  onRefresh
+  onRefresh,
+  onCreateBuild
 }: GameDetailsModalProps) {
   const { t } = useI18n();
   const [requirements, setRequirements] = useState<RequirementsReport | null>(null);
@@ -65,6 +72,9 @@ export function GameDetailsModal({
   const [defaultSaveDir, setDefaultSaveDir] = useState<string | null>(null);
   const [launchFailure, setLaunchFailure] = useState<LaunchFailure | null>(null);
   const [scrapeState, setScrapeState] = useState<ScrapeState | null>(null);
+  const modalRef = useRef<HTMLElement>(null);
+  const closeRef = useRef<HTMLButtonElement>(null);
+  useModalFocusTrap({ containerRef: modalRef, onClose, initialFocusRef: closeRef, active: !launchFailure });
   const download = useDownloadState(game.id);
   const orchestrator = useInstallGame(game.id);
   const userProvidedGame = isUserProvidedGame(game);
@@ -213,6 +223,20 @@ export function GameDetailsModal({
     } finally {
       setBusy(null);
     }
+  };
+
+  const handleRemoveGame = async () => {
+    const store = useLauncherStore.getState();
+    const attemptId = store.downloads.find((item) => item.gameId === game.id)?.attemptId;
+    await runDownloadAction('remove', async () => {
+      const report = await api.removeGame(game.id, true);
+      store.removeDownload({ gameId: game.id, attemptId });
+      if (report.preservedPaths.length > 0) {
+        const detail = t.common.filesPreserved(report.preservedPaths);
+        setMessage(detail);
+        store.addActivityEvent({ title: displayProductText(game.title), detail, gameId: game.id, tone: 'warning' });
+      }
+    });
   };
 
   const chooseTargetDirectory = async (title: string) => {
@@ -390,6 +414,26 @@ export function GameDetailsModal({
     });
   };
 
+  const handleSmartAutoImport = async () => {
+    const selected = isTauriRuntime()
+      ? await open({
+          title: t.gameDetails.messages.smartImportButton,
+          multiple: false,
+          directory: false
+        })
+      : 'C:\\dumps\\prod.keys';
+    if (typeof selected !== 'string') return;
+    await run('smart-import', async () => {
+      const report = await api.autoImportSystemFile(selected);
+      if (!report.success) {
+        throw new Error(report.message);
+      }
+      setMessage(t.gameDetails.messages.smartImportSuccess(report.label));
+      await loadRequirements();
+      await onRefresh();
+    });
+  };
+
   const handleRescrape = async () => {
     setBusy('metadata');
     setMessage(null);
@@ -448,6 +492,50 @@ export function GameDetailsModal({
     }
   };
 
+  const handleShareGame = async () => {
+    try {
+      const httpDownload = game.downloads.find((d) => d.kind === 'http');
+      const magnetDownload = game.downloads.find((d) => d.kind === 'magnet');
+      const userDownload = game.downloads.find((d) => d.kind === 'user_provided');
+      const sha256 = httpDownload ? httpDownload.sha256 : userDownload ? userDownload.sha256 : undefined;
+      const downloadUrl = httpDownload ? httpDownload.url : undefined;
+      const magnetUri = magnetDownload ? magnetDownload.uri : undefined;
+
+      const input = {
+        id: game.id,
+        title: game.title,
+        platform: game.platform,
+        description: game.description,
+        coverImageUrl: game.artwork?.cover ?? game.coverImageUrl,
+        heroImageUrl: game.artwork?.hero,
+        releaseYear: game.metadata?.releaseYear,
+        developer: game.metadata?.developer,
+        genres: game.metadata?.genres,
+        contentMode: game.contentMode === 'downloadable' ? 'downloadable' : 'user_provided',
+        downloadUrl,
+        magnetUri,
+        sha256,
+        setupProfileId: game.setupProfileId,
+        expectedExtensions: game.expectedExtensions,
+        authorName: game.metadata?.externalIds?.author ?? game.metadata?.tags?.find((item) => item.startsWith('author:'))?.replace('author:', ''),
+        authorUrl: game.metadata?.externalIds?.authorUrl ?? game.metadata?.tags?.find((item) => item.startsWith('authorUrl:'))?.replace('authorUrl:', '')
+      };
+
+      const jsonStr = JSON.stringify(input);
+      const bytes = new TextEncoder().encode(jsonStr);
+      let binary = '';
+      for (let i = 0; i < bytes.length; i++) {
+        binary += String.fromCharCode(bytes[i]);
+      }
+      const base64Safe = btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+      const link = `fusion://game/add?data=${base64Safe}&title=${encodeURIComponent(game.title)}`;
+      await navigator.clipboard.writeText(link);
+      setMessage(t.portingStudio.linkCopiedAlert);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : String(err));
+    }
+  };
+
   const handlePlay = async () => {
     const saveDir = download.saveDir ?? defaultSaveDir;
     if (!saveDir) {
@@ -470,6 +558,7 @@ export function GameDetailsModal({
 
   const saveDir = download.saveDir ?? defaultSaveDir;
   const status = download.status;
+  const directDownload = isDirectGameDownload(game, download.record);
   const progressPercent = (download.canPlay ? 100 : download.progressPercent).toFixed(1);
   const statusMessage = message ?? download.errorMessage;
   const gameFileReady = setupState ? setupState.gameFile.status === 'ready' : download.canPlay;
@@ -484,6 +573,8 @@ export function GameDetailsModal({
   const playActionClass = canPlay
     ? 'inline-flex h-10 items-center gap-2 rounded-lg bg-fusion-accent px-4 text-sm font-bold text-fusion-accentOn shadow-glow transition hover:bg-fusion-accentHover'
     : 'inline-flex h-10 items-center gap-2 rounded-md border border-white/10 bg-white/[0.04] px-4 text-sm font-semibold text-white/38 transition disabled:opacity-60';
+  const authorName = game.metadata?.externalIds?.author ?? game.metadata?.tags?.find((item) => item.startsWith('author:'))?.replace('author:', '');
+  const authorUrl = game.metadata?.externalIds?.authorUrl ?? game.metadata?.tags?.find((item) => item.startsWith('authorUrl:'))?.replace('authorUrl:', '');
   const downloadTitle = download.isLoading
     ? t.gameDetails.downloadTitles.checking
     : status
@@ -492,13 +583,15 @@ export function GameDetailsModal({
 
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/78 px-5 backdrop-blur-xl">
-      <section data-testid="game-details-modal" className="relative max-h-[88vh] w-full max-w-3xl overflow-y-auto rounded-2xl border border-white/12 bg-fusion-surface/95 shadow-[0_40px_120px_rgba(0,0,0,0.72)]">
+      <section ref={modalRef} role="dialog" aria-modal="true" tabIndex={-1} data-testid="game-details-modal" className="relative max-h-[88vh] w-full max-w-3xl overflow-y-auto rounded-2xl border border-white/12 bg-fusion-surface/95 shadow-[0_40px_120px_rgba(0,0,0,0.72)] outline-none">
         <header className="flex items-start gap-4 border-b border-white/10 p-5">
           <div className="min-w-0 flex-1">
             <h2 className="text-2xl font-bold">{displayProductText(game.title)}</h2>
             <div className="mt-1 text-sm text-white/46">{game.platform} / {displayProductText(game.repositoryName)}</div>
+            {onCreateBuild && <button type="button" data-testid="creator-context-action" onClick={onCreateBuild} className="rh-filter-chip rh-focusable mt-3">{t.creator.ui.create}</button>}
           </div>
           <button
+            ref={closeRef}
             onClick={onClose}
             className="grid h-9 w-9 place-items-center rounded-lg border border-white/10 text-white/60 transition hover:border-fusion-accent/40 hover:bg-fusion-accent/10 hover:text-white"
             title={t.gameDetails.closeTitle}
@@ -526,6 +619,25 @@ export function GameDetailsModal({
                 ))}
                 {game.metadata.developer && <span className="rounded border border-white/10 px-2 py-1">{game.metadata.developer}</span>}
                 {game.metadata.players && <span className="rounded border border-white/10 px-2 py-1">{game.metadata.players}</span>}
+              </div>
+            )}
+
+            {authorName && (
+              <div className="mb-5 flex items-center justify-between gap-3 rounded-xl border border-fusion-accent/30 bg-fusion-accent/10 p-3 text-xs text-white/80">
+                <div className="flex items-center gap-2">
+                  <span className="font-semibold text-fusion-accent">{t.portingStudio.authorCardBadge(authorName)}</span>
+                </div>
+                {authorUrl && (
+                  <a
+                    href={authorUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="flex items-center gap-1 font-semibold text-fusion-accent hover:underline"
+                  >
+                    <span>{t.portingStudio.authorCardLink}</span>
+                    <ExternalLink className="h-3.5 w-3.5" />
+                  </a>
+                )}
               </div>
             )}
 
@@ -590,6 +702,22 @@ export function GameDetailsModal({
             </div>
 
             <div className="mb-5 space-y-2">
+              {setupState?.systemFiles?.some((item) => item.required && item.status !== 'ready') && (
+                <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-cyan-500/20 bg-cyan-950/20 p-2.5">
+                  <div className="flex items-center gap-2 text-xs text-cyan-200">
+                    <Zap className="h-4 w-4 text-cyan-400 shrink-0" />
+                    <span>{t.gameDetails.messages.smartImportDropPrompt}</span>
+                  </div>
+                  <button
+                    onClick={() => void handleSmartAutoImport()}
+                    disabled={busy !== null}
+                    className="flex items-center gap-1.5 rounded-md border border-cyan-500/40 bg-cyan-500/15 px-3 py-1.5 text-xs font-semibold text-cyan-200 transition hover:bg-cyan-500/25 disabled:opacity-40"
+                  >
+                    {busy === 'smart-import' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5" />}
+                    <span>{t.gameDetails.messages.smartImportButton}</span>
+                  </button>
+                </div>
+              )}
               {(setupState?.systemFiles || []).map((item) => (
                 <div key={item.id} className="flex items-center justify-between gap-3 rounded-md bg-black/22 px-3 py-2 text-sm">
                   <div className="min-w-0">
@@ -664,7 +792,7 @@ export function GameDetailsModal({
             )}
 
             {statusMessage && (
-              <div className="mb-4 rounded-md border border-amber-300/24 bg-amber-300/10 px-3 py-2 select-text text-sm text-amber-100">
+              <div className="mb-4 break-words rounded-md border border-amber-300/24 bg-amber-300/10 px-3 py-2 select-text text-sm text-amber-100">
                 {statusMessage}
               </div>
             )}
@@ -685,10 +813,10 @@ export function GameDetailsModal({
                   <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-white/45">
                     <span>{formatBytes(download.downloadedBytes)} / {formatBytes(download.totalBytes)}</span>
                     <span>{formatSpeed(download.downloadSpeedBytesPerSec)}</span>
-                    <span>{download.peersCount} {t.common.peers}</span>
+                    {shouldShowDownloadPeers(download.record) && !directDownload && <span>{download.peersCount} {t.common.peers}</span>}
                   </div>
                   <div className="mt-3 flex flex-wrap gap-2">
-                    {status === 'downloading' && (
+                    {status === 'downloading' && !directDownload && (
                       <button
                         onClick={() => runDownloadAction('pause', download.pause)}
                         disabled={busy !== null}
@@ -702,7 +830,7 @@ export function GameDetailsModal({
                       <button
                         onClick={() => runDownloadAction(
                           status === 'error' ? 'retry' : 'resume',
-                          status === 'error' && isDirectGameDownload(game, download.record)
+                          status === 'error' && directDownload
                             ? () => api.startGameDownload(game.id)
                             : download.resume
                         )}
@@ -713,7 +841,7 @@ export function GameDetailsModal({
                         {status === 'error' ? t.gameDetails.downloadActions.retry : t.gameDetails.downloadActions.resume}
                       </button>
                     )}
-                    {status === 'error' && isDirectGameDownload(game, download.record) && (
+                    {status === 'error' && directDownload && (
                       <button
                         onClick={() => void handleDownloadTo()}
                         disabled={busy !== null}
@@ -804,11 +932,20 @@ export function GameDetailsModal({
                     {t.gameDetails.setup.openFolder}
                   </button>
                 )}
+                <button
+                  onClick={() => void handleShareGame()}
+                  disabled={busy !== null}
+                  className={secondaryActionClass}
+                  title={t.portingStudio.copyDeepLink}
+                >
+                  <Share2 className="h-4 w-4" />
+                  <span>{t.common.share}</span>
+                </button>
                 {(download.canPlay || status === 'completed' || status === 'cancelled') && (
                   <button
                     onClick={() => {
                       if (window.confirm(t.gameDetails.messages.removeConfirm(displayProductText(game.title)))) {
-                        void runDownloadAction('remove', () => api.removeGame(game.id, true));
+                        void handleRemoveGame();
                       }
                     }}
                     disabled={busy !== null}

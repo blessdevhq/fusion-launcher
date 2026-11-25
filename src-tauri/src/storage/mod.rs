@@ -18,7 +18,7 @@ use crate::security::global_id;
 use crate::setup_profiles;
 
 pub struct RepositoryStore {
-    conn: Connection,
+    pub(crate) conn: Connection,
 }
 
 #[derive(Debug, Clone)]
@@ -57,10 +57,15 @@ mod catalog;
 mod config;
 mod downloads;
 mod emulators;
+pub mod fusion_source;
 mod metadata;
 mod migrations;
+mod operations;
+pub(crate) use operations::{DownloadAttempt, WorkerProgress};
 mod repositories;
 mod rows;
 
+#[cfg(test)]
+mod creator_migration_tests;
 #[cfg(test)]
 mod tests;

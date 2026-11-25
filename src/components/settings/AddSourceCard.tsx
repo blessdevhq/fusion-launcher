@@ -1,25 +1,34 @@
 import { useState } from 'react';
-import { AlertTriangle, Loader2, PackagePlus, ShieldAlert } from 'lucide-react';
+import { AlertTriangle, FolderOpen, Loader2, PackagePlus, ShieldAlert } from 'lucide-react';
+import { open } from '@tauri-apps/plugin-dialog';
+import { isTauriRuntime } from '@/lib/runtime';
 import { useI18n } from '@/components/I18nProvider';
 import { api } from '@/lib/api';
+import { fusionErrorMessage, type SourcePreview } from '@/types/fusionSource';
+import { fusionText } from '@/lib/fusionText';
 import { displayProductText } from '@/lib/brandText';
 import { sourceTrustLabel } from '@/lib/sourceTrust';
 import type { RepositoryPreview } from '@/types/repository';
 import { shortHash, trustBadgeClass } from './utils';
+
+const isLocalDirectoryInput = (value: string) => /^[A-Za-z]:[\\/]/.test(value);
 
 // Unified "Add a source" card. Accepts a community/personal repository URL, a
 // repository JSON, or a game manifest (URL or pasted JSON); the backend
 // (`preview_source` / `add_source`) auto-detects the format and registers it as a
 // browsable library source without installing anything.
 export function AddSourceCard({ onAdded }: { onAdded: () => Promise<void> }) {
-  const { t } = useI18n();
+  const { locale, t } = useI18n();
+  const fusion = fusionText(locale);
   const strings = t.settings.sourcesPanel;
   const [input, setInput] = useState('');
   const [checking, setChecking] = useState(false);
   const [adding, setAdding] = useState(false);
-  const [preview, setPreview] = useState<RepositoryPreview | null>(null);
+  const [preview, setPreview] = useState<SourcePreview | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [localDirectory, setLocalDirectory] = useState<string | null>(null);
+  const [prepareEden, setPrepareEden] = useState(false);
 
   const trimmed = input.trim();
   const busy = checking || adding;
@@ -31,12 +40,33 @@ export function AddSourceCard({ onAdded }: { onAdded: () => Promise<void> }) {
     setNotice(null);
     setPreview(null);
     try {
-      setPreview(await api.previewSource(trimmed));
+      const dir = localDirectory ?? (isLocalDirectoryInput(trimmed) ? trimmed : null);
+      if (dir) {
+        const source = await api.fusionSourcePreviewLocal(dir);
+        setLocalDirectory(dir);
+        setPreview({ kind: 'fusion_source', source });
+      } else {
+        setPreview(await api.previewAnySource(trimmed));
+      }
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught));
+      setError(fusionErrorMessage(caught));
     } finally {
       setChecking(false);
     }
+  };
+
+  const chooseLocal = async () => {
+    setChecking(true); setError(null); setNotice(null);
+    try {
+      const selected = isTauriRuntime()
+        ? await open({ directory: true, multiple: false, title: fusion.localFolder })
+        : 'preview://Sources/local-release';
+      if (typeof selected !== 'string') return;
+      setInput(selected); setLocalDirectory(selected); setPreview(null); setPrepareEden(false);
+      const source = await api.fusionSourcePreviewLocal(selected);
+      setPreview({ kind: 'fusion_source', source });
+    } catch (caught) { setError(fusionErrorMessage(caught)); }
+    finally { setChecking(false); }
   };
 
   const add = async () => {
@@ -45,13 +75,18 @@ export function AddSourceCard({ onAdded }: { onAdded: () => Promise<void> }) {
     setError(null);
     setNotice(null);
     try {
-      await api.addSource(trimmed);
+      if (localDirectory && preview?.kind === 'fusion_source') {
+        await api.fusionSourceAddLocal(localDirectory, preview.source.sourceId, prepareEden);
+      } else {
+        await api.addAnySource(trimmed, preview ?? undefined);
+      }
       await onAdded();
       setNotice(strings.added);
       setInput('');
       setPreview(null);
+      setLocalDirectory(null); setPrepareEden(false);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught));
+      setError(fusionErrorMessage(caught));
     } finally {
       setAdding(false);
     }
@@ -68,7 +103,8 @@ export function AddSourceCard({ onAdded }: { onAdded: () => Promise<void> }) {
       <div className="mt-3 grid gap-2 lg:grid-cols-[minmax(0,1fr)_auto_auto]">
         <textarea
           value={input}
-          onChange={(event) => setInput(event.target.value)}
+          disabled={busy}
+          onChange={(event) => { setInput(event.target.value); setPreview(null); setLocalDirectory(null); setPrepareEden(false); }}
           onKeyDown={(event) => {
             if ((event.ctrlKey || event.metaKey) && event.key === 'Enter' && !busy && trimmed) void check();
           }}
@@ -89,7 +125,7 @@ export function AddSourceCard({ onAdded }: { onAdded: () => Promise<void> }) {
         <button
           type="button"
           onClick={add}
-          disabled={busy || !trimmed}
+          disabled={busy || !trimmed || Boolean(localDirectory && !preview)}
           className="rh-primary-action h-11 justify-center"
           data-testid="add-source-add"
         >
@@ -98,8 +134,17 @@ export function AddSourceCard({ onAdded }: { onAdded: () => Promise<void> }) {
         </button>
       </div>
 
+      <div className="mt-3 flex flex-wrap items-center gap-3">
+        <button type="button" disabled={busy} onClick={() => void chooseLocal()} className="rh-mini-action rh-focusable" data-testid="add-source-local"><FolderOpen className="h-4 w-4" />{fusion.localFolder}</button>
+        <p className="text-xs text-[var(--rh-muted)]">{fusion.localSourceNote}</p>
+      </div>
+      {localDirectory && <div className="mt-3 text-sm">
+        <label className="flex items-center gap-2"><input type="checkbox" checked={prepareEden} disabled={busy} onChange={(event) => setPrepareEden(event.target.checked)} data-testid="add-source-prepare-eden" className="accent-[var(--rh-accent)]" />{fusion.prepareEden}</label>
+        <p className="mt-1 text-xs text-[var(--rh-muted)]">{fusion.prepareEdenNote}</p>
+      </div>}
+
       {error && (
-        <div className="mt-3 flex items-center gap-2 rounded-sm border border-red-300/[0.2] bg-red-300/10 px-3 py-2 text-xs font-semibold text-red-100/90">
+        <div role="alert" className="mt-3 flex items-center gap-2 rounded-sm border border-red-300/[0.2] bg-red-300/10 px-3 py-2 text-xs font-semibold text-red-100/90">
           <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
           <span className="min-w-0 break-words select-text whitespace-pre-line">{error}</span>
         </div>
@@ -112,7 +157,17 @@ export function AddSourceCard({ onAdded }: { onAdded: () => Promise<void> }) {
         </div>
       )}
 
-      {preview && <SourcePreviewCard preview={preview} />}
+      {preview?.kind === 'legacy' && <SourcePreviewCard preview={preview.source} />}
+      {preview?.kind === 'fusion_source' && (
+        <div className="mt-4 border-t border-fusion-line pt-4 text-sm" data-testid="add-source-preview">
+          <div className="font-semibold">{preview.source.name}</div>
+          <div className="mt-1 break-all text-white/50">{preview.source.localDirectory ?? preview.source.url}</div>
+          <div className="mt-2 text-white/70">Fusion Source v1.0 · {preview.source.gameCount} {t.common.games}</div>
+          <p className="mt-2 break-all text-white/50">{fusion.publicKey}: {preview.source.publicKey ?? fusion.noKey}</p>
+          <p className="mt-2 text-white/50">{fusion.signatureNote}</p>
+          <p className="mt-2 text-white/50">{fusion.indexNote}</p>
+        </div>
+      )}
     </div>
   );
 }

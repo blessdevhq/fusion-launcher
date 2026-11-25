@@ -454,6 +454,87 @@ pub(super) fn import_game_file_into_store(
     }
 }
 
+/// Reference an existing user-owned file without copying it or creating an
+/// installation manifest. A library entry is never evidence of file ownership.
+pub(super) fn link_user_game_file_into_store(
+    store: &RepositoryStore,
+    game_id: &str,
+    source_path: &Path,
+) -> ImportGameFileReport {
+    let game = match store.get_game(game_id) {
+        Ok(Some(game)) => game,
+        Ok(None) => return import_game_error(game_id, "", "unknown_game", None),
+        Err(_) => return import_game_error(game_id, "", "store_failed", None),
+    };
+    let user_source = game.downloads.iter().find_map(|source| match source {
+        SourceUri::UserProvided { sha256, .. } => Some(sha256.as_deref()),
+        _ => None,
+    });
+    if game.content_mode.as_deref() == Some("metadata_only")
+        || (game.content_mode.as_deref() != Some("user_provided") && user_source.is_none())
+    {
+        return import_game_error(game_id, "", "unsupported_target", None);
+    }
+    if let Err(error) = validate_import_source(source_path) {
+        return import_game_error(game_id, "", error.code, None);
+    }
+    let profile = resolve_known_profile(&game);
+    let extensions = resolved_expected_extensions(&game, profile.as_ref());
+    if !source_matches_expected_extension(source_path, &extensions) {
+        return import_game_error(game_id, "", "wrong_extension", None);
+    }
+    let resolved = match game_files::normalize_expected_extensions(&extensions)
+        .map_err(|_| ())
+        .and_then(|extensions| {
+            game_files::resolve_game_path(source_path, &extensions, None).map_err(|_| ())
+        })
+        .and_then(|path| path.canonicalize().map_err(|_| ()))
+    {
+        Ok(path) => path,
+        Err(_) => return import_game_error(game_id, "", "invalid_game_file", None),
+    };
+    let installed_path = resolved.to_string_lossy().to_string();
+    // Checksums are verified only when the user's metadata explicitly requires
+    // one. Linking a large local image otherwise needs only its file metadata.
+    let sha256 = match user_source.flatten().filter(|hash| !hash.trim().is_empty()) {
+        Some(expected) => match hash_file(&resolved) {
+            Ok(actual) if actual.eq_ignore_ascii_case(expected) => Some(actual),
+            Ok(actual) => {
+                return import_game_error(
+                    game_id,
+                    &installed_path,
+                    "checksum_mismatch",
+                    Some(actual),
+                );
+            }
+            Err(_) => {
+                return import_game_error(game_id, &installed_path, "source_unreadable", None)
+            }
+        },
+        None => None,
+    };
+    let total_bytes = file_size(&resolved);
+    if store
+        .record_direct_game_download_completed_optional(
+            game_id,
+            "user_link",
+            &installed_path,
+            sha256.as_deref(),
+            total_bytes,
+        )
+        .is_err()
+    {
+        return import_game_error(game_id, &installed_path, "store_failed", sha256);
+    }
+    ImportGameFileReport {
+        status: "linked".to_string(),
+        game_id: game.id,
+        installed_path,
+        sha256,
+        error_code: None,
+    }
+}
+
 pub(super) fn imported_game_target(
     download_root: &Path,
     game: &CatalogGameView,

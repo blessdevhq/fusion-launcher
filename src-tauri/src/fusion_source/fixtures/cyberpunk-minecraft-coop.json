@@ -1,0 +1,44 @@
+{
+  "schema_version": "1.0",
+  "id": "cyberpunk-minecraft-coop",
+  "title": "Cyberpunk × Minecraft Coop (fictional bridge example)",
+  "version": "1.0.0",
+  "extends": "cyberpunk-base",
+  "capabilities": {"required": ["resolver.https.v1", "proc.supervisor.v1"], "optional": []},
+  "layers": [
+    {
+      "id": "coop-bridge",
+      "kind": "mod",
+      "depends_on": ["base"],
+      "source": {"kind": "remote", "mirrors": ["https://example.org/fusion-fixtures/coop-bridge.zip"], "archive": "zip"},
+      "transport_digest": {"algorithm": "blake3", "value": "9999999999999999999999999999999999999999999999999999999999999999"},
+      "mount_path": "mods",
+      "writable_copy_paths": ["config/**"],
+      "critical_files": [
+        {"path": "coop-bridge.exe", "blake3": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "role": "main_executable"},
+        {"path": "coop-injector.dll", "blake3": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "role": "injector_dll"}
+      ]
+    },
+    {
+      "id": "minecraft-client",
+      "kind": "mod",
+      "source": {"kind": "user_provided", "instructions": "Select your own licensed Minecraft client; no commercial client is distributed."},
+      "mount_path": "minecraft",
+      "writable_copy_paths": ["config/**"],
+      "critical_files": [{"path": "client.exe", "blake3": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", "role": "main_executable"}]
+    }
+  ],
+  "orchestrator": {
+    "strict_sync": true,
+    "processes": [
+      {"id": "bridge", "executable": "mods/coop-bridge.exe", "args": ["--config", "{{WORKSPACE_DIR}}/mods/config/bridge.json"], "role": "supporting"},
+      {"id": "minecraft", "executable": "minecraft/client.exe", "args": [], "depends_on": ["bridge"], "role": "supporting"},
+      {"id": "cyberpunk", "executable": "bin/x64/Cyberpunk2077.exe", "args": [], "depends_on": ["bridge", "minecraft"], "role": "primary"}
+    ]
+  },
+  "persistence": {"saves_paths": ["workspace/minecraft/saves", "{{APPDATA}}/FusionExample/coop/saves"]},
+  "config_templates": [
+    {"id": "bridge-config", "path": "mods/config/bridge.json", "format": "json", "template": "{\"workspace\":\"{{WORKSPACE_DIR}}\",\"strict_sync\":true}"}
+  ],
+  "local_placement": "cross_volume_fallback"
+}

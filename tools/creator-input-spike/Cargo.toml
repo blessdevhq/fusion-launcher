@@ -1,0 +1,11 @@
+[package]
+name = "creator-input-spike"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# Deliberately standalone; never added to the production workspace.
+[workspace]
+
+[dependencies]
+sdl2 = { version = "=0.38.0", default-features = false, features = ["bundled", "static-link"] }

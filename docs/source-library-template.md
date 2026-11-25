@@ -64,7 +64,7 @@ Example shape:
 ```json
 {
   "kind": "magnet",
-  "uri": "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&dn=template-homebrew.gba",
+  "uri": "<legal-homebrew-magnet-uri>",
   "infoHash": "0123456789abcdef0123456789abcdef01234567",
   "sizeBytes": 131072
 }

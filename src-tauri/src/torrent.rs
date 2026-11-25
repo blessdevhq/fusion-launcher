@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex as StoreMutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, State};
@@ -15,7 +15,7 @@ use crate::AppState;
 
 pub(crate) const MAX_ACTIVE_DOWNLOADS: usize = 1;
 const POLL_INTERVAL: Duration = Duration::from_millis(500);
-const DB_FLUSH_INTERVAL: Duration = Duration::from_secs(2);
+#[cfg(test)]
 const ACTIVE_DOWNLOAD_LIMIT_ERROR: &str =
     "Another torrent download is already active. Please wait for it to finish before starting a new one.";
 
@@ -24,8 +24,12 @@ pub struct TorrentManager {
     engine: Arc<dyn TorrentEngine>,
     records: Arc<Mutex<HashMap<String, TorrentRecord>>>,
     store: Arc<StoreMutex<RepositoryStore>>,
-    app: AppHandle,
-    data_dir: PathBuf,
+    events: Arc<dyn DownloadEventSink>,
+    operations: OperationCoordinator,
+    owners: Arc<StoreMutex<HashMap<String, OperationLease>>>,
+    writer_guards: Arc<StoreMutex<HashMap<String, crate::install_ownership::WriteProtection>>>,
+    tasks: Arc<StoreMutex<HashMap<String, tauri::async_runtime::JoinHandle<()>>>>,
+    control: Arc<Mutex<()>>,
 }
 
 #[derive(Clone)]
@@ -35,10 +39,12 @@ struct TorrentRecord {
     torrent_id: Option<usize>,
     state: TorrentRecordState,
     error: Option<String>,
+    identity: DownloadAttempt,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum TorrentRecordState {
+    Queued,
     Resolving,
     Downloading,
     Paused,
@@ -50,6 +56,7 @@ enum TorrentRecordState {
 impl TorrentRecordState {
     fn as_str(self) -> &'static str {
         match self {
+            Self::Queued => "queued",
             Self::Resolving => "resolving",
             Self::Downloading => "downloading",
             Self::Paused => "paused",
@@ -88,6 +95,8 @@ pub struct TorrentStatus {
 #[serde(rename_all = "camelCase")]
 pub struct DownloadProgressEvent {
     pub game_id: String,
+    pub attempt_id: Option<String>,
+    pub run_id: Option<u64>,
     pub subject_type: Option<String>,
     pub display_name: Option<String>,
     pub parent_game_id: Option<String>,
@@ -104,456 +113,10 @@ pub struct DownloadProgressEvent {
     pub error: Option<String>,
 }
 
-impl TorrentManager {
-    pub async fn new(
-        data_dir: PathBuf,
-        store: Arc<StoreMutex<RepositoryStore>>,
-        app: AppHandle,
-    ) -> Result<Self, String> {
-        let engine = Arc::new(LibtorrentEngine::new(app.clone()));
-        Self::with_engine(engine, data_dir, store, app).await
-    }
-
-    /// Build a manager around an arbitrary engine. Used by `new` (the libtorrent
-    /// sidecar) and by tests that supply a fake engine.
-    pub async fn with_engine(
-        engine: Arc<dyn TorrentEngine>,
-        data_dir: PathBuf,
-        store: Arc<StoreMutex<RepositoryStore>>,
-        app: AppHandle,
-    ) -> Result<Self, String> {
-        let manager = Self {
-            engine,
-            records: Arc::new(Mutex::new(HashMap::new())),
-            store,
-            app,
-            data_dir,
-        };
-        manager.restore_startup_downloads().await;
-        Ok(manager)
-    }
-
-    pub async fn start_magnet_download(
-        &self,
-        game_id: String,
-        magnet_uri: String,
-        save_dir: String,
-    ) -> Result<TorrentStartReport, String> {
-        validate_start_request(&game_id, &magnet_uri, &save_dir)?;
-
-        let game_id = game_id.trim().to_string();
-        let magnet_uri = magnet_uri.trim().to_string();
-        let save_dir = save_dir.trim().to_string();
-        let output_folder = PathBuf::from(&save_dir);
-
-        {
-            let records = self.records.lock().await;
-            ensure_can_start_download(&records, &game_id)?;
-        }
-
-        tokio::fs::create_dir_all(&output_folder)
-            .await
-            .map_err(|error| format!("Failed to create save directory: {error}"))?;
-
-        {
-            let store = lock_store(&self.store)?;
-            store.upsert_torrent_download_start(&game_id, &magnet_uri, &save_dir)?;
-        }
-
-        {
-            let mut records = self.records.lock().await;
-            ensure_can_start_download(&records, &game_id)?;
-
-            records.insert(
-                game_id.clone(),
-                TorrentRecord {
-                    game_id: game_id.clone(),
-                    save_dir: save_dir.clone(),
-                    torrent_id: None,
-                    state: TorrentRecordState::Resolving,
-                    error: None,
-                },
-            );
-        }
-
-        self.spawn_add_torrent_task(game_id.clone(), magnet_uri, save_dir.clone());
-
-        Ok(TorrentStartReport {
-            game_id,
-            state: TorrentRecordState::Resolving.as_str().to_string(),
-            save_dir: output_folder.to_string_lossy().to_string(),
-        })
-    }
-
-    pub async fn get_torrent_status(&self, game_id: String) -> Result<TorrentStatus, String> {
-        if let Some(status) =
-            status_from_records(&self.engine, &self.records, game_id.clone()).await?
-        {
-            return Ok(status);
-        }
-
-        let store = lock_store(&self.store)?;
-        store
-            .get_torrent_download(&game_id)?
-            .map(|record| status_from_persisted_record(&record))
-            .ok_or_else(|| format!("Unknown torrent: {game_id}"))
-    }
-
-    pub fn get_game_download(
-        &self,
-        game_id: &str,
-    ) -> Result<Option<TorrentDownloadRecord>, String> {
-        lock_store(&self.store)?.get_torrent_download(game_id)
-    }
-
-    pub fn list_downloads(&self) -> Result<Vec<TorrentDownloadRecord>, String> {
-        lock_store(&self.store)?.list_torrent_downloads()
-    }
-
-    pub async fn pause_download(&self, game_id: String) -> Result<TorrentDownloadRecord, String> {
-        let persisted = lock_store(&self.store)?
-            .get_torrent_download(&game_id)?
-            .ok_or_else(|| format!("Unknown torrent download: {game_id}"))?;
-        if is_direct_download_record(&persisted) {
-            return Err("Direct downloads cannot be paused.".to_string());
-        }
-
-        let torrent_id = {
-            let records = self.records.lock().await;
-            records.get(&game_id).and_then(|record| record.torrent_id)
-        };
-
-        if let Some(id) = torrent_id {
-            self.engine.pause(id).await?;
-        }
-
-        {
-            let mut records = self.records.lock().await;
-            if let Some(record) = records.get_mut(&game_id) {
-                record.state = TorrentRecordState::Paused;
-                record.error = None;
-            }
-        }
-
-        let record = lock_store(&self.store)?.set_torrent_status(&game_id, "paused", None)?;
-        emit_download_record(&self.app, &record);
-        Ok(record)
-    }
-
-    pub async fn resume_download(&self, game_id: String) -> Result<TorrentDownloadRecord, String> {
-        let torrent_id = {
-            let records = self.records.lock().await;
-            ensure_can_start_download_excluding(&records, &game_id)?;
-            records.get(&game_id).and_then(|record| record.torrent_id)
-        };
-
-        if let Some(id) = torrent_id.filter(|id| self.engine.exists(*id)) {
-            self.engine.resume(id).await?;
-
-            {
-                let mut records = self.records.lock().await;
-                if let Some(record) = records.get_mut(&game_id) {
-                    record.state = TorrentRecordState::Downloading;
-                    record.error = None;
-                }
-            }
-
-            let record =
-                lock_store(&self.store)?.set_torrent_status(&game_id, "downloading", None)?;
-            emit_download_record(&self.app, &record);
-            self.spawn_polling_for_game(game_id, id);
-            return Ok(record);
-        }
-
-        let record = {
-            let store = lock_store(&self.store)?;
-            let record = store
-                .get_torrent_download(&game_id)?
-                .ok_or_else(|| format!("Unknown torrent download: {game_id}"))?;
-            if is_direct_download_record(&record) {
-                return Err("Direct downloads must be retried instead of resumed.".to_string());
-            }
-            store.set_torrent_status(&game_id, "resolving", None)?
-        };
-
-        {
-            let mut records = self.records.lock().await;
-            ensure_can_start_download_excluding(&records, &game_id)?;
-            records.insert(
-                record.game_id.clone(),
-                TorrentRecord::from_persisted(&record, TorrentRecordState::Resolving),
-            );
-        }
-
-        tokio::fs::create_dir_all(&record.save_dir)
-            .await
-            .map_err(|error| format!("Failed to create save directory: {error}"))?;
-        self.spawn_add_torrent_task(
-            record.game_id.clone(),
-            record.magnet_uri.clone(),
-            record.save_dir.clone(),
-        );
-
-        emit_download_record(&self.app, &record);
-        Ok(record)
-    }
-
-    pub async fn cancel_download(&self, game_id: String) -> Result<TorrentDownloadRecord, String> {
-        let record = lock_store(&self.store)?
-            .get_torrent_download(&game_id)?
-            .ok_or_else(|| format!("Unknown torrent download: {game_id}"))?;
-
-        if record.status == "completed" {
-            return Err("Completed downloads cannot be cancelled.".to_string());
-        }
-        if is_direct_download_record(&record) && record.status == "downloading" {
-            return Err(
-                "Direct downloads cannot be cancelled while transfer is active.".to_string(),
-            );
-        }
-
-        let cancelling =
-            lock_store(&self.store)?.set_torrent_status(&game_id, "cancelling", None)?;
-        emit_download_record(&self.app, &cancelling);
-
-        let runtime_id = {
-            let mut records = self.records.lock().await;
-            if let Some(record) = records.get_mut(&game_id) {
-                record.state = TorrentRecordState::Cancelling;
-                record.torrent_id
-            } else {
-                None
-            }
-        };
-
-        let torrent_id = runtime_id.or_else(|| record.torrent_id.and_then(i64_to_usize));
-        let mut delete_error = None;
-        if let Some(id) = torrent_id {
-            if let Err(error) = self.engine.delete(id, true).await {
-                delete_error = Some(error);
-            }
-        }
-
-        if let Err(cleanup_error) = remove_save_dir_if_safe(&self.data_dir, &record.save_dir).await
-        {
-            let error = match delete_error {
-                Some(delete_error) => format!("{delete_error}; {cleanup_error}"),
-                None => cleanup_error,
-            };
-            let record =
-                lock_store(&self.store)?.set_torrent_status(&game_id, "error", Some(&error))?;
-            set_runtime_error(&self.records, &game_id, error).await;
-            emit_download_record(&self.app, &record);
-            return Ok(record);
-        }
-
-        {
-            let mut records = self.records.lock().await;
-            records.remove(&game_id);
-        }
-
-        let cancelled = lock_store(&self.store)?.set_torrent_status(&game_id, "cancelled", None)?;
-        emit_download_record(&self.app, &cancelled);
-        Ok(cancelled)
-    }
-
-    async fn restore_startup_downloads(&self) {
-        let startup_records = match lock_store(&self.store)
-            .and_then(|store| store.list_startup_torrent_downloads())
-        {
-            Ok(records) => records,
-            Err(_) => return,
-        };
-
-        for record in startup_records {
-            if is_direct_download_record(&record) && record.status != "cancelling" {
-                if let Ok(interrupted) = lock_store(&self.store).and_then(|store| {
-                    store.set_torrent_status(
-                        &record.game_id,
-                        "error",
-                        Some("Direct download was interrupted. Retry the download."),
-                    )
-                }) {
-                    emit_download_record(&self.app, &interrupted);
-                }
-                continue;
-            }
-
-            match record.status.as_str() {
-                "cancelling" => {
-                    let _ = self.finish_startup_cancellation(record).await;
-                }
-                "paused" => {
-                    self.restore_paused_record(record).await;
-                }
-                "resolving" | "downloading" | "interrupted" => {
-                    let interrupted = match lock_store(&self.store)
-                        .and_then(|store| store.mark_torrent_interrupted(&record.game_id))
-                    {
-                        Ok(record) => record,
-                        Err(_) => record,
-                    };
-                    let _ = self.resume_persisted_record(interrupted).await;
-                }
-                _ => {}
-            }
-        }
-    }
-
-    async fn finish_startup_cancellation(
-        &self,
-        record: TorrentDownloadRecord,
-    ) -> Result<(), String> {
-        if let Some(id) = record.torrent_id.and_then(i64_to_usize) {
-            let _ = self.engine.delete(id, true).await;
-        }
-        remove_save_dir_if_safe(&self.data_dir, &record.save_dir).await?;
-        let cancelled =
-            lock_store(&self.store)?.set_torrent_status(&record.game_id, "cancelled", None)?;
-        emit_download_record(&self.app, &cancelled);
-        Ok(())
-    }
-
-    async fn restore_paused_record(&self, record: TorrentDownloadRecord) {
-        let Some(id) = record
-            .torrent_id
-            .and_then(i64_to_usize)
-            .filter(|id| self.engine.exists(*id))
-        else {
-            return;
-        };
-
-        let _ = self.engine.pause(id).await;
-
-        let mut records = self.records.lock().await;
-        records.insert(
-            record.game_id.clone(),
-            TorrentRecord::from_persisted(&record, TorrentRecordState::Paused),
-        );
-    }
-
-    async fn resume_persisted_record(&self, record: TorrentDownloadRecord) -> Result<(), String> {
-        {
-            let records = self.records.lock().await;
-            ensure_can_start_download_excluding(&records, &record.game_id)?;
-        }
-
-        tokio::fs::create_dir_all(&record.save_dir)
-            .await
-            .map_err(|error| format!("Failed to create save directory: {error}"))?;
-
-        {
-            let mut records = self.records.lock().await;
-            ensure_can_start_download_excluding(&records, &record.game_id)?;
-            records.insert(
-                record.game_id.clone(),
-                TorrentRecord::from_persisted(&record, TorrentRecordState::Resolving),
-            );
-        }
-
-        self.spawn_add_torrent_task(
-            record.game_id.clone(),
-            record.magnet_uri.clone(),
-            record.save_dir.clone(),
-        );
-        Ok(())
-    }
-
-    fn spawn_add_torrent_task(&self, game_id: String, magnet_uri: String, save_dir: String) {
-        let engine = Arc::clone(&self.engine);
-        let records = Arc::clone(&self.records);
-        let store = Arc::clone(&self.store);
-        let app = self.app.clone();
-
-        tauri::async_runtime::spawn(async move {
-            let add_result = engine.add_magnet(magnet_uri, save_dir).await;
-
-            match add_result {
-                Ok(id) => {
-                    let desired_state = {
-                        let mut records = records.lock().await;
-                        records.get_mut(&game_id).map(|record| {
-                            record.torrent_id = Some(id);
-                            record.error = None;
-                            match record.state {
-                                TorrentRecordState::Paused => TorrentRecordState::Paused,
-                                TorrentRecordState::Cancelling => record.state,
-                                _ => {
-                                    record.state = TorrentRecordState::Downloading;
-                                    TorrentRecordState::Downloading
-                                }
-                            }
-                        })
-                    };
-
-                    match desired_state {
-                        Some(TorrentRecordState::Paused) => {
-                            let _ = engine.pause(id).await;
-                            if let Ok(record) = lock_store(&store).and_then(|store| {
-                                store.update_torrent_handle(&game_id, id as i64, "paused")
-                            }) {
-                                emit_download_record(&app, &record);
-                            }
-                        }
-                        Some(TorrentRecordState::Cancelling) => {
-                            let _ = engine.delete(id, true).await;
-                            if let Ok(record) = lock_store(&store).and_then(|store| {
-                                store.set_torrent_status(&game_id, "cancelled", None)
-                            }) {
-                                emit_download_record(&app, &record);
-                            }
-                        }
-                        Some(_) => {
-                            let _ = engine.resume(id).await;
-                            if let Ok(record) = lock_store(&store).and_then(|store| {
-                                store.update_torrent_handle(&game_id, id as i64, "downloading")
-                            }) {
-                                emit_download_record(&app, &record);
-                            }
-                            spawn_polling_task(engine, records, store, app, game_id, id);
-                        }
-                        None => {
-                            let _ = engine.delete(id, true).await;
-                        }
-                    }
-                }
-                Err(error) => {
-                    set_torrent_error(
-                        &records,
-                        &store,
-                        &app,
-                        &game_id,
-                        format!("Failed to start magnet download: {error}"),
-                    )
-                    .await;
-                }
-            }
-        });
-    }
-
-    fn spawn_polling_for_game(&self, game_id: String, torrent_id: usize) {
-        spawn_polling_task(
-            Arc::clone(&self.engine),
-            Arc::clone(&self.records),
-            Arc::clone(&self.store),
-            self.app.clone(),
-            game_id,
-            torrent_id,
-        );
-    }
-}
-
-impl TorrentRecord {
-    fn from_persisted(record: &TorrentDownloadRecord, state: TorrentRecordState) -> Self {
-        Self {
-            game_id: record.game_id.clone(),
-            save_dir: record.save_dir.clone(),
-            torrent_id: record.torrent_id.and_then(i64_to_usize),
-            state,
-            error: record.error_message.clone(),
-        }
-    }
-}
+include!("torrent_runtime.rs");
+#[cfg(test)]
+#[path = "torrent_runtime_tests.rs"]
+mod runtime_tests;
 
 #[tauri::command]
 pub async fn start_magnet_download(
@@ -581,14 +144,20 @@ pub fn get_game_download(
     game_id: String,
     state: State<'_, AppState>,
 ) -> Result<Option<TorrentDownloadRecord>, String> {
-    state.torrents()?.get_game_download(&game_id)
+    if let Some(torrents) = state.torrents.as_ref() {
+        return torrents.get_game_download(&game_id);
+    }
+    lock_store(&state.store)?.get_torrent_download(&game_id)
 }
 
 #[tauri::command]
 pub fn list_torrent_downloads(
     state: State<'_, AppState>,
 ) -> Result<Vec<TorrentDownloadRecord>, String> {
-    state.torrents()?.list_downloads()
+    if let Some(torrents) = state.torrents.as_ref() {
+        return torrents.list_downloads();
+    }
+    lock_store(&state.store)?.list_torrent_downloads()
 }
 
 #[tauri::command]
@@ -611,10 +180,38 @@ pub async fn resume_download(
 pub async fn cancel_download(
     game_id: String,
     state: State<'_, AppState>,
+    app: AppHandle,
 ) -> Result<TorrentDownloadRecord, String> {
+    let record = lock_store(&state.store)?
+        .get_torrent_download(&game_id)?
+        .ok_or_else(|| format!("Unknown torrent download: {game_id}"))?;
+    if is_direct_download_record(&record) {
+        return cancel_direct_download(game_id, state.inner(), &app, record).await;
+    }
+
     state.torrents()?.cancel_download(game_id).await
 }
 
+async fn cancel_direct_download(
+    game_id: String,
+    state: &AppState,
+    app: &AppHandle,
+    _record: TorrentDownloadRecord,
+) -> Result<TorrentDownloadRecord, String> {
+    let ticket = state.direct_downloads.begin_delete(&game_id)?;
+    let latest = lock_store(&state.store)?
+        .get_torrent_download(&game_id)?
+        .ok_or("Download missing.")?;
+    if latest.status == "completed" {
+        return Err("Completed downloads cannot be cancelled.".into());
+    }
+    let cancelling = lock_store(&state.store)?.set_torrent_status(&game_id, "cancelling", None)?;
+    emit_download_record(app, &cancelling);
+    ticket.wait_owner(Duration::from_secs(20)).await?;
+    let cancelled = lock_store(&state.store)?.set_torrent_status(&game_id, "cancelled", None)?;
+    emit_download_record(app, &cancelled);
+    Ok(cancelled)
+}
 fn validate_start_request(game_id: &str, magnet_uri: &str, save_dir: &str) -> Result<(), String> {
     if game_id.trim().is_empty() {
         return Err("Game id cannot be empty.".to_string());
@@ -629,7 +226,8 @@ fn validate_start_request(game_id: &str, magnet_uri: &str, save_dir: &str) -> Re
     Ok(())
 }
 
-fn ensure_can_start_download(
+#[cfg(test)]
+fn ensure_can_track_game(
     records: &HashMap<String, TorrentRecord>,
     game_id: &str,
 ) -> Result<(), String> {
@@ -642,18 +240,17 @@ fn ensure_can_start_download(
         }
     }
 
-    if active_download_count(records) >= MAX_ACTIVE_DOWNLOADS {
-        return Err(ACTIVE_DOWNLOAD_LIMIT_ERROR.to_string());
-    }
-
     Ok(())
 }
 
-fn ensure_can_start_download_excluding(
+#[cfg(test)]
+fn ensure_can_start_download(
     records: &HashMap<String, TorrentRecord>,
     game_id: &str,
 ) -> Result<(), String> {
-    if active_download_count_excluding(records, game_id) >= MAX_ACTIVE_DOWNLOADS {
+    ensure_can_track_game(records, game_id)?;
+
+    if active_download_count(records) >= MAX_ACTIVE_DOWNLOADS {
         return Err(ACTIVE_DOWNLOAD_LIMIT_ERROR.to_string());
     }
 
@@ -663,17 +260,6 @@ fn ensure_can_start_download_excluding(
 fn active_download_count(records: &HashMap<String, TorrentRecord>) -> usize {
     records
         .values()
-        .filter(|record| record_blocks_new_download(record))
-        .count()
-}
-
-fn active_download_count_excluding(
-    records: &HashMap<String, TorrentRecord>,
-    game_id: &str,
-) -> usize {
-    records
-        .values()
-        .filter(|record| record.game_id != game_id)
         .filter(|record| record_blocks_new_download(record))
         .count()
 }
@@ -768,137 +354,11 @@ fn status_from_persisted_record(record: &TorrentDownloadRecord) -> TorrentStatus
     }
 }
 
-fn spawn_polling_task(
-    engine: Arc<dyn TorrentEngine>,
-    records: Arc<Mutex<HashMap<String, TorrentRecord>>>,
-    store: Arc<StoreMutex<RepositoryStore>>,
-    app: AppHandle,
-    game_id: String,
-    torrent_id: usize,
-) {
-    tauri::async_runtime::spawn(async move {
-        let mut interval = tokio::time::interval(POLL_INTERVAL);
-        let mut last_flush = Instant::now() - DB_FLUSH_INTERVAL;
-        let mut last_status = String::new();
-
-        loop {
-            interval.tick().await;
-
-            let record = {
-                let records = records.lock().await;
-                records.get(&game_id).cloned()
-            };
-
-            let Some(record) = record else {
-                break;
-            };
-
-            if matches!(
-                record.state,
-                TorrentRecordState::Paused
-                    | TorrentRecordState::Cancelling
-                    | TorrentRecordState::Completed
-                    | TorrentRecordState::Error
-            ) {
-                break;
-            }
-
-            let Some(stats) = engine.stats(torrent_id) else {
-                break;
-            };
-            let status = status_from_stats(&record, &stats);
-            let event = event_from_status(&status);
-            let _ = app.emit("download:progress", event);
-
-            let status_changed = status.state != last_status;
-            let should_flush = last_flush.elapsed() >= DB_FLUSH_INTERVAL
-                || status_changed
-                || status.finished
-                || status.error.is_some();
-
-            if should_flush {
-                last_status = status.state.clone();
-                last_flush = Instant::now();
-
-                let persisted = if status.finished {
-                    lock_store(&store).and_then(|store| {
-                        store.mark_torrent_completed(
-                            &game_id,
-                            &status.save_dir,
-                            status.downloaded_bytes,
-                            status.total_bytes,
-                        )
-                    })
-                } else {
-                    lock_store(&store).and_then(|store| {
-                        store.update_torrent_progress(
-                            &game_id,
-                            &status.state,
-                            status.progress * 100.0,
-                            status.downloaded_bytes,
-                            status.total_bytes,
-                            status.download_speed_bytes_per_sec,
-                            status.upload_speed_bytes_per_sec,
-                            status.peers_count,
-                        )
-                    })
-                };
-
-                if let Ok(record) = persisted {
-                    emit_download_record(&app, &record);
-                }
-            }
-
-            if let Some(error) = status.error {
-                set_torrent_error(&records, &store, &app, &game_id, error).await;
-                break;
-            }
-
-            if status.finished {
-                {
-                    let mut records = records.lock().await;
-                    if let Some(record) = records.get_mut(&game_id) {
-                        record.state = TorrentRecordState::Completed;
-                        record.error = None;
-                    }
-                }
-                let _ = engine.delete(torrent_id, false).await;
-                break;
-            }
-        }
-    });
-}
-
-async fn set_torrent_error(
-    records: &Arc<Mutex<HashMap<String, TorrentRecord>>>,
-    store: &Arc<StoreMutex<RepositoryStore>>,
-    app: &AppHandle,
-    game_id: &str,
-    error: String,
-) {
-    set_runtime_error(records, game_id, error.clone()).await;
-    if let Ok(record) =
-        lock_store(store).and_then(|store| store.set_torrent_status(game_id, "error", Some(&error)))
-    {
-        emit_download_record(app, &record);
-    }
-}
-
-async fn set_runtime_error(
-    records: &Arc<Mutex<HashMap<String, TorrentRecord>>>,
-    game_id: &str,
-    error: String,
-) {
-    let mut records = records.lock().await;
-    if let Some(record) = records.get_mut(game_id) {
-        record.state = TorrentRecordState::Error;
-        record.error = Some(error);
-    }
-}
-
 fn event_from_status(status: &TorrentStatus) -> DownloadProgressEvent {
     DownloadProgressEvent {
         game_id: status.game_id.clone(),
+        attempt_id: None,
+        run_id: None,
         subject_type: None,
         display_name: None,
         parent_game_id: None,
@@ -918,34 +378,13 @@ fn event_from_status(status: &TorrentStatus) -> DownloadProgressEvent {
 
 fn emit_download_record(app: &AppHandle, record: &TorrentDownloadRecord) {
     let status = status_from_persisted_record(record);
-    let _ = app.emit("download:progress", event_from_status(&status));
-}
-
-async fn remove_save_dir_if_safe(data_dir: &Path, save_dir: &str) -> Result<(), String> {
-    let save_dir = PathBuf::from(save_dir);
-    if !save_dir.exists() {
-        return Ok(());
-    }
-
-    let canonical_data_dir = tokio::fs::canonicalize(data_dir)
-        .await
-        .map_err(|error| format!("Failed to inspect app data directory: {error}"))?;
-    let canonical_save_dir = tokio::fs::canonicalize(&save_dir)
-        .await
-        .map_err(|error| format!("Failed to inspect save directory: {error}"))?;
-
-    if canonical_save_dir == canonical_data_dir
-        || !canonical_save_dir.starts_with(&canonical_data_dir)
-    {
-        return Err(format!(
-            "Refusing to delete download folder outside app data: {}",
-            save_dir.display()
-        ));
-    }
-
-    tokio::fs::remove_dir_all(&canonical_save_dir)
-        .await
-        .map_err(|error| format!("Failed to delete partial download files: {error}"))
+    let mut event = event_from_status(&status);
+    event.subject_type = record.subject_type.clone();
+    event.display_name = record.display_name.clone();
+    event.parent_game_id = record.parent_game_id.clone();
+    event.attempt_id = record.attempt_id.clone();
+    event.run_id = record.run_id;
+    let _ = app.emit("download:progress", event);
 }
 
 fn lock_store(
@@ -954,10 +393,6 @@ fn lock_store(
     store
         .lock()
         .map_err(|_| "Repository store lock is poisoned.".to_string())
-}
-
-fn i64_to_usize(value: i64) -> Option<usize> {
-    usize::try_from(value).ok()
 }
 
 fn is_direct_download_record(record: &TorrentDownloadRecord) -> bool {
@@ -982,6 +417,15 @@ mod tests {
 
     #[async_trait::async_trait]
     impl TorrentEngine for NoopEngine {
+        async fn approve_inventory(&self, _: usize) -> Result<(), String> {
+            Ok(())
+        }
+        async fn stop(&self, _: usize) -> Result<(), String> {
+            Ok(())
+        }
+        async fn stop_for_path(&self, _: &str) -> Result<(), String> {
+            Ok(())
+        }
         async fn add_magnet(&self, _: String, _: String) -> Result<usize, String> {
             Err("not supported in tests".to_string())
         }
@@ -1008,6 +452,11 @@ mod tests {
 
     fn test_record(game_id: &str, state: TorrentRecordState) -> TorrentRecord {
         TorrentRecord {
+            identity: DownloadAttempt {
+                subject: game_id.into(),
+                attempt: "test".into(),
+                run: 1,
+            },
             game_id: game_id.to_string(),
             save_dir: "F:/Downloads/game".to_string(),
             torrent_id: None,
@@ -1088,6 +537,31 @@ mod tests {
             ensure_can_start_download(&records, "game-1").unwrap_err(),
             "Torrent already tracked for game: game-1"
         );
+    }
+
+    #[test]
+    fn queued_record_blocks_duplicate_tracking() {
+        let mut records = HashMap::new();
+        records.insert(
+            "game-1".to_string(),
+            test_record("game-1", TorrentRecordState::Queued),
+        );
+
+        assert_eq!(
+            ensure_can_track_game(&records, "game-1").unwrap_err(),
+            "Torrent already tracked for game: game-1"
+        );
+    }
+
+    #[test]
+    fn queued_record_does_not_count_towards_active_download_limit() {
+        let mut records = HashMap::new();
+        records.insert(
+            "game-1".to_string(),
+            test_record("game-1", TorrentRecordState::Queued),
+        );
+
+        assert!(ensure_can_start_download(&records, "game-2").is_ok());
     }
 
     #[test]

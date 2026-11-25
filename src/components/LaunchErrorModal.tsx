@@ -1,7 +1,9 @@
 'use client';
 
+import { useRef } from 'react';
 import { AlertTriangle, Download, Settings, ShieldAlert, X } from 'lucide-react';
 import { useI18n } from '@/components/I18nProvider';
+import { useModalFocusTrap } from '@/hooks/useModalFocusTrap';
 import { launchFailureView } from '@/lib/launchErrors';
 import type { LaunchFailure } from '@/types/repository';
 
@@ -22,6 +24,9 @@ export function LaunchErrorModal({
 }: LaunchErrorModalProps) {
   const { locale, t } = useI18n();
   const view = launchFailureView(failure, locale);
+  const modalRef = useRef<HTMLElement>(null);
+  const closeRef = useRef<HTMLButtonElement>(null);
+  useModalFocusTrap({ containerRef: modalRef, onClose, initialFocusRef: closeRef });
 
   const runAction = () => {
     if (view.actionKind === 'settings') onOpenSettings();
@@ -32,7 +37,7 @@ export function LaunchErrorModal({
 
   return (
     <div className="fixed inset-0 z-[60] grid place-items-center bg-black/72 px-5">
-      <section className="w-full max-w-md rounded-2xl border border-white/12 bg-fusion-surface/95 p-5 shadow-[0_40px_120px_rgba(0,0,0,0.65)]">
+      <section ref={modalRef} role="dialog" aria-modal="true" tabIndex={-1} className="w-full max-w-md rounded-2xl border border-white/12 bg-fusion-surface/95 p-5 shadow-[0_40px_120px_rgba(0,0,0,0.65)] outline-none">
         <header className="flex items-start gap-4">
           <div className="grid h-10 w-10 shrink-0 place-items-center rounded-md bg-amber-300/12 text-amber-100">
             {view.actionKind === 'settings' ? (
@@ -50,6 +55,7 @@ export function LaunchErrorModal({
             <p className="mt-2 select-text text-sm leading-6 text-white/62">{view.message}</p>
           </div>
           <button
+            ref={closeRef}
             onClick={onClose}
             className="grid h-9 w-9 place-items-center rounded-md border border-white/10 text-white/60 transition hover:text-white"
             title={t.common.close}

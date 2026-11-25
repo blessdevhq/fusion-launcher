@@ -1,0 +1,92 @@
+name: Fusion input service E (Windows)
+
+on:
+  push:
+    branches: [creator/input-service-e]
+  pull_request:
+    paths:
+      - src-tauri/src/input/**
+      - src-tauri/src/commands/fusion_creator.rs
+      - .github/workflows/input-service-windows.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: input-service-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  input-service:
+    runs-on: windows-2022
+    timeout-minutes: 60
+    env:
+      RUST_TEST_THREADS: '4'
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.95.0
+          targets: x86_64-pc-windows-msvc
+          components: rustfmt, clippy
+      - name: Match tested native build tools
+        shell: pwsh
+        run: |
+          python -m pip install --disable-pip-version-check cmake==3.31.6
+          if ($LASTEXITCODE -ne 0) { throw 'CMake installation failed' }
+          $cmakeBin = python -c "import cmake; print(cmake.CMAKE_BIN_DIR)"
+          if ($LASTEXITCODE -ne 0) { throw 'CMake discovery failed' }
+          $cmakeBin | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          $pythonExe = python -I -c "import os,sys; print(os.path.realpath(sys.executable))"
+          if ($LASTEXITCODE -ne 0) { throw 'Python discovery failed' }
+          & $pythonExe -I -c "import pathlib,sys; p=pathlib.Path(sys.executable); assert p.is_absolute() and p.is_file(); assert not any(x.lstat().st_file_attributes & 0x400 for x in [p,*p.parents])"
+          if ($LASTEXITCODE -ne 0) { throw 'Python path contains reparse points' }
+          "FUSION_TEST_PYTHON=$pythonExe" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: npm ci --no-audit --no-fund
+      - name: Full QA (only the known sidecar failure gets one retry, NEVER relabeled PASS)
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force .tmp/input-service-e | Out-Null
+          npm run qa 2>&1 | Tee-Object .tmp/input-service-e/qa.log
+          $result = $LASTEXITCODE
+          if ($result -ne 0) {
+            $known = @(
+              'windows_sidecar::tests::graceful_exit_preserves_final_output_and_releases_job'
+            )
+            $failed = @(Select-String -Path .tmp/input-service-e/qa.log -Pattern '^test (\S+) \.\.\. FAILED$' | ForEach-Object { $_.Matches[0].Groups[1].Value })
+            if ($failed.Count -gt 0 -and @($failed | Where-Object { $_ -notin $known }).Count -eq 0) {
+              npm run qa 2>&1 | Tee-Object .tmp/input-service-e/qa-retry.log
+              $retry = $LASTEXITCODE
+              if ($retry -eq 0) {
+                "FLAKY: first QA failed on the exact known sidecar test; one retry succeeded. This run is NOT PASS." | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+              } else {
+                "FAIL: first QA failed; one retry also failed (exit=$retry). FLAKY is not established." | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+              }
+            }
+            throw "QA first attempt failed ($result); see original log; no green relabeling"
+          }
+      - name: Explicit native fixtures (buttons, hats, axes, triggers, reconnect, stale events, ACK faults)
+        if: ${{ !cancelled() }}
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force .tmp/input-service-e | Out-Null
+          cargo test --manifest-path src-tauri/Cargo.toml --locked --lib input:: -- --nocapture 2>&1 | Tee-Object .tmp/input-service-e/fixtures.log
+          if ($LASTEXITCODE -ne 0) { throw 'Native input fixtures failed' }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: input-service-e-windows-evidence
+          if-no-files-found: error
+          include-hidden-files: true
+          path: |
+            .tmp/input-service-e/qa.log
+            .tmp/input-service-e/qa-retry.log
+            .tmp/input-service-e/fixtures.log

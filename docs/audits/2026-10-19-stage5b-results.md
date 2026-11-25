@@ -1,0 +1,140 @@
+# Stage 5B implementation and acceptance
+
+Date: 2026-10-19. Platform: Windows x64. Existing uncommitted Stage 1–5A changes
+were retained; this work adds host adapters and source-index authentication.
+
+## Delivered behavior
+
+- `FusionHostAdapters` connects storefront inventory, torrent, cloud providers and
+  individually verified patch tools to `FusionService`. Capabilities come from
+  installed bridges; optional bridge/configuration failures are logged and retain
+  HTTPS availability.
+- Windows inventory reads Steam registry roots, bounded old/new VDF libraries and
+  app manifests, GOG registry paths and Epic `.item` manifests. Discovery is shallow,
+  read-only, cancellation-aware and rejects unsafe/reparse paths. The existing
+  locator still verifies every BLAKE3 key file and determines volume identity.
+- Torrent artifacts use the DB-free engine and a probed `artifact_v1` sidecar.
+  Validated single-file metadata precedes payload approval. Private session staging
+  survives cancellation/aborted callers until process-tree and relay termination
+  are confirmed; unconfirmed termination preserves staging. Transport digests are
+  checked by the cascade before CAS import.
+- BEP 19 seeds use opaque loopback relay URLs. Upstream streams and byte ranges use
+  the existing HTTPS connector DNS/redirect policy. Embedded and magnet-supplied
+  native seeds cannot bypass admission. Pixeldrain IDs resolve to direct HTTPS API
+  streams; cloud capabilities are enumerated by configured providers.
+- HTTPS, cloud and torrent transfers emit operation/layer-bound byte counters through
+  `fusion-source:operation-progress`. Sequence and terminal-event guards reject late
+  or superseded callbacks. A zero `totalBytes` means unknown HTTP length.
+- Patch tools require local explicit trust, an absolute executable, exact SHA-256
+  and a pinned version label. Separate host `ExecutableTrust` cannot be enabled by
+  SQLite game trust. Retained descriptors protect verified tools, and execution
+  rechecks their hashes. No tool downloads or new settings screens were added.
+- Ed25519 verifies the original index object before normalization, URL resolution,
+  catalog updates or strict launch synchronization. Disconnected source identities
+  retain their SQLite pins. The optional signature uses the documented domain and
+  recursively sorted JSON representation; duplicate keys are rejected.
+- `fusion-packer keygen`, `build --signing-key` / `FUSION_PACKER_SIGNING_KEY` and
+  signature-aware `verify` are implemented. Windows keys receive an owner/SYSTEM
+  protected DACL at creation; Unix keys use mode `0600`. Unsigned no-key sources
+  retain their existing behavior.
+
+## Host setup
+
+See [Fusion Source host configuration](../fusion-source-standard-v1.md#stage-5b-host-adapters-and-index-authentication),
+[signed authoring](../fusion-packer.md#signing-a-source-index), and
+[sidecar protocol/build instructions](../../sidecar/README.md).
+
+Patch configuration is `<app_data_dir>/fusion-source-host.json`; it is read once
+per launcher session and changes require restart. The recommended executable
+directory is `<app_local_data_dir>/fusion-source-tools`. `trusted` defaults to
+false; invalid/missing/unapproved tools do not advertise patch capabilities.
+
+First source connection uses trust on first use: the declared signature/key is
+verified and pinned. Later changes/removal of the key fail closed. This protects
+continuity after first connection; key rotation is outside Stage 5B.
+
+## Verification results
+
+| Check | Result |
+| --- | --- |
+| `npm run qa` | Passed, exit 0 |
+| Frontend typecheck, static check, production export | Passed |
+| Node tests | 112 passed |
+| Default Rust library suite | 524 passed; four opt-in native cases executed separately below |
+| Rust fusion-packer CLI unit tests | 3 passed |
+| Rust format and clippy, all targets, warnings denied | Passed |
+| Python sidecar unit discovery | 23 passed |
+| Packaged artifact adapter / native Windows Job | 1 passed |
+| Packaged onefile force-stop and launcher-crash cleanup | 2 passed |
+| Native legacy manager pause/resume/remove | 1 passed |
+| Real CLI keygen → signed build → verify | Passed; `signature_verified: true` |
+| Real CLI tampered `manifest_url` | Rejected, exit 1, `invalid_source_signature` |
+| Rust/Tauri review, including final Windows publication fix | No outstanding findings |
+| `git diff --check` | Passed |
+
+Together the Rust runs cover all 528 library tests, including all four gated
+native cases, plus three CLI tests. No native cases remain unexecuted.
+
+Tests cover storefront fixtures without path hints, hash/volume verification,
+reparse rejection, pin/trust-based capabilities, signed incremental repositories,
+source reconnect and signed ancestry, malformed/tampered signatures, WebSeed
+admission, range/full streaming, truncation/overflow, cancellation, aborted
+callers, sidecar panic/crash/timeout and unconfirmed shutdown.
+
+The native artifact fixture transferred 16,778,450 generated bytes through two
+explicit BEP 19 range requests, with zero accesses to the unapproved seed. It
+checked no payload writes before approval, unchanged reserved-file identity,
+matching SHA-256 and absence of resume state. The separate Rust adapter test
+exercised probe, metadata, publication and confirmed native process shutdown.
+The legacy fixture exercised a 268,437,924-byte generated payload inventory,
+persisted pause state, fast resume and owned installation/library removal.
+
+## Additional fixes established by verification
+
+- Move every fallible observer-thread setup before `CreateProcessW`. Setup/create
+  failures now close pipes, cancel handoff and join workers before returning;
+  post-birth unwind retains termination proof. Fault tests cover all three setup
+  points, native creation failure and setup unwinding.
+- Explicitly reserve/write a UTF-16 NUL in the shared no-replace publication
+  buffer. A new test covers all four alignment residues, long/non-BMP Unicode
+  destinations and preservation of colliding files. The new transfer-progress
+  integration test exposed the previous alignment-dependent Windows error.
+
+## Reproduction and local evidence
+
+The isolated Python environment is `.tmp/stage5b-python` with Python 3.12.10,
+libtorrent 2.0.11 and PyInstaller 6.11.1 from `sidecar/requirements.txt`.
+The rebuilt packaged probe reports libtorrent `2.0.11.0` and protocol version 1.
+Its SHA-256 is:
+
+```text
+bb158cf552bc51658dde5347ee987b38c4c0c032ec2b6f395ac458366bd73b19
+```
+
+```powershell
+npm run qa
+.tmp/stage5b-python/Scripts/python.exe -m unittest discover -s sidecar -p 'test_*.py'
+
+# Add the isolated environment's Scripts directory to PATH for this shell.
+$env:PATH = (Join-Path (Get-Location) '.tmp/stage5b-python/Scripts') + ';' + $env:PATH
+npm run sidecar:build
+
+$env:FUSION_NATIVE_SIDECAR_EXE = (Resolve-Path 'src-tauri/binaries/fusion-torrent-x86_64-pc-windows-msvc.exe').Path
+$env:FUSION_NATIVE_ADAPTER_TEST_BINARY = (Get-ChildItem 'src-tauri/target/debug/deps/fusion_launcher_lib-*.exe' | Sort-Object LastWriteTime -Descending | Select-Object -First 1).FullName
+.tmp/stage5b-python/Scripts/python.exe sidecar/test_native_artifact.py
+cargo test --manifest-path src-tauri/Cargo.toml windows_sidecar::tests::production_onefile -- --ignored --nocapture
+$env:FUSION_NATIVE_MANAGER_TEST_BINARY = $env:FUSION_NATIVE_ADAPTER_TEST_BINARY
+.tmp/stage5b-python/Scripts/python.exe sidecar/test_native_inventory.py
+```
+
+Windows native tests ran outside AppContainer so loopback sockets, Job Objects
+and handle-based filesystem publication were tested with normal Windows semantics.
+They use generated fixtures and local peers, without public trackers or game
+payloads. The artifact HTTP fixture can log an idle connection reset during native
+shutdown; all success assertions and the process exit status passed.
+
+Local logs are `.tmp/stage5b-qa.log`, `.tmp/stage5b-python-tests.log`,
+`.tmp/stage5b-sidecar-build.log`, `.tmp/stage5b-native.log`,
+`.tmp/stage5b-native-process-tests.log`, `.tmp/stage5b-native-legacy.log`, and
+`.tmp/stage5b-cli-*.log`. The test private key stays in ignored `.tmp` and is not
+part of the published fixture repository. No changes were committed.

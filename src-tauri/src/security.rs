@@ -35,14 +35,42 @@ pub fn validate_repository_url(input: &str, allow_dev_http: bool) -> Result<Url,
 }
 
 pub fn validate_http_url(url: &Url, allow_dev_http: bool) -> Result<(), String> {
+    if !url.username().is_empty() || url.password().is_some() {
+        return Err("Credentials in external URLs are not allowed.".to_string());
+    }
+    if url.host_str().is_none() {
+        return Err("External URL must have a host.".to_string());
+    }
     match url.scheme() {
-        "https" => Ok(()),
+        "https" => {
+            if let Some(host) = url.host_str() {
+                if crate::net::is_forbidden_target_host(host) {
+                    return Err(format!(
+                        "Forbidden HTTPS host: {host} (private, loopback, or SSRF target)"
+                    ));
+                }
+            }
+            Ok(())
+        }
         "http" if allow_dev_http && is_loopback_host(url.host_str()) => Ok(()),
         "http" => Err(
             "Only HTTPS repository and asset URLs are allowed outside local development."
                 .to_string(),
         ),
         scheme => Err(format!("Unsupported URL scheme: {scheme}")),
+    }
+}
+
+/// An external document cannot grant itself built-in trust. Used by preview and
+/// persistence so users see exactly the level that will actually be stored.
+pub(crate) fn effective_repository_trust(url: &str, declared: Option<&str>) -> &'static str {
+    if crate::builtin_demo::is_builtin_repository_url(url) {
+        "official"
+    } else {
+        match declared {
+            Some("official" | "community") => "community",
+            _ => "unknown",
+        }
     }
 }
 

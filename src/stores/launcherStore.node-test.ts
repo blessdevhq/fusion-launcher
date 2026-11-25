@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
+import { beforeEach, describe, it } from 'node:test';
 import type { DownloadProgressEvent, TorrentDownloadRecord } from '../types/repository.ts';
-import { mergeDownloadEventIntoList, mergeDownloadSnapshotIntoList } from './launcherStore.ts';
+import { mergeDownloadEventIntoList, mergeDownloadSnapshotIntoList, useLauncherStore } from './launcherStore.ts';
 
 const event: DownloadProgressEvent = {
   gameId: 'repo::game',
@@ -92,6 +92,109 @@ describe('launcher store download merging', () => {
       'repo::error'
     ]);
     assert.equal(downloads[0].status, 'paused');
+  });
+});
+
+describe('launcher store download generations', () => {
+  beforeEach(() => {
+    useLauncherStore.setState({ downloads: [], libraryStatuses: [], activityEvents: [], removedDownloads: [] });
+  });
+
+  it('does not resurrect removed A through late completed events or snapshots', () => {
+    const store = useLauncherStore.getState();
+    store.setDownloads([downloadRecord({ attemptId: 'A', runId: 1 })]);
+    store.setLibraryStatuses([{ gameId: event.gameId, installed: false, systemRequirementsReady: true, missingRequirements: [], download: null }]);
+    store.removeDownload({ gameId: event.gameId, attemptId: 'A' });
+    store.mergeDownloadEvent({ ...event, attemptId: 'A', runId: 1, status: 'completed', finished: true });
+    store.setDownloads([downloadRecord({ attemptId: 'A', runId: 1, status: 'completed' })]);
+    store.setLibraryStatuses([{ gameId: event.gameId, installed: true, systemRequirementsReady: true, missingRequirements: [], download: downloadRecord({ attemptId: 'A' }) }]);
+    const state = useLauncherStore.getState();
+    assert.equal(state.downloads.length, 0);
+    assert.equal(state.activityEvents.length, 0);
+    assert.equal(state.libraryStatuses[0].installed, false);
+    assert.equal(state.libraryStatuses[0].download, null);
+  });
+
+  it('accepts B after removing A and ignores late A progress and removal', () => {
+    const store = useLauncherStore.getState();
+    store.mergeDownloadEvent({ ...event, attemptId: 'A', runId: 1 });
+    store.removeDownload({ gameId: event.gameId, attemptId: 'A' });
+    store.mergeDownloadEvent({ ...event, attemptId: 'B', runId: 1, progressPercent: 3 });
+    store.mergeDownloadEvent({ ...event, attemptId: 'A', runId: 10, progressPercent: 98 });
+    store.removeDownload({ gameId: event.gameId, attemptId: 'A' });
+    assert.equal(useLauncherStore.getState().downloads[0].attemptId, 'B');
+    assert.equal(useLauncherStore.getState().downloads[0].progressPercent, 3);
+  });
+
+  it('ignores an older runtime after resume, including completed callbacks', () => {
+    const store = useLauncherStore.getState();
+    store.mergeDownloadEvent({ ...event, attemptId: 'A', runId: 1, status: 'paused' });
+    store.mergeDownloadEvent({ ...event, attemptId: 'A', runId: 2, progressPercent: 50 });
+    store.mergeDownloadEvent({ ...event, attemptId: 'A', runId: 1, status: 'completed', finished: true, progressPercent: 100 });
+    const state = useLauncherStore.getState();
+    assert.equal(state.downloads[0].runId, 2);
+    assert.equal(state.downloads[0].status, 'downloading');
+    assert.equal(state.downloads[0].progressPercent, 50);
+    assert.equal(state.activityEvents.length, 0);
+  });
+
+  it('does not let progress or completion from the paused runtime undo pause', () => {
+    const store = useLauncherStore.getState();
+    store.setDownloads([downloadRecord({ attemptId: 'A', runId: 1, status: 'paused' })]);
+    store.mergeDownloadEvent({ ...event, attemptId: 'A', runId: 1 });
+    store.mergeDownloadEvent({ ...event, attemptId: 'A', runId: 1, status: 'completed', finished: true });
+    assert.equal(useLauncherStore.getState().downloads[0].status, 'paused');
+    assert.equal(useLauncherStore.getState().activityEvents.length, 0);
+    store.mergeDownloadEvent({ ...event, attemptId: 'A', runId: 2 });
+    assert.equal(useLauncherStore.getState().downloads[0].status, 'downloading');
+  });
+
+  it('retains event identity across legacy snapshots and then rejects older runtime', () => {
+    const store = useLauncherStore.getState();
+    store.mergeDownloadEvent({ ...event, attemptId: 'A', runId: 2 });
+    store.setDownloads([downloadRecord({ status: 'paused' })]);
+    assert.equal(useLauncherStore.getState().downloads[0].attemptId, 'A');
+    assert.equal(useLauncherStore.getState().downloads[0].runId, 2);
+    store.mergeDownloadEvent({ ...event, attemptId: 'A', runId: 1 });
+    assert.equal(useLauncherStore.getState().downloads[0].status, 'paused');
+  });
+
+  it('retires replaced attempts and resets progress for the new attempt', () => {
+    const store = useLauncherStore.getState();
+    store.setDownloads([downloadRecord({ attemptId: 'A', runId: 4, progressPercent: 90 })]);
+    store.setDownloads([downloadRecord({ attemptId: 'B', runId: 1, progressPercent: 2 })]);
+    store.mergeDownloadEvent({ ...event, attemptId: 'A', runId: 5, progressPercent: 99 });
+    assert.equal(useLauncherStore.getState().downloads[0].attemptId, 'B');
+    assert.equal(useLauncherStore.getState().downloads[0].progressPercent, 2);
+  });
+
+  it('preserves B when a stale A snapshot arrives', () => {
+    const store = useLauncherStore.getState();
+    store.mergeDownloadEvent({ ...event, attemptId: 'A', runId: 1 });
+    store.removeDownload({ gameId: event.gameId, attemptId: 'A' });
+    store.mergeDownloadEvent({ ...event, attemptId: 'B', runId: 1 });
+    store.setDownloads([downloadRecord({ attemptId: 'A', runId: 1, status: 'completed' })]);
+    assert.equal(useLauncherStore.getState().downloads[0].attemptId, 'B');
+    assert.equal(useLauncherStore.getState().downloads[0].status, 'downloading');
+  });
+
+  it('rejects identity-free events once a generation is known or subject removed', () => {
+    const store = useLauncherStore.getState();
+    store.mergeDownloadEvent({ ...event, attemptId: 'A', runId: 1, status: 'paused' });
+    store.mergeDownloadEvent({ ...event, status: 'completed', finished: true });
+    assert.equal(useLauncherStore.getState().downloads[0].status, 'paused');
+    store.removeDownload({ gameId: event.gameId, attemptId: 'A' });
+    store.mergeDownloadEvent(event);
+    assert.equal(useLauncherStore.getState().downloads.length, 0);
+  });
+
+  it('bounds tombstones while retaining the newest removals', () => {
+    const store = useLauncherStore.getState();
+    for (let index = 0; index < 300; index += 1) {
+      store.removeDownload({ gameId: `game-${index}`, attemptId: `attempt-${index}` });
+    }
+    assert.equal(useLauncherStore.getState().removedDownloads.length, 256);
+    assert.equal(useLauncherStore.getState().removedDownloads[0].attemptId, 'attempt-299');
   });
 });
 

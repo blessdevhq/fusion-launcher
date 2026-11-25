@@ -2,18 +2,17 @@ use std::collections::HashSet;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
+use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::Utc;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Emitter, State};
 use url::Url;
 
 use crate::builtin_demo;
-use crate::downloads::{
-    destination_for_source, download_source_to_file, file_name_for_source, hash_file,
-};
+use crate::downloads::{destination_for_source, file_name_for_source, hash_file};
 use crate::game_files;
 use crate::logging;
 use crate::schema::{
@@ -31,6 +30,9 @@ use crate::security::{validate_platform, validate_repository_schema, validate_re
 use crate::setup_profiles;
 use crate::storage::RepositoryStore;
 use crate::AppState;
+
+pub mod fusion_creator;
+pub mod fusion_source;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -55,6 +57,7 @@ include!("emulators.rs");
 include!("downloads.rs");
 include!("settings.rs");
 include!("diagnostics.rs");
+include!("porting.rs");
 include!("smoke.rs");
 
 #[cfg(test)]

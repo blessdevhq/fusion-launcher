@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 
 import { previewApi } from '../src/lib/previewData.ts';
+import { fusionPreviewApi, FUSION_PREVIEW_URL } from '../src/lib/fusionPreviewData.ts';
 
 const checks = [];
 
@@ -128,6 +129,31 @@ await check('health and diagnostics coverage', async () => {
   assert.ok(diagnostics.logs.length > 0, 'diagnostics must include log excerpts');
 
   return `${diagnostics.downloads.length} downloads in diagnostics`;
+});
+
+await check('Fusion index, isolated operations, hash trust and rollback', async () => {
+  fusionPreviewApi.reset();
+  const source = await fusionPreviewApi.add(FUSION_PREVIEW_URL);
+  const catalog = await fusionPreviewApi.catalog();
+  const game = catalog.find((entry) => entry.gameId === 'coop-demo');
+  assert.ok(game && !game.installed);
+  const input = { userFiles: { base: 'preview://owned/game.bin' }, rawPaths: { base: 'game/owned.bin' }, externalWorkspaceRoot: null };
+  const cancelled = fusionPreviewApi.install(source.sourceId, game.gameId, input);
+  await fusionPreviewApi.cancel(source.sourceId, game.gameId);
+  assert.equal((await cancelled).status, 'cancelled');
+  assert.equal((await fusionPreviewApi.state(source.sourceId, game.gameId)).installed, false);
+  assert.equal((await fusionPreviewApi.install(source.sourceId, game.gameId, input)).status, 'completed');
+  const installed = await fusionPreviewApi.state(source.sourceId, game.gameId);
+  assert.equal(installed.ready, false);
+  const executable = installed.executables[0];
+  await fusionPreviewApi.trust(source.sourceId, game.gameId, executable.path, executable.blake3);
+  assert.equal((await fusionPreviewApi.state(source.sourceId, game.gameId)).ready, true);
+  await fusionPreviewApi.rollback(source.sourceId, game.gameId);
+  assert.equal((await fusionPreviewApi.state(source.sourceId, game.gameId)).activeVersion, '1.0.0');
+  const crash = await fusionPreviewApi.crash('preview-crash');
+  assert.match(crash.report.cleanLogTail, /<WORKSPACE_ROOT>/);
+  assert.equal(crash.canSend, false);
+  return `${catalog.length} compact entries, cancel -> install -> trust -> rollback`;
 });
 
 const failed = checks.filter((item) => !item.ok);

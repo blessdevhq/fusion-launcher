@@ -1,0 +1,58 @@
+{
+  "recorded_at": "2026-10-31T22:50:25.839096+00:00",
+  "base_commit": "0ce4598",
+  "branch": "creator/contracts",
+  "scope": "ProgramDescriptor document/schema freeze, not production Creator implementation",
+  "command": "RUST_TEST_THREADS=4 npm run qa",
+  "environment": {
+    "platform": "Windows",
+    "developer_prompt": "VS2022 BuildTools",
+    "cargo_build_jobs": 4,
+    "cargo_net_offline": true,
+    "cargo_target_dir": "F:/MVP/Fusion Launcher/src-tauri/target",
+    "physical_test_python": "C:/Users/admin/AppData/Roaming/uv/python/cpython-3.11.15-windows-x86_64-none/python.exe"
+  },
+  "runs": [
+    {
+      "status": "failed",
+      "exit_code": 101,
+      "node_passed": 151,
+      "rust_library_passed": 546,
+      "rust_library_failed": 4,
+      "rust_library_ignored": 4,
+      "cause": "FUSION_TEST_PYTHON pointed through uv reparse alias; secure hash_file refused its directory at transforms.rs:1124",
+      "production_code_changed_to_fix": false,
+      "log": ".tmp/descriptor/qa-verified.log",
+      "log_sha256": "77c951d109cca4a0a835fcd702066eb2f04ed078618568e0ade3b19dd2a603b1",
+      "log_bytes": 70041
+    },
+    {
+      "status": "passed",
+      "exit_code": 0,
+      "node_passed": 151,
+      "rust_library_passed": 550,
+      "rust_library_failed": 0,
+      "rust_library_ignored": 4,
+      "rust_cli_passed": 3,
+      "typecheck": "passed",
+      "static_check": "passed",
+      "build": "passed",
+      "rust_fmt": "passed",
+      "rust_clippy_all_targets_deny_warnings": "passed",
+      "native_harness_install_launch_update_rollback": "passed",
+      "log": ".tmp/descriptor/qa-physical-python.log",
+      "log_sha256": "b0c4d8a030bcf271386b7b5d283f7cd1bea8d6303fdd3c849bde6faa3d6ac315",
+      "log_bytes": 69489
+    }
+  ],
+  "focused_schema_tests": { "passed": 15, "failed": 0 },
+  "draft202012_metaschema": "passed",
+  "conforming_program_fixture_validation_with_format_checker": "passed",
+  "independent_review": "passed",
+  "not_tested": [
+    "mvp:visual (no UI changes)",
+    "Real SuperTuxKart/Eden Creator lifecycle or export",
+    "Real Forza Horizon 2 + Azimuth runtime",
+    "Fresh dependency installation"
+  ]
+}

@@ -7,7 +7,20 @@ impl RepositoryStore {
         url: &str,
         repo: &RepositorySchema,
     ) -> Result<RepositorySummary, String> {
-        let tx = self.conn.transaction().map_err(|error| error.to_string())?;
+        self.store_repository_with_local_import(url, repo, |_| Ok(()))
+    }
+
+    /// Persist a user catalog and its local import records as one operation.
+    pub(crate) fn store_repository_with_local_import(
+        &mut self,
+        url: &str,
+        repo: &RepositorySchema,
+        import: impl FnOnce(&Self) -> Result<(), String>,
+    ) -> Result<RepositorySummary, String> {
+        let tx = self
+            .conn
+            .unchecked_transaction()
+            .map_err(|error| error.to_string())?;
         let now = Utc::now().to_rfc3339();
         let raw_json = serde_json::to_string(repo).map_err(|error| error.to_string())?;
         let content_hash = repo
@@ -15,12 +28,8 @@ impl RepositoryStore {
             .content_hash
             .clone()
             .unwrap_or_else(|| hex::encode(Sha256::digest(raw_json.as_bytes())));
-        let trust_level = repo
-            .metadata
-            .trust_level
-            .as_deref()
-            .filter(|value| !value.trim().is_empty())
-            .unwrap_or("unknown");
+        let trust_level =
+            crate::security::effective_repository_trust(url, repo.metadata.trust_level.as_deref());
 
         tx.execute(
             "DELETE FROM repository_assets WHERE repository_id = ?1",
@@ -150,6 +159,7 @@ impl RepositoryStore {
             .map_err(|error| error.to_string())?;
         }
 
+        import(self)?;
         tx.commit().map_err(|error| error.to_string())?;
         self.get_repository_summary(&repo.metadata.id)?
             .ok_or_else(|| "Repository was stored but could not be read back.".to_string())
@@ -244,6 +254,31 @@ impl RepositoryStore {
         self.conn
             .query_row(
                 "SELECT url FROM repositories WHERE id = ?1",
+                params![repository_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|error| error.to_string())
+    }
+
+    pub fn get_repository_raw_json(&self, repository_id: &str) -> Result<Option<String>, String> {
+        self.conn
+            .query_row(
+                "SELECT raw_json FROM repositories WHERE id = ?1",
+                params![repository_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|error| error.to_string())
+    }
+
+    pub fn get_repository_trust_level(
+        &self,
+        repository_id: &str,
+    ) -> Result<Option<String>, String> {
+        self.conn
+            .query_row(
+                "SELECT trust_level FROM repositories WHERE id = ?1",
                 params![repository_id],
                 |row| row.get(0),
             )

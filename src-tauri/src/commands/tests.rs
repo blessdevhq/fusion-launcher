@@ -36,6 +36,21 @@ fn write_zip(path: &Path, entries: &[(&str, &[u8])]) {
     writer.finish().unwrap();
 }
 
+#[test]
+fn recorded_directory_cleanup_preserves_unowned_sentinel_and_forged_marker() {
+    let temp = tempdir().unwrap();
+    let selected = temp.path().join("selected-games");
+    fs::create_dir(&selected).unwrap();
+    fs::write(selected.join("personal-save.txt"), b"keep").unwrap();
+    fs::write(selected.join(".fusion-owned"), b"untrusted archive marker").unwrap();
+
+    assert!(remove_recorded_download_path(&selected).is_err());
+    assert_eq!(
+        fs::read(selected.join("personal-save.txt")).unwrap(),
+        b"keep"
+    );
+}
+
 fn manifest_emulator_asset_view() -> AssetView {
     AssetView {
         id: "manifest-demo::0100-emulator-bundle".to_string(),
@@ -52,6 +67,30 @@ fn manifest_emulator_asset_view() -> AssetView {
         install_hint: None,
         executable: false,
     }
+}
+
+#[tokio::test]
+async fn guarded_bundle_extraction_verifies_locked_archive_and_deletes_exact_source() {
+    let temp = tempdir().unwrap();
+    let archive = temp.path().join("emulator.zip");
+    write_zip(&archive, &[("emulator.exe", b"verified executable")]);
+    let hash = hash_file(&archive).unwrap();
+    let registry = crate::download_operations::OperationCoordinator::new();
+    let lease = registry.start("bundle").unwrap();
+    let result = post_process_manifest_emulator_bundle_archive(
+        &manifest_emulator_asset_view(),
+        &archive,
+        &hash,
+        lease,
+    )
+    .await
+    .unwrap();
+    assert_eq!(result, temp.path());
+    assert_eq!(
+        fs::read(temp.path().join("emulator.exe")).unwrap(),
+        b"verified executable"
+    );
+    assert!(!archive.exists());
 }
 
 #[test]
@@ -107,6 +146,72 @@ fn manifest_emulator_zip_rejects_path_traversal_without_deleting_archive() {
     assert!(error.contains("path traversal"));
     assert!(archive_path.exists());
     assert!(!temp.path().join("outside.exe").exists());
+}
+
+#[test]
+fn game_archive_zip_extracts_and_resolves_game_file() {
+    let temp = tempdir().unwrap();
+    let game_dir = temp.path().join("Games").join("nes").join("super-mario");
+    std::fs::create_dir_all(&game_dir).unwrap();
+    let archive_path = game_dir.join("super-mario.zip");
+    write_zip(&archive_path, &[("mario.nes", &valid_nes_bytes())]);
+
+    let catalog_game = CatalogGameView {
+        id: "super-mario".to_string(),
+        source_id: "super-mario".to_string(),
+        repository_id: "repo-1".to_string(),
+        repository_name: "Retro Repo".to_string(),
+        platform: "nes".to_string(),
+        title: "Super Mario Bros".to_string(),
+        description: None,
+        cover_image_url: None,
+        trailer_url: None,
+        artwork: None,
+        metadata: None,
+        content_mode: None,
+        setup_profile_id: Some("nes-mesen".to_string()),
+        expected_extensions: vec![".nes".to_string()],
+        downloads: vec![],
+        required_system_file_ids: vec![],
+        launch: None,
+    };
+
+    let extracted = extract_game_archive_if_needed(&catalog_game, &archive_path).unwrap();
+
+    assert_eq!(extracted, game_dir.join("mario.nes"));
+    assert!(extracted.is_file());
+    assert!(!archive_path.exists());
+}
+
+#[test]
+fn game_non_archive_file_is_returned_untouched() {
+    let temp = tempdir().unwrap();
+    let rom_path = temp.path().join("game.nes");
+    std::fs::write(&rom_path, valid_nes_bytes()).unwrap();
+
+    let catalog_game = CatalogGameView {
+        id: "game".to_string(),
+        source_id: "game".to_string(),
+        repository_id: "repo-1".to_string(),
+        repository_name: "Retro Repo".to_string(),
+        platform: "nes".to_string(),
+        title: "Game".to_string(),
+        description: None,
+        cover_image_url: None,
+        trailer_url: None,
+        artwork: None,
+        metadata: None,
+        content_mode: None,
+        setup_profile_id: Some("nes-mesen".to_string()),
+        expected_extensions: vec![".nes".to_string()],
+        downloads: vec![],
+        required_system_file_ids: vec![],
+        launch: None,
+    };
+
+    let result = extract_game_archive_if_needed(&catalog_game, &rom_path).unwrap();
+    assert_eq!(result, rom_path);
+    assert!(rom_path.exists());
 }
 
 #[test]
@@ -419,6 +524,25 @@ fn open_store(required_asset_ids: Vec<String>) -> (tempfile::TempDir, Repository
         )
         .unwrap();
     (dir, store)
+}
+
+#[test]
+fn direct_download_progress_persists_speed_without_peers() {
+    let dir = tempdir().unwrap();
+    let store = RepositoryStore::open(&dir.path().join("fusion-launcher.db")).unwrap();
+    store
+        .record_direct_asset_download_started("repo::asset", "http", "F:/Emu/eden.zip", 4096)
+        .unwrap();
+
+    let record =
+        persist_direct_download_progress(&store, "repo::asset", 2048, Some(4096), 1024).unwrap();
+
+    assert_eq!(record.progress_percent, 50.0);
+    assert_eq!(record.downloaded_bytes, 2048);
+    assert_eq!(record.total_bytes, 4096);
+    assert_eq!(record.download_speed_bytes_per_sec, 1024);
+    assert_eq!(record.upload_speed_bytes_per_sec, 0);
+    assert_eq!(record.peers_count, 0);
 }
 
 #[test]
@@ -760,6 +884,310 @@ fn user_game_import_rejects_wrong_extension() {
 }
 
 #[test]
+fn user_game_link_references_source_without_copy_hash_or_ownership() {
+    let dir = tempdir().unwrap();
+    let mut store = RepositoryStore::open(&dir.path().join("fusion-launcher.db")).unwrap();
+    store
+        .store_repository("https://example.com/index.json", &user_game_repo())
+        .unwrap();
+    let source = dir.path().join("source.nes");
+    let bytes = valid_nes_bytes();
+    std::fs::write(&source, &bytes).unwrap();
+    let modified = source.metadata().unwrap().modified().unwrap();
+
+    let report = link_user_game_file_into_store(&store, "repo::game", &source);
+
+    assert_eq!(report.status, "linked");
+    assert!(report.error_code.is_none());
+    assert!(report.sha256.is_none());
+    assert_eq!(
+        Path::new(&report.installed_path),
+        source.canonicalize().unwrap()
+    );
+    assert_eq!(std::fs::read(&source).unwrap(), bytes);
+    assert_eq!(source.metadata().unwrap().modified().unwrap(), modified);
+    assert!(!dir.path().join("nes").exists());
+    assert!(!dir.path().join("Games").exists());
+    let download = store.get_download("repo::game").unwrap().unwrap();
+    assert_eq!(download.status, "ready");
+    assert!(download.sha256.is_none());
+    assert_eq!(
+        download.local_path.as_deref(),
+        Some(report.installed_path.as_str())
+    );
+    let torrent = store.get_torrent_download("repo::game").unwrap().unwrap();
+    assert_eq!(torrent.status, "completed");
+    assert_eq!(torrent.magnet_uri, "direct:user_link");
+    // Destructive removal has authority only from these manifests; a link has none.
+    assert!(crate::download_installation::read_all(&store, "repo::game")
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
+fn user_game_link_rejects_missing_directory_wrong_extension_and_invalid_game() {
+    let dir = tempdir().unwrap();
+    let mut store = RepositoryStore::open(&dir.path().join("fusion-launcher.db")).unwrap();
+    store
+        .store_repository("https://example.com/index.json", &user_game_repo())
+        .unwrap();
+    let wrong = dir.path().join("source.txt");
+    let invalid = dir.path().join("invalid.nes");
+    std::fs::write(&wrong, b"not a game").unwrap();
+    std::fs::write(&invalid, b"not a valid NES header").unwrap();
+    for (path, code) in [
+        (dir.path().join("missing.nes"), "source_missing"),
+        (dir.path().to_path_buf(), "source_not_file"),
+        (wrong, "wrong_extension"),
+        (invalid, "invalid_game_file"),
+    ] {
+        let report = link_user_game_file_into_store(&store, "repo::game", &path);
+        assert_eq!(report.error_code.as_deref(), Some(code));
+        assert!(store.get_download("repo::game").unwrap().is_none());
+        assert!(store.get_torrent_download("repo::game").unwrap().is_none());
+    }
+}
+
+#[test]
+fn user_game_link_checks_explicit_metadata_checksum() {
+    let dir = tempdir().unwrap();
+    let mut store = RepositoryStore::open(&dir.path().join("fusion-launcher.db")).unwrap();
+    let mut repo = user_game_repo();
+    repo.catalog[0].downloads = vec![SourceUri::UserProvided {
+        instructions: None,
+        sha256: Some("0".repeat(64)),
+        size_bytes: None,
+    }];
+    store
+        .store_repository("https://example.com/index.json", &repo)
+        .unwrap();
+    let source = dir.path().join("source.nes");
+    let bytes = valid_nes_bytes();
+    std::fs::write(&source, &bytes).unwrap();
+    let report = link_user_game_file_into_store(&store, "repo::game", &source);
+    assert_eq!(report.error_code.as_deref(), Some("checksum_mismatch"));
+    assert!(store.get_download("repo::game").unwrap().is_none());
+    assert_eq!(std::fs::read(&source).unwrap(), bytes);
+
+    if let SourceUri::UserProvided { sha256, .. } = &mut repo.catalog[0].downloads[0] {
+        *sha256 = Some(sha256_hex(&bytes));
+    }
+    store
+        .store_repository("https://example.com/index.json", &repo)
+        .unwrap();
+    let report = link_user_game_file_into_store(&store, "repo::game", &source);
+    assert_eq!(report.status, "linked");
+    assert_eq!(report.sha256.as_deref(), Some(sha256_hex(&bytes).as_str()));
+}
+
+#[test]
+fn custom_game_link_flag_defaults_to_copy_for_older_clients() {
+    let old: CustomGameInput = serde_json::from_value(serde_json::json!({
+        "title": "Local game", "platform": "switch"
+    }))
+    .unwrap();
+    assert!(!old.import_in_place);
+    let linked: CustomGameInput = serde_json::from_value(serde_json::json!({
+        "title": "Local game", "platform": "switch", "importInPlace": true
+    }))
+    .unwrap();
+    assert!(linked.import_in_place);
+}
+
+#[test]
+fn custom_game_link_failure_rolls_back_catalog_and_download_records() {
+    let dir = tempdir().unwrap();
+    let mut store = RepositoryStore::open(&dir.path().join("fusion-launcher.db")).unwrap();
+    let source = dir.path().join("source.nes");
+    std::fs::write(&source, valid_nes_bytes()).unwrap();
+    let make_input = |id: &str, title: &str| -> CustomGameInput {
+        serde_json::from_value(serde_json::json!({
+            "id": id, "title": title, "platform": "nes", "importInPlace": true,
+            "importSourcePath": source.to_string_lossy(),
+        }))
+        .unwrap()
+    };
+    let game = add_custom_game_into_store(
+        make_input("preserved", "Original title"),
+        &mut store,
+        dir.path(),
+    )
+    .unwrap();
+    let original_raw = store.get_repository_raw_json("user-library").unwrap();
+    let original_download = store.get_download(&game.id).unwrap().unwrap();
+
+    // Fail after the first ready-download write, while completing its paired
+    // record. Neither a replacement catalog nor a partial link may survive.
+    store
+        .conn
+        .execute_batch(
+            "CREATE TRIGGER fail_local_link BEFORE INSERT ON torrent_downloads
+         BEGIN SELECT RAISE(ABORT, 'injected local link failure'); END;",
+        )
+        .unwrap();
+    for id in ["preserved", "new-game"] {
+        let error =
+            add_custom_game_into_store(make_input(id, "Replacement title"), &mut store, dir.path())
+                .unwrap_err();
+        assert!(error.contains("store_failed"));
+        assert_eq!(
+            store.get_repository_raw_json("user-library").unwrap(),
+            original_raw
+        );
+        assert_eq!(
+            store.get_game(&game.id).unwrap().unwrap().title,
+            "Original title"
+        );
+        assert!(store.get_game("user-library::new-game").unwrap().is_none());
+        assert!(store
+            .get_download("user-library::new-game")
+            .unwrap()
+            .is_none());
+        assert!(store
+            .get_torrent_download("user-library::new-game")
+            .unwrap()
+            .is_none());
+        let download = store.get_download(&game.id).unwrap().unwrap();
+        assert_eq!(download.local_path, original_download.local_path);
+        assert_eq!(download.sha256, original_download.sha256);
+    }
+    store
+        .conn
+        .execute_batch("DROP TRIGGER fail_local_link")
+        .unwrap();
+    let mut bad_checksum = make_input("preserved", "Bad checksum title");
+    bad_checksum.sha256 = Some("0".repeat(64));
+    assert!(
+        add_custom_game_into_store(bad_checksum, &mut store, dir.path())
+            .unwrap_err()
+            .contains("checksum_mismatch")
+    );
+    let mut missing = make_input("preserved", "Missing source title");
+    missing.import_source_path = None;
+    assert!(add_custom_game_into_store(missing, &mut store, dir.path()).is_err());
+    assert_eq!(
+        store.get_repository_raw_json("user-library").unwrap(),
+        original_raw
+    );
+    assert_eq!(
+        store.get_game(&game.id).unwrap().unwrap().title,
+        "Original title"
+    );
+    assert_eq!(std::fs::read(&source).unwrap(), valid_nes_bytes());
+}
+
+#[test]
+fn custom_game_copy_import_still_completes_inside_catalog_transaction() {
+    let dir = tempdir().unwrap();
+    let mut store = RepositoryStore::open(&dir.path().join("fusion-launcher.db")).unwrap();
+    let source = dir.path().join("source.nes");
+    std::fs::write(&source, valid_nes_bytes()).unwrap();
+    let input: CustomGameInput = serde_json::from_value(serde_json::json!({
+        "id": "copied", "title": "Copied game", "platform": "nes",
+        "importSourcePath": source.to_string_lossy(),
+    }))
+    .unwrap();
+    let game = add_custom_game_into_store(input, &mut store, &dir.path().join("Library")).unwrap();
+    let download = store.get_download(&game.id).unwrap().unwrap();
+    let target = Path::new(download.local_path.as_deref().unwrap());
+    assert_ne!(target, source);
+    assert_eq!(std::fs::read(target).unwrap(), valid_nes_bytes());
+    assert_eq!(download.status, "ready");
+    assert_eq!(
+        store
+            .get_torrent_download(&game.id)
+            .unwrap()
+            .unwrap()
+            .status,
+        "completed"
+    );
+}
+
+#[test]
+fn local_game_inspection_can_skip_hashing_without_changing_old_default() {
+    let dir = tempdir().unwrap();
+    let source = dir.path().join("source.nes");
+    let bytes = valid_nes_bytes();
+    std::fs::write(&source, &bytes).unwrap();
+    let path = source.to_string_lossy().to_string();
+    let fast = inspect_game_file(path.clone(), Some(false)).unwrap();
+    assert_eq!(fast.size_bytes, bytes.len() as u64);
+    assert_eq!(fast.platform, "nes");
+    assert!(fast.sha256.is_empty());
+    assert!(fast.crc32.is_empty());
+    let old = inspect_game_file(path, None).unwrap();
+    assert_eq!(old.sha256, sha256_hex(&bytes));
+    assert!(!old.crc32.is_empty());
+}
+
+#[test]
+fn switch_native_keys_are_detected_without_import_or_copy() {
+    for (executable, portable, keys_dir) in [
+        ("Ryujinx.exe", "portable", "system"),
+        ("eden.exe", "user", "keys"),
+    ] {
+        let dir = tempdir().unwrap();
+        let store = RepositoryStore::open(&dir.path().join("fusion-launcher.db")).unwrap();
+        let emulator = dir.path().join(executable);
+        std::fs::write(&emulator, b"test emulator").unwrap();
+        let native = dir.path().join(portable).join(keys_dir).join("prod.keys");
+        std::fs::create_dir_all(native.parent().unwrap()).unwrap();
+        std::fs::write(&native, b"synthetic test fixture, not real keys").unwrap();
+        store
+            .upsert_profile_emulator_config(
+                "switch-manual",
+                "switch",
+                Some(&emulator.to_string_lossy()),
+                "valid",
+                None,
+                None,
+            )
+            .unwrap();
+        let profile = setup_profiles::get_platform_setup_profile("switch-manual").unwrap();
+        let requirement = profile
+            .system_files
+            .iter()
+            .find(|item| item.id == "switch-prod-keys")
+            .unwrap();
+        let content_dir = dir.path().join("FusionLibrary");
+        let state =
+            inspect_profile_system_file(&store, &content_dir, &profile, requirement).unwrap();
+        assert_eq!(state.status, "ready");
+        assert_eq!(
+            state.installed_path.as_deref(),
+            Some(native.to_string_lossy().as_ref())
+        );
+        assert!(!content_dir.exists());
+        assert!(store
+            .get_profile_system_file_import("switch-manual", "switch-prod-keys")
+            .unwrap()
+            .is_none());
+
+        // An explicitly selected invalid target must remain invalid even though
+        // a native emulator key file is available.
+        let invalid = dir.path().join("wrong.txt");
+        std::fs::write(&invalid, b"wrong extension").unwrap();
+        store
+            .record_profile_system_file_import(
+                "switch-manual",
+                "switch-prod-keys",
+                Some(&invalid.to_string_lossy()),
+                "ready",
+                None,
+                None,
+            )
+            .unwrap();
+        let state =
+            inspect_profile_system_file(&store, &content_dir, &profile, requirement).unwrap();
+        assert_eq!(state.status, "corrupt");
+        assert_eq!(
+            state.installed_path.as_deref(),
+            Some(invalid.to_string_lossy().as_ref())
+        );
+    }
+}
+
+#[test]
 fn existing_matching_user_file_returns_already_installed_without_copy() {
     let dir = tempdir().unwrap();
     let asset_sha = sha256_hex(b"bios");
@@ -1004,4 +1432,121 @@ fn loads_repository_from_local_json_file() {
 
     assert_eq!(repo.metadata.id, "repo");
     assert!(url.starts_with("file:"));
+}
+
+#[test]
+fn select_profile_emulator_validates_candidates_and_canonicalizes() {
+    let dir = tempdir().unwrap();
+    let store = RepositoryStore::open(&dir.path().join("test.db")).unwrap();
+    let state = AppState {
+        store: std::sync::Arc::new(std::sync::Mutex::new(store)),
+        data_dir: dir.path().to_path_buf(),
+        local_data_dir: dir.path().to_path_buf(),
+        torrents: None,
+        direct_downloads: crate::downloads::DirectDownloadRegistry::default(),
+        running_games: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+        library_scrape: crate::scraper::LibraryScrapeRuntime::default(),
+    };
+
+    // 1. Rejects unknown profile
+    assert!(select_profile_emulator_internal("unknown-profile", "eden.exe", &state).is_err());
+
+    // 2. Rejects executable that does not match profile candidates
+    // switch-manual candidates: ["eden.exe", "eden-cli.exe", "Ryujinx.exe", "suyu.exe"]
+    let bad_exe = dir.path().join("malicious.exe");
+    std::fs::write(&bad_exe, b"not_switch").unwrap();
+    let err = select_profile_emulator_internal("switch-manual", &bad_exe.to_string_lossy(), &state)
+        .unwrap_err();
+    assert!(err.contains("does not match expected emulator executable"));
+
+    // 3. Accepts matching executable, canonicalizes path, and records integrity
+    let good_exe = dir.path().join("Ryujinx.exe");
+    std::fs::write(&good_exe, b"switch_emu").unwrap();
+    let config =
+        select_profile_emulator_internal("switch-manual", &good_exe.to_string_lossy(), &state)
+            .unwrap();
+    assert_eq!(config.platform, "switch");
+    assert_eq!(config.status, "valid");
+    let canon = good_exe
+        .canonicalize()
+        .unwrap()
+        .to_string_lossy()
+        .to_string();
+    assert_eq!(config.exe_path.as_deref(), Some(canon.as_str()));
+}
+
+#[test]
+fn save_emulator_config_validates_candidates_and_canonicalizes() {
+    let dir = tempdir().unwrap();
+    let store = RepositoryStore::open(&dir.path().join("test.db")).unwrap();
+    let state = AppState {
+        store: std::sync::Arc::new(std::sync::Mutex::new(store)),
+        data_dir: dir.path().to_path_buf(),
+        local_data_dir: dir.path().to_path_buf(),
+        torrents: None,
+        direct_downloads: crate::downloads::DirectDownloadRegistry::default(),
+        running_games: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+        library_scrape: crate::scraper::LibraryScrapeRuntime::default(),
+    };
+
+    // 1. Rejects mismatching executable for platform
+    let bad_exe = dir.path().join("notepad.exe");
+    std::fs::write(&bad_exe, b"notepad").unwrap();
+    let err = save_emulator_config_internal("switch", &bad_exe.to_string_lossy(), None, &state)
+        .unwrap_err();
+    assert!(err.contains("does not match expected emulator executable"));
+
+    // 2. Accepts matching executable for platform
+    let good_exe = dir.path().join("eden.exe");
+    std::fs::write(&good_exe, b"eden").unwrap();
+    let config =
+        save_emulator_config_internal("switch", &good_exe.to_string_lossy(), None, &state).unwrap();
+    assert_eq!(config.platform, "switch");
+    assert_eq!(config.status, "valid");
+    let canon = good_exe
+        .canonicalize()
+        .unwrap()
+        .to_string_lossy()
+        .to_string();
+    assert_eq!(config.exe_path.as_deref(), Some(canon.as_str()));
+}
+
+#[test]
+fn trust_updated_emulator_records_new_hash_and_mtime() {
+    let dir = tempdir().unwrap();
+    let store = RepositoryStore::open(&dir.path().join("test.db")).unwrap();
+    let state = AppState {
+        store: std::sync::Arc::new(std::sync::Mutex::new(store)),
+        data_dir: dir.path().to_path_buf(),
+        local_data_dir: dir.path().to_path_buf(),
+        torrents: None,
+        direct_downloads: crate::downloads::DirectDownloadRegistry::default(),
+        running_games: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+        library_scrape: crate::scraper::LibraryScrapeRuntime::default(),
+    };
+
+    let exe = dir.path().join("Ryujinx.exe");
+    std::fs::write(&exe, b"initial binary").unwrap();
+
+    // Configure profile emulator
+    select_profile_emulator_internal("switch-manual", &exe.to_string_lossy(), &state).unwrap();
+
+    // Trust it
+    let report1 = trust_updated_emulator_internal("switch-manual", &state).unwrap();
+    assert_eq!(report1.target, "switch-manual");
+    assert_eq!(
+        report1.exe_path,
+        exe.canonicalize().unwrap().to_string_lossy()
+    );
+
+    // Update the binary
+    std::thread::sleep(std::time::Duration::from_millis(10));
+    std::fs::write(&exe, b"updated binary").unwrap();
+
+    let report2 = trust_updated_emulator_internal("switch-manual", &state).unwrap();
+    assert_ne!(report1.current_sha256, report2.current_sha256);
+    assert_eq!(
+        report2.previous_sha256_prefix,
+        Some(report1.current_sha256_prefix)
+    );
 }

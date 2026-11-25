@@ -1,4 +1,46 @@
+import { convertFileSrc } from '@tauri-apps/api/core';
+import { api } from './api.ts';
+import { isTauriRuntime } from './runtime.ts';
 import type { CatalogGame } from '../types/repository.ts';
+
+const artworkCache = new Map<string, string>();
+const pendingFetches = new Map<string, Promise<string>>();
+
+export async function resolveArtworkUrl(url: string | null): Promise<string | null> {
+  if (!url || !isTauriRuntime() || (!url.startsWith('http://') && !url.startsWith('https://'))) {
+    return url;
+  }
+
+  if (artworkCache.has(url)) {
+    return artworkCache.get(url)!;
+  }
+
+  if (pendingFetches.has(url)) {
+    return pendingFetches.get(url)!;
+  }
+
+  const promise = (async () => {
+    try {
+      const localPath = await api.cacheArtwork(url);
+      if (localPath && localPath !== url) {
+        const assetUrl = convertFileSrc(localPath);
+        artworkCache.set(url, assetUrl);
+        return assetUrl;
+      }
+    } catch {
+      // Fall back to original url on network or cache error
+    }
+    artworkCache.set(url, url);
+    return url;
+  })();
+
+  pendingFetches.set(url, promise);
+  try {
+    return await promise;
+  } finally {
+    pendingFetches.delete(url);
+  }
+}
 
 const PALETTES = [
   ['#0A0A0B', '#2f6f45', '#5CE68C'],
@@ -16,11 +58,12 @@ export interface GeneratedGameArt {
   initials: string;
 }
 
-export function createGameArt(game: Pick<CatalogGame, 'id' | 'title' | 'platform'>): GeneratedGameArt {
+export function createGameArt(game: { id: string; title: string; platform: string }): GeneratedGameArt {
   const seed = hashString(`${game.id}:${game.platform}:${game.title}`);
   const palette = PALETTES[seed % PALETTES.length];
   const angle = 120 + (seed % 80);
   const offset = 18 + (seed % 46);
+  const focalX = 60 + (seed % 24);
   const initials = game.title
     .split(/\s+/)
     .filter(Boolean)
@@ -35,9 +78,9 @@ export function createGameArt(game: Pick<CatalogGame, 'id' | 'title' | 'platform
   ].join(', ');
 
   const heroPattern = [
-    `linear-gradient(96deg, #0A0A0B 0%, ${palette[0]} 39%, transparent 66%)`,
-    `linear-gradient(24deg, transparent 30%, ${palette[1]}66 58%, ${palette[2]}33 86%)`,
-    `linear-gradient(180deg, #141416 0%, #0A0A0B 100%)`
+    `radial-gradient(ellipse 48% 94% at ${focalX}% 44%, ${palette[1]}b8 0%, ${palette[1]}54 34%, transparent 76%)`,
+    `linear-gradient(${angle - 28}deg, transparent 34%, ${palette[2]}40 62%, transparent 88%)`,
+    `linear-gradient(100deg, #0A0A0B 0%, ${palette[0]} 38%, ${palette[1]} 100%)`
   ].join(', ');
 
   return {

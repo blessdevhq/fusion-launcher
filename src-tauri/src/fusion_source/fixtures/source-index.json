@@ -1,0 +1,15 @@
+{
+  "schema_version": "1.0",
+  "source_info": {
+    "id": "fusion-examples",
+    "name": "Fusion Source v1 contract fixtures",
+    "maintainer": "Fusion Launcher",
+    "telemetry_endpoint": "https://example.org/fusion-fixtures/crash-report",
+    "public_key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+  },
+  "games": [
+    {"id": "switch-zelda", "title": "Switch / Zelda (user-owned example)", "version": "1.0.0", "manifest_url": "manifests/switch-zelda.json", "manifest_blake3": "1111111111111111111111111111111111111111111111111111111111111111"},
+    {"id": "ps5-azimuth", "title": "PS5 / Azimuth / shadPS4 (fictional example)", "version": "2.0.0", "manifest_url": "https://example.org/fusion-fixtures/manifests/ps5-azimuth.json", "manifest_blake3": "2222222222222222222222222222222222222222222222222222222222222222"},
+    {"id": "cyberpunk-minecraft-coop", "title": "Cyberpunk × Minecraft Coop (fictional example)", "version": "1.0.0", "manifest_url": "manifests/cyberpunk-minecraft-coop.json", "manifest_blake3": "3333333333333333333333333333333333333333333333333333333333333333"}
+  ]
+}

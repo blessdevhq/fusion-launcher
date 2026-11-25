@@ -99,3 +99,11 @@ pub fn scrape_library(
 pub fn cancel_library_scrape(state: State<'_, AppState>) -> Result<LibraryScrapeStatus, String> {
     crate::scraper::cancel_library_scrape(state.inner())
 }
+
+#[tauri::command]
+pub async fn cache_artwork(
+    url: String,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    crate::scraper::ensure_artwork_cached(&state.local_data_dir, &url).await
+}

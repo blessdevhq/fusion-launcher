@@ -3,12 +3,15 @@ import { motion } from 'framer-motion';
 import { Ban, FolderOpen, Loader2, Package, Pause, Play, RotateCw, Trash2 } from 'lucide-react';
 import { useI18n } from '@/components/I18nProvider';
 import { GameArt } from '@/components/shell/GamePoster';
+import { shouldShowDownloadPeers } from '@/lib/downloadActions';
 import type { GameLibraryItem } from '@/lib/libraryStatus';
 import type { CatalogGame, TorrentDownloadRecord } from '@/types/repository';
 import { ACTIVE_DOWNLOAD_STATUSES, RESUMABLE_DOWNLOAD_STATUSES } from './constants';
 import { ScreenHeader } from './shared';
 import type { BusyAction } from './types';
 import { downloadStatusHint, formatBytes, formatSpeed, summarizeDownloads } from './utils';
+import { FusionOperationRows } from './FusionOperationRows';
+import type { FusionCatalogEntry, FusionOperationProgress } from '@/types/fusionSource';
 
 export function DownloadsScreen({
   downloads,
@@ -22,7 +25,10 @@ export function DownloadsScreen({
   onOpenFolder,
   onDeleteFiles,
   onPlay,
-  onFocus
+  onFocus,
+  fusionOperations = {},
+  fusionGames = [],
+  onOpenFusion
 }: {
   downloads: TorrentDownloadRecord[];
   itemsByGameId: Map<string, GameLibraryItem>;
@@ -36,6 +42,9 @@ export function DownloadsScreen({
   onDeleteFiles: (gameId: string) => Promise<void>;
   onPlay: (item: GameLibraryItem) => void;
   onFocus: (focusId: string) => void;
+  fusionOperations?: Record<string, FusionOperationProgress>;
+  fusionGames?: FusionCatalogEntry[];
+  onOpenFusion?: (game: FusionCatalogEntry) => void;
 }) {
   const { t } = useI18n();
   const summary = summarizeDownloads(downloads);
@@ -86,7 +95,8 @@ export function DownloadsScreen({
           <DownloadMetric label={t.dashboard.downloads.downloaded} value={formatBytes(summary.downloadedBytes)} tone="ready" />
         </div>
         <div className="rh-download-list">
-          {downloads.length === 0 ? (
+          {onOpenFusion && <FusionOperationRows operations={fusionOperations} games={fusionGames} onOpen={onOpenFusion} onFocus={onFocus} />}
+          {downloads.length === 0 && Object.keys(fusionOperations).length === 0 ? (
             <div className="rh-empty-compact">{t.dashboard.downloads.empty}</div>
           ) : groups.map(({ parent, children }) => (
             <div key={parent.gameId} className={children.length > 0 ? 'rh-download-group' : undefined}>
@@ -141,7 +151,7 @@ function DownloadRow({
   const active = ACTIVE_DOWNLOAD_STATUSES.includes(download.status);
   const resumable = RESUMABLE_DOWNLOAD_STATUSES.includes(download.status);
   const direct = download.magnetUri.startsWith('direct:');
-  const cancellable = !direct && !['completed', 'cancelled', 'cancelling', 'error'].includes(download.status);
+  const cancellable = !['completed', 'cancelled', 'cancelling', 'error'].includes(download.status);
   const removable = ['completed', 'cancelled', 'error'].includes(download.status);
   const statusHint = downloadStatusHint(download, t);
   const title = item?.game.title ?? download.displayName ?? download.gameId;
@@ -181,7 +191,7 @@ function DownloadRow({
         <div className="mt-2 flex flex-wrap gap-4 text-xs text-white/42">
           <span>{formatBytes(download.downloadedBytes)} / {formatBytes(download.totalBytes)}</span>
           <span>{formatSpeed(download.downloadSpeedBytesPerSec)}</span>
-          <span>{download.peersCount} {t.common.peers}</span>
+          {shouldShowDownloadPeers(download) && <span>{download.peersCount} {t.common.peers}</span>}
         </div>
         {statusHint && <div className={`mt-2 text-xs text-white/42 ${download.status === 'error' ? 'select-text' : ''}`}>{statusHint}</div>}
         {download.errorMessage && <div className="mt-2 select-text text-xs text-red-100">{download.errorMessage}</div>}

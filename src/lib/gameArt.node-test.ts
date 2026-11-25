@@ -20,6 +20,13 @@ describe('generated game art', () => {
     );
   });
 
+  it('gives fallback hero art a structured focal treatment', () => {
+    const heroStyle = createGameArt(game).heroStyle.backgroundImage;
+
+    assert.match(heroStyle, /radial-gradient/);
+    assert.match(heroStyle, /linear-gradient/);
+  });
+
   it('creates stable unsigned hashes', () => {
     assert.equal(hashString('Fusion Launcher'), hashString('Fusion Launcher'));
     assert.ok(hashString('Fusion Launcher') >= 0);

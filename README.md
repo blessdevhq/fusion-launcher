@@ -1,100 +1,62 @@
-# Fusion Launcher
+# Fusion (Fusion Launcher)
 
 [Русская версия](README.ru.md)
 
 ![Fusion Launcher key visual](public/fusion/hero-key-visual.png)
 
-**Status:** public MVP preview for Windows; fresh Fusion-branded installer
-release is being prepared.
+**Status:** active Windows preview (`v0.4.0`) transitioning to the open **Fusion Source v1.0** architecture.
 **Repository:** [blessdevhq/fusion-launcher](https://github.com/blessdevhq/fusion-launcher)
 
-Fusion Launcher is a source-driven Windows launcher for retro game libraries
-on PC. It combines source-library browsing and install tracking with guided
-portable-emulator setup: connect a source, install content you are allowed to
-use, satisfy emulator requirements, and launch everything from one desktop app.
+**Fusion** (distributed on Windows as **Fusion Launcher**) is an open platform for packaging, distributing, installing, updating, and running **layered software builds, modpacks, fan PC ports, recompilations, translations, and portable tool/AI bundles** on the open **Fusion Source v1.0** standard.
 
-Fusion Launcher does not host, curate, or distribute commercial games, BIOS
-files, firmware, keys, or third-party payloads. Users are responsible for the
-sources and content they connect.
+Built with Next.js 15, Tauri 2, Rust, and local-first SQLite storage.
 
-The project is built with Next.js, Tauri 2, Rust, and local-first storage.
+## Modes on One Open Core (`fusion-source-core`)
 
-## What It Does
+Fusion Launcher, the built-in Fusion Creator v1 workflow, and the standalone CLI run on the same open Rust engine (`src-tauri/src/fusion_source/`, extracting to the `fusion-source-core` crate):
 
-- Connects community, personal, or local source-library JSON catalogs from
-  GitHub Pages, HTTPS URLs, or local files.
-- Presents user-selected retro game catalogs in one Windows desktop launcher.
-- Tracks direct, bundled, and torrent-aware install state for content described
-  by connected sources.
-- Validates schema v3 catalogs with rich metadata, artwork, tags, genres, setup
-  profiles, and install requirements.
-- Helps prepare supported portable emulators and stores user-selected emulator,
-  BIOS, firmware, key, and game-file paths locally.
-- Resolves metadata and artwork from source libraries, ScreenScraper, and
-  SteamGridDB when configured.
-- Runs launch preflight checks before starting emulator processes.
-- Provides a first-party NES smoke-test repository, diagnostics, health checks,
-  GitHub Releases update checks, and Windows package smoke tests.
+- **Fusion Launcher** *(Windows preview)*: connect direct HTTPS or local Sources, install layered packages with immutable BLAKE3 CAS deduplication, guided `Easy Setup`, manual local save snapshots, keep user saves/data isolated outside replaceable workspace snapshots, approve critical executables by exact BLAKE3 hash, and roll back cleanly between versions.
+- **Fusion Creator v1** *(built-in author preview)*: create portable or layered package projects (`ProgramDescriptor 1.0`, `GameManifest 1.1` Source-relative mirrors), configure profiles and local SDL GameController bindings (`CreatorDeviceDialog` with pre-launch SDL release barrier), build Ed25519-signed releases, run isolated clean-install checks (`CreatorVerifyPanel`), export allowlisted artifacts, and verify live HTTPS mirrors (`CreatorReleasePanel`).
+- **Fusion Studio** *(Stage 6 evolution)*: unifies built-in author workflows as a clean GUI over the extracted `fusion-source-core` crate and unified CLI (`fusion init / pack / test / publish`).
 
-## First Run
+**Initial focus:** empowering creators of fan builds, PC ports, recompilations, translations, and modpacks layered non-destructively over users' existing games (Steam, GOG, Epic, or user-owned dumps), while keeping the underlying protocol completely domain-neutral for portable apps and AI toolkits.
 
-The fastest path on Windows is the built-in demo setup:
+## Core Capabilities (Fusion Source v1.0)
 
-1. Install Fusion Launcher.
-2. Open the app and choose **Set up demo**.
-3. Fusion Launcher connects the built-in demo source, prepares a supported NES
-   emulator, installs the first-party demo cartridge image, and enables
-   **Play Demo**.
+- **Layered, non-destructive workspaces:** immutable read-only BLAKE3 Content-Addressed Store (CAS) paired with hardlink projection, private writable copies (`writable_copy_paths`), config templates (`TOML`/`INI`/`JSON`), and non-destructive local base discovery for Steam, GOG, Epic, or manual folders without modifying original files.
+- **Zero vendor lock-in:** authors choose where to host files — static HTTPS, GitHub Releases, mirrors, local directories, or BitTorrent (via the libtorrent sidecar) work as first-class transports with no central monopoly registry.
+- **Cryptographic verification & explicit trust:** Ed25519-signed source indexes with pinned public keys, raw-byte manifest BLAKE3 verification, explicit per-binary BLAKE3 trust approvals (`critical_files`), and opt-in sanitized crash previews.
+- **Isolated persistence & atomic rollback:** user saves and runtime data live outside versioned workspace snapshots, survive updates, and never get overwritten when rolling back binaries.
+- **Forward-compatible evolution:** `capabilities` + `fallback` negotiation and `SchemaUpcaster` allow new features without breaking existing Sources.
 
-Automatic portable-emulator setup is available for NES, SNES, Nintendo 64, Game
-Boy Advance, PlayStation 2, and PSP. PlayStation 1 and Nintendo Switch currently
-use manual executable selection. Platform-owned BIOS, firmware, and keys always
-remain user-provided.
-For Nintendo Switch, the recommended manual executable is Eden (`eden.exe` or
-`eden-cli.exe`); existing Ryujinx and Suyu paths remain supported as fallbacks.
+## Current Status & Roadmap
 
-## Content Model
+`v0.4.0` is a transition release where the **Fusion Source** engine (`src-tauri/src/fusion_source/`, `fusion-packer`, `fusion-local`) and the built-in **Fusion Creator v1** author flow (`src-tauri/src/fusion_creator/`) are live and running alongside the legacy retro-catalog UI. Development follows a 6-stage roadmap:
 
-Fusion Launcher is content-neutral launcher infrastructure. It connects to the
-sources users choose, tracks files described by those sources, and launches
-content through configured emulator profiles.
+1. **Stage 1:** Extract `fusion-source-core` into a Cargo workspace crate + finalize domain-neutral `v1.0` contracts (`PackageManifest`, `package_id`, `QualifiedPackageId`, `data_paths`, optional `metadata`).
+2. **Stage 2:** Audit technical dependencies and completely remove the legacy retro-catalog/emulator-profile engine and duplicate UI/stores.
+3. **Stage 3:** Complete core lifecycle workflows (`Save / Data Restore`, `Easy Setup`, resilient install/update/rollback/error recovery).
+4. **Stage 4:** Unified CLI (`fusion init`, `fusion pack`, `fusion test`, `fusion publish`) on top of `fusion-source-core`.
+5. **Stage 5:** Ship three open reference Sources (portable non-game/AI tool → modpack over Steam/GOG/Epic → fan PC port/recompilation).
+6. **Stage 6:** Evolve built-in **Fusion Creator v1** into **Fusion Studio** over the extracted shared core and unified CLI.
 
-The Fusion Launcher project, repository, and official releases do not host or
-ship commercial ROMs, BIOS files, firmware, keys, or third-party game payloads.
-Users and source-library authors are responsible for the sources and content
-they connect. Fusion Launcher is not affiliated with emulator projects, game
-publishers, or console manufacturers.
+## Legal & Content Model
 
-The bundled `public/demo-content/fusion-launcher-smoke.nes` file is a
-first-party demo cartridge image for launcher validation. Its terms are
-documented in
-`public/demo-content/LICENSE.txt`.
+Fusion is content-neutral open infrastructure. The Fusion project, repository, and official releases **does not host**, curate, or distribute **commercial ROMs**, games, **BIOS** files, **firmware**, **keys**, or third-party payloads (`public/demo-content/fusion-launcher-smoke.nes` is a first-party smoke-test image covered in `public/demo-content/LICENSE.txt`).
 
-## Source Libraries
+- **Users are responsible** for the Sources they connect and the local files they supply.
+- By protocol invariant, `Bios`, `Firmware`, and `Keys` layers must always remain `user_provided` and can never be distributed as remote source payloads.
+- Fusion is not affiliated with game publishers, console manufacturers, or third-party runtime projects.
 
-Source libraries are JSON catalogs that describe games, platforms, metadata,
-artwork, setup profiles, and install requirements.
+## Documentation & Authoring
 
-Useful entry points:
+- [Fusion Source Standard v1.0](docs/fusion-source-standard-v1.md) — wire contracts, BLAKE3 CAS invariants, capability negotiation, persistence, and process supervision.
+- [Fusion Creator v1 Guide](docs/fusion-creator-guide.md) — built-in authoring (`Base -> Verification -> Release`), `GameManifest 1.1` export, Verify HTTPS, and SDL input profiles.
+- [Fusion Packer CLI](docs/fusion-packer.md) — authoring, inspecting, building, and Ed25519-signing Sources (`fusion-packer`).
+- [Fusion Local Host](docs/fusion-local.md) — running offline/local Fusion Sources (`fusion-local`).
+- [MVP Windows install checklist](docs/mvp-windows-install.md) & [Release checklist](docs/release-checklist.md) — installation and release verification notes.
 
-- [Source library template](docs/source-library-template.md)
-- [Repository authoring guide](docs/repository-authoring.md)
-- [Official starter source](public/source-libraries/official-starter.json) — safe first run with first-party demo content and openly licensed homebrew.
-- [Unofficial player wishlist](public/source-libraries/unofficial-player-wishlist.json) — user-provided commercial game metadata only; no downloads, ROMs, BIOS, firmware, keys, or publisher artwork.
-- [Rich metadata example](examples/repositories/showcase.metadata.json)
-
-Paste-ready public source URLs:
-
-```text
-https://blessdevhq.github.io/fusion-launcher/source-libraries/official-starter.json
-https://blessdevhq.github.io/fusion-launcher/source-libraries/unofficial-player-wishlist.json
-```
-
-The starter template is published at:
-
-```text
-https://blessdevhq.github.io/fusion-launcher/source-library-template/repository.json
-```
+*(Transitional legacy v3 source-library guides remain in `docs/` until Legacy removal in Stage 2.)*
 
 ## Development
 
@@ -110,74 +72,33 @@ Install dependencies:
 npm ci
 ```
 
-Run the standard checks:
+Run checks and build:
 
 ```powershell
-npm test
-npm run typecheck
-npm run static-check
-npm run source:template:check
-npm run rust:test
-```
-
-Run the full local QA gate:
-
-```powershell
+npm run check
 npm run qa
-```
-
-Run the web shell:
-
-```powershell
 npm run dev
-```
-
-Build the Windows desktop app:
-
-```powershell
 npm run tauri:build
 ```
 
-Validate a source library:
+Build standalone Fusion Source CLI tools:
 
 ```powershell
-npm run source:validate -- templates/source-library/repository.json
+cargo build --manifest-path src-tauri/Cargo.toml --bin fusion-packer --bin fusion-local
 ```
 
 ## Release
 
-The Windows release workflow runs on tags matching `vX.Y.Z` and uploads:
+The Windows release workflow runs on tags matching `vX.Y.Z` and builds the NSIS installer, updater zip/signature, and `latest.json`. Release builds require `TAURI_SIGNING_PRIVATE_KEY` (and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` if encrypted).
 
-- NSIS installer
-- updater zip
-- updater signature
-- `latest.json` for the Tauri updater
-
-Release builds require `TAURI_SIGNING_PRIVATE_KEY`; set
-`TAURI_SIGNING_PRIVATE_KEY_PASSWORD` when the private key is encrypted.
-
-Run the Windows release smoke gate locally:
+Run the local Windows release smoke gate:
 
 ```powershell
 npm run mvp:release:windows
 ```
 
-Related docs:
-
-- [MVP Windows install checklist](docs/mvp-windows-install.md)
-- [Release checklist](docs/release-checklist.md)
-- [Metadata and artwork notes](docs/metadata-artwork.md)
-
-## Compatibility Notes
-
-New installs use Fusion Launcher names, identifiers, and files. Legacy preview
-app identifiers, database names, and demo identifiers are still supported as
-fallbacks for existing preview installs and CI setups.
-
 ## License
 
-Fusion Launcher source code is licensed under the GNU General Public License
-v3.0 or later. See [LICENSE](LICENSE).
+Fusion source code is licensed under the GNU General Public License v3.0 or later. See [LICENSE](LICENSE).
 
-Bundled demo smoke-test content is covered separately in
-`public/demo-content/LICENSE.txt`.
+First-party demo smoke-test content is covered separately in `public/demo-content/LICENSE.txt`.

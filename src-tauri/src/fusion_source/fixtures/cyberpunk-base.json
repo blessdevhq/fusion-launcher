@@ -1,0 +1,28 @@
+{
+  "schema_version": "1.0",
+  "id": "cyberpunk-base",
+  "title": "Cyberpunk 2077 (locally owned base)",
+  "version": "2.0.0",
+  "platform": "pc",
+  "capabilities": {"required": ["core.layers.v1", "vfs.hardlink.v1", "local_locator.v1"], "optional": []},
+  "layers": [
+    {
+      "id": "base",
+      "kind": "base",
+      "source": {
+        "kind": "local_locator",
+        "locator": {
+          "store": "steam",
+          "app_id": "1091500",
+          "path_hints": ["D:/SteamLibrary/steamapps/common/Cyberpunk 2077"],
+          "key_files": [{"path": "bin/x64/Cyberpunk2077.exe", "blake3": "8888888888888888888888888888888888888888888888888888888888888888", "role": "main_executable"}]
+        }
+      },
+      "mount_path": "",
+      "writable_copy_paths": ["r6/cache/**", "engine/config/platform/pc/*.ini"]
+    }
+  ],
+  "launch": {"id": "cyberpunk", "executable": "bin/x64/Cyberpunk2077.exe", "args": [], "role": "primary"},
+  "persistence": {"saves_paths": ["{{APPDATA}}/FusionExample/cyberpunk/saves"]},
+  "local_placement": "require_same_volume"
+}

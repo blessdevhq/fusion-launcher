@@ -1,34 +1,48 @@
 import { motion } from 'framer-motion';
 import { CollectionsPanel, HeroPanel, HomeRailsPanel, type CollectionTarget, type HomeRail } from '@/components/shell/CockpitPanels';
 import type { GameLibraryItem } from '@/lib/libraryStatus';
+import type { LibraryCollectionCounts, UnifiedLibraryItem } from '@/lib/unifiedLibrary';
+import type { FusionCatalogEntry } from '@/types/fusionSource';
 import type { CatalogGame } from '@/types/repository';
 import type { BusyAction } from './types';
+import { useI18n } from '@/components/I18nProvider';
+import { fusionText } from '@/lib/fusionText';
 
 interface HomeScreenProps {
   loading: boolean;
-  heroItem: GameLibraryItem | null;
+  heroItem: UnifiedLibraryItem | null;
   rails: HomeRail[];
-  collectionItems: GameLibraryItem[];
+  collectionCounts: LibraryCollectionCounts;
   busyAction: BusyAction;
   onPrimaryAction: (item: GameLibraryItem) => void;
   onOpenDetails: (game: CatalogGame) => void;
+  onOpenFusion: (game: FusionCatalogEntry) => void;
+  onLaunchFusion?: (game: FusionCatalogEntry) => void;
   onOpenCollection: (target: CollectionTarget) => void;
   onOpenSettings: () => void;
   onFocus: (focusId: string) => void;
+  fusionCount?: number;
+  onOpenFusionLibrary?: () => void;
 }
 
 export function HomeScreen({
   loading,
   heroItem,
   rails,
-  collectionItems,
+  collectionCounts,
   busyAction,
   onPrimaryAction,
   onOpenDetails,
+  onOpenFusion,
+  onLaunchFusion,
   onOpenCollection,
   onOpenSettings,
-  onFocus
+  onFocus,
+  fusionCount = 0,
+  onOpenFusionLibrary
 }: HomeScreenProps) {
+  const { locale } = useI18n();
+  const text = fusionText(locale);
   return (
     <motion.div
       initial={{ opacity: 0, y: 12 }}
@@ -45,6 +59,8 @@ export function HomeScreen({
             busyAction={busyAction}
             onPrimaryAction={onPrimaryAction}
             onOpenDetails={onOpenDetails}
+            onOpenFusion={onOpenFusion}
+            onLaunchFusion={onLaunchFusion}
             onOpenSettings={onOpenSettings}
             onFocus={onFocus}
           />
@@ -52,10 +68,12 @@ export function HomeScreen({
             rails={rails}
             onPrimaryAction={onPrimaryAction}
             onOpenDetails={onOpenDetails}
+            onOpenFusion={onOpenFusion}
             onFocus={onFocus}
           />
+          {fusionCount > 0 && <button type="button" onClick={onOpenFusionLibrary} onFocus={() => onFocus('fusion-library:open')} data-focus-id="fusion-library:open" data-focus-zone="home" data-testid="home-fusion-library" className="rh-mini-action rh-focusable justify-between">{text.catalog}<span>{fusionCount} →</span></button>}
           <CollectionsPanel
-            items={collectionItems}
+            counts={collectionCounts}
             onOpenCollection={onOpenCollection}
             onFocus={onFocus}
           />

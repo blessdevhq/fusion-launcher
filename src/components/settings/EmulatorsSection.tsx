@@ -147,6 +147,18 @@ export function EmulatorsSection({
                 <div className="flex flex-wrap justify-start gap-2 lg:justify-end">
                   {status.ready ? (
                     <>
+                      {!downloadable && (
+                        <button
+                          type="button"
+                          onClick={() => onSelect(profile)}
+                          disabled={busy !== null}
+                          className="rh-mini-action h-10"
+                          data-testid={`settings-select-${profile.platform}`}
+                        >
+                          {rowBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Wrench className="h-3.5 w-3.5" />}
+                          {t.common.select}
+                        </button>
+                      )}
                       <button
                         type="button"
                         onClick={() => onOpenFolder(profile)}
@@ -194,6 +206,7 @@ export function EmulatorsSection({
                       onClick={() => onSelect(profile)}
                       disabled={busy !== null}
                       className="rh-mini-action h-10"
+                      data-testid={`settings-select-${profile.platform}`}
                     >
                       {rowBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Wrench className="h-3.5 w-3.5" />}
                       {t.common.select}

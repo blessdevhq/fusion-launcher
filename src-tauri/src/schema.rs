@@ -119,11 +119,15 @@ pub struct RepositoryGame {
     pub launch: Option<GameLaunchConfig>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct GameLaunchConfig {
     pub args_template: Option<String>,
     pub preferred_file: Option<String>,
+    #[serde(default)]
+    pub inject_mods: Vec<String>,
+    #[serde(default)]
+    pub shader_cache_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -386,6 +390,8 @@ pub struct GameDownloadStartReport {
 #[serde(rename_all = "camelCase")]
 pub struct TorrentDownloadRecord {
     pub game_id: String,
+    pub attempt_id: Option<String>,
+    pub run_id: Option<u64>,
     pub subject_type: Option<String>,
     pub display_name: Option<String>,
     /// When set, this download is a child of the given game install (e.g. an
@@ -560,12 +566,14 @@ pub struct ProfileSystemFileRequirement {
     pub notes: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PlatformSetupLaunch {
     pub args_template: String,
     pub working_directory: Option<String>,
     pub preferred_file: Option<String>,
+    #[serde(default)]
+    pub allowed_flags: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]

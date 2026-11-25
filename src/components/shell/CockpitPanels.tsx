@@ -12,24 +12,35 @@ import {
   Play,
   RotateCw
 } from 'lucide-react';
-import { GameArt, GamePoster } from './GamePoster';
+import { GameArt, GamePoster, FusionGamePoster } from './GamePoster';
 import { useI18n } from '../I18nProvider';
 import { displayProductText } from '../../lib/brandText.ts';
 import { PLATFORM_LABELS } from '../../types/platform.ts';
 import type { GameLibraryItem, LibraryFilter, LibrarySort } from '../../lib/libraryStatus.ts';
 import type { CatalogGame } from '../../types/repository.ts';
+import { fusionGameKey, type FusionCatalogEntry } from '../../types/fusionSource.ts';
+import {
+  buildUnifiedLibraryItems,
+  countUnifiedLibraryItems,
+  libraryPlatformLabel,
+  type LibraryCollectionCounts,
+  type UnifiedLibraryItem
+} from '../../lib/unifiedLibrary.ts';
 
 export interface CollectionTarget {
   filter: LibraryFilter;
   query: string;
   sort: LibrarySort;
+  platform?: string | null;
 }
 
 interface HeroPanelProps {
-  heroItem: GameLibraryItem | null;
+  heroItem: UnifiedLibraryItem | null;
   busyAction: string | null;
   onPrimaryAction: (item: GameLibraryItem) => void;
   onOpenDetails: (game: CatalogGame) => void;
+  onOpenFusion: (game: FusionCatalogEntry) => void;
+  onLaunchFusion?: (game: FusionCatalogEntry) => void;
   onOpenSettings: () => void;
   onFocus: (focusId: string) => void;
 }
@@ -38,7 +49,7 @@ export interface HomeRail {
   title: string;
   testId: string;
   zone: string;
-  items: GameLibraryItem[];
+  items: UnifiedLibraryItem[];
 }
 
 export function HeroPanel({
@@ -46,6 +57,8 @@ export function HeroPanel({
   busyAction,
   onPrimaryAction,
   onOpenDetails,
+  onOpenFusion,
+  onLaunchFusion,
   onOpenSettings,
   onFocus
 }: HeroPanelProps) {
@@ -73,35 +86,107 @@ export function HeroPanel({
     );
   }
 
-  const progressVisible = heroItem.isDownloading || heroItem.isPaused || heroItem.hasError
-    || (heroItem.progressPercent > 0 && heroItem.progressPercent < 100);
+  if (heroItem.kind === 'fusion_source') {
+    const progressVisible = heroItem.isDownloading || heroItem.isPaused || heroItem.hasError
+      || (heroItem.progressPercent > 0 && heroItem.progressPercent < 100);
+    const metaItems = [
+      `${t.shell.hero.status}: ${displayStatusLabel(heroItem.statusLabel, t)}`,
+      `${t.shell.hero.source}: ${displayProductText(heroItem.sourceName)}`,
+      progressVisible ? `${t.shell.hero.progress}: ${heroItem.progressPercent.toFixed(0)}%` : null
+    ].filter((item): item is string => Boolean(item));
+    const gameKey = encodeURIComponent(fusionGameKey(heroItem.game));
+    const platformText = libraryPlatformLabel(heroItem.platform) || 'PC';
+    const primaryLabel = heroItem.readyToPlay ? t.actions.Play : t.actions.Details;
+
+    return (
+      <section className="rh-hero-panel" data-testid="home-hero">
+        <div className="rh-hero-bg">
+          <GameArt
+            game={{
+              id: heroItem.key,
+              title: heroItem.title,
+              platform: heroItem.platform ?? '',
+              coverImageUrl: heroItem.game.coverUrl ?? undefined
+            }}
+            className="h-full w-full"
+            hero
+          />
+        </div>
+        <div className="rh-hero-scrim" />
+
+        <div className="rh-hero-content">
+          <div className="rh-hero-copy-stack">
+            <div className="rh-hero-kicker">
+              <span className="rh-platform-chip">{platformText}</span>
+              <span>v{heroItem.game.version}</span>
+              <span>/</span>
+              <span>{displayProductText(heroItem.sourceName)}</span>
+            </div>
+            <h1 className="rh-hero-title">
+              {displayProductText(heroItem.title)}
+            </h1>
+            <div className="rh-hero-actions">
+              <button
+                data-focus-id={`fusion-game:hero:${gameKey}`}
+                data-focus-zone="hero"
+                onFocus={() => onFocus(`fusion-game:hero:${gameKey}`)}
+                onClick={() => (heroItem.readyToPlay && onLaunchFusion ? onLaunchFusion(heroItem.game) : onOpenFusion(heroItem.game))}
+                disabled={busyAction !== null}
+                className="rh-primary-action rh-focusable"
+              >
+                {heroItem.readyToPlay ? <Play className="h-4 w-4" /> : <MoreHorizontal className="h-4 w-4" />}
+                {primaryLabel}
+              </button>
+              <button
+                data-focus-id={`fusion-game:hero-details:${gameKey}`}
+                data-focus-zone="hero"
+                onFocus={() => onFocus(`fusion-game:hero-details:${gameKey}`)}
+                onClick={() => onOpenFusion(heroItem.game)}
+                className="rh-square-action rh-focusable"
+                title={t.shell.hero.detailsTitle}
+              >
+                <MoreHorizontal className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="rh-hero-meta">
+              {metaItems.map((item) => <span key={item}>{item}</span>)}
+            </div>
+          </div>
+        </div>
+      </section>
+    );
+  }
+
+  const legacyHero = heroItem.item;
+  const progressVisible = legacyHero.isDownloading || legacyHero.isPaused || legacyHero.hasError
+    || (legacyHero.progressPercent > 0 && legacyHero.progressPercent < 100);
   const metaItems = [
-    `${t.shell.hero.status}: ${displayStatusLabel(heroItem.statusLabel, t)}`,
-    `${t.shell.hero.source}: ${displayProductText(heroItem.game.repositoryName)}`,
-    progressVisible ? `${t.shell.hero.progress}: ${heroItem.progressPercent.toFixed(0)}%` : null
+    `${t.shell.hero.status}: ${displayStatusLabel(legacyHero.statusLabel, t)}`,
+    `${t.shell.hero.source}: ${displayProductText(legacyHero.game.repositoryName)}`,
+    progressVisible ? `${t.shell.hero.progress}: ${legacyHero.progressPercent.toFixed(0)}%` : null
   ].filter((item): item is string => Boolean(item));
-  const setupHint = heroItem.missingRequirements[0] ?? null;
+  const setupHint = legacyHero.missingRequirements[0] ?? null;
 
   return (
     <section className="rh-hero-panel" data-testid="home-hero">
       <div className="rh-hero-bg">
-        <GameArt game={heroItem.game} className="h-full w-full" hero />
+        <GameArt game={legacyHero.game} className="h-full w-full" hero />
       </div>
       <div className="rh-hero-scrim" />
 
       <div className="rh-hero-content">
         <div className="rh-hero-copy-stack">
           <div className="rh-hero-kicker">
-            <span className="rh-platform-chip">{heroItem.game.platform}</span>
-            <span>{heroItem.game.metadata?.releaseYear ?? t.shell.hero.mvpDemo}</span>
+            <span className="rh-platform-chip">{legacyHero.game.platform}</span>
+            <span>{legacyHero.game.metadata?.releaseYear ?? t.shell.hero.mvpDemo}</span>
             <span>/</span>
-            <span>{heroItem.game.metadata?.genres?.[0] ?? PLATFORM_LABELS[heroItem.game.platform]}</span>
+            <span>{legacyHero.game.metadata?.genres?.[0] ?? PLATFORM_LABELS[legacyHero.game.platform]}</span>
           </div>
           <h1 className="rh-hero-title">
-            {displayProductText(heroItem.game.title)}
+            {displayProductText(legacyHero.game.title)}
           </h1>
-          {heroItem.game.description && (
-            <p className="rh-hero-description">{displayProductText(heroItem.game.description)}</p>
+          {legacyHero.game.description && (
+            <p className="rh-hero-description">{displayProductText(legacyHero.game.description)}</p>
           )}
           {setupHint && (
             <div className="rh-hero-alert">
@@ -111,21 +196,21 @@ export function HeroPanel({
           )}
           <div className="rh-hero-actions">
             <button
-              data-focus-id={`action:${encodeURIComponent(heroItem.game.id)}`}
+              data-focus-id={`action:${encodeURIComponent(legacyHero.game.id)}`}
               data-focus-zone="hero"
-              onFocus={() => onFocus(`action:${encodeURIComponent(heroItem.game.id)}`)}
-              onClick={() => onPrimaryAction(heroItem)}
+              onFocus={() => onFocus(`action:${encodeURIComponent(legacyHero.game.id)}`)}
+              onClick={() => onPrimaryAction(legacyHero)}
               disabled={busyAction !== null}
               className="rh-primary-action rh-focusable"
             >
-              {heroItem.primaryAction === 'play' ? <Play className="h-4 w-4" /> : heroItem.primaryAction === 'download' || heroItem.primaryAction === 'import' ? <Download className="h-4 w-4" /> : <RotateCw className="h-4 w-4" />}
-              {displayActionLabel(heroItem.primaryActionLabel, t)}
+              {legacyHero.primaryAction === 'play' ? <Play className="h-4 w-4" /> : legacyHero.primaryAction === 'download' || legacyHero.primaryAction === 'import' ? <Download className="h-4 w-4" /> : <RotateCw className="h-4 w-4" />}
+              {displayActionLabel(legacyHero.primaryActionLabel, t)}
             </button>
             <button
-              data-focus-id={`details:${encodeURIComponent(heroItem.game.id)}`}
+              data-focus-id={`details:${encodeURIComponent(legacyHero.game.id)}`}
               data-focus-zone="hero"
-              onFocus={() => onFocus(`details:${encodeURIComponent(heroItem.game.id)}`)}
-              onClick={() => onOpenDetails(heroItem.game)}
+              onFocus={() => onFocus(`details:${encodeURIComponent(legacyHero.game.id)}`)}
+              onClick={() => onOpenDetails(legacyHero.game)}
               className="rh-square-action rh-focusable"
               title={t.shell.hero.detailsTitle}
             >
@@ -145,11 +230,13 @@ export function HomeRailsPanel({
   rails,
   onPrimaryAction,
   onOpenDetails,
+  onOpenFusion,
   onFocus
 }: {
   rails: HomeRail[];
   onPrimaryAction: (item: GameLibraryItem) => void;
   onOpenDetails: (game: CatalogGame) => void;
+  onOpenFusion: (game: FusionCatalogEntry) => void;
   onFocus: (focusId: string) => void;
 }) {
   const visibleRails = rails.filter((rail) => rail.items.length > 0).slice(0, 4);
@@ -165,7 +252,9 @@ export function HomeRailsPanel({
           testId={rail.testId}
           items={rail.items}
           zone={rail.zone}
+          featured={rail.testId === 'home-rail-library'}
           onOpenDetails={onOpenDetails}
+          onOpenFusion={onOpenFusion}
           onPrimaryAction={onPrimaryAction}
           onFocus={onFocus}
         />
@@ -175,35 +264,33 @@ export function HomeRailsPanel({
 }
 
 export function CollectionsPanel({
-  items,
+  items = [],
+  counts,
   activeCollectionId = 'all',
   onOpenCollection,
   onFocus
 }: {
-  items: GameLibraryItem[];
+  items?: GameLibraryItem[];
+  counts?: LibraryCollectionCounts;
   activeCollectionId?: string | null;
   onOpenCollection: (target: CollectionTarget) => void;
   onFocus: (focusId: string) => void;
 }) {
   const { t } = useI18n();
-  const byPlatform = new Map<string, number>();
-  items.forEach((item) => byPlatform.set(item.game.platform, (byPlatform.get(item.game.platform) ?? 0) + 1));
-  const readyCount = items.filter((item) => item.readyToPlay).length;
-  const downloadCount = items.filter((item) => item.isDownloading || item.isPaused || item.hasError).length;
-  const missingCount = items.filter((item) => item.missingRequirements.length > 0).length;
+  const summary = counts ?? countUnifiedLibraryItems(buildUnifiedLibraryItems(items, []));
   const collectionCards: Array<{
     id: string;
     label: string;
     count: number;
     icon: LucideIcon;
   }> = [
-    { id: 'all', label: t.shell.collections.all, count: items.length, icon: FolderHeart },
-    { id: 'ready', label: t.shell.collections.ready, count: readyCount, icon: Play },
-    { id: 'downloads', label: t.shell.collections.downloads, count: downloadCount, icon: Download },
-    { id: 'missing', label: t.shell.collections.missing, count: missingCount, icon: RotateCw },
-    ...Array.from(byPlatform.entries()).slice(0, 6).map(([platform, count]) => ({
+    { id: 'all', label: t.shell.collections.all, count: summary.all, icon: FolderHeart },
+    { id: 'ready', label: t.shell.collections.ready, count: summary.ready, icon: Play },
+    { id: 'downloads', label: t.shell.collections.downloads, count: summary.downloading, icon: Download },
+    { id: 'missing', label: t.shell.collections.missing, count: summary.missing, icon: RotateCw },
+    ...summary.platforms.map(({ platform, count }) => ({
       id: `platform:${platform}`,
-      label: PLATFORM_LABELS[platform as keyof typeof PLATFORM_LABELS] ?? platform,
+      label: libraryPlatformLabel(platform),
       count,
       icon: Gamepad2
     }))
@@ -213,7 +300,7 @@ export function CollectionsPanel({
     <section className="rh-collections-panel" data-testid="collections-panel">
       <PanelTitle icon={FolderHeart} title={t.shell.collections.title} />
       <div className="rh-collections-grid">
-        {collectionCards.slice(0, 8).map((card) => {
+        {collectionCards.map((card) => {
           const Icon = card.icon;
           const focusId = `collection:${card.id}`;
           const active = activeCollectionId?.toLowerCase() === card.id.toLowerCase();
@@ -221,15 +308,17 @@ export function CollectionsPanel({
             <button
               key={card.label}
               data-testid="collection-card"
+              data-collection-id={card.id}
               data-focus-id={focusId}
               data-focus-zone="collections"
               onFocus={() => onFocus(focusId)}
               onClick={() => onOpenCollection(collectionTargetForId(card.id))}
+              aria-pressed={active}
               className={`rh-collection-card rh-focusable ${active ? 'rh-collection-card-active' : ''}`}
             >
               <Icon className="h-4 w-4" />
-              <span className="mt-3 block text-sm font-semibold">{card.label}</span>
-              <span className="mt-1 block text-xs text-white/48">{t.shell.collections.count(card.count)}</span>
+              <span>{card.label}</span>
+              <span className="rh-collection-count">{t.shell.collections.count(card.count)}</span>
             </button>
           );
         })}
@@ -240,21 +329,20 @@ export function CollectionsPanel({
 
 export function collectionTargetForId(id: string): CollectionTarget {
   if (id.startsWith('platform:')) {
-    return { filter: 'all', query: id.slice('platform:'.length), sort: 'title' };
+    return { filter: 'all', query: '', sort: 'title', platform: id.slice('platform:'.length) };
   }
-  if (id === 'ready') return { filter: 'all', query: 'ready to play', sort: 'status' };
+  if (id === 'ready') return { filter: 'ready', query: '', sort: 'status' };
   if (id === 'downloads') return { filter: 'downloading', query: '', sort: 'status' };
   if (id === 'missing') return { filter: 'missing', query: '', sort: 'status' };
   return { filter: 'all', query: '', sort: 'title' };
 }
 
 export function collectionIdForTarget(target: CollectionTarget): string | null {
-  const query = target.query.trim().toLowerCase();
-  if (target.filter === 'all' && query === '' && target.sort === 'title') return 'all';
-  if (target.filter === 'all' && query === 'ready to play' && target.sort === 'status') return 'ready';
-  if (target.filter === 'downloading' && query === '' && target.sort === 'status') return 'downloads';
-  if (target.filter === 'missing' && query === '' && target.sort === 'status') return 'missing';
-  if (target.filter === 'all' && query && target.sort === 'title') return `platform:${query}`;
+  if (target.platform) return `platform:${target.platform}`;
+  if (target.filter === 'all') return 'all';
+  if (target.filter === 'ready') return 'ready';
+  if (target.filter === 'downloading') return 'downloads';
+  if (target.filter === 'missing') return 'missing';
   return null;
 }
 
@@ -263,15 +351,19 @@ function MiniRail({
   testId,
   items,
   zone,
+  featured,
   onOpenDetails,
+  onOpenFusion,
   onPrimaryAction,
   onFocus
 }: {
   title: string;
   testId: string;
-  items: GameLibraryItem[];
+  items: UnifiedLibraryItem[];
   zone: string;
+  featured: boolean;
   onOpenDetails: (game: CatalogGame) => void;
+  onOpenFusion: (game: FusionCatalogEntry) => void;
   onPrimaryAction: (item: GameLibraryItem) => void;
   onFocus: (focusId: string) => void;
 }) {
@@ -338,7 +430,7 @@ function MiniRail({
   if (items.length === 0) return null;
 
   return (
-    <div className="rh-mini-rail" data-testid={testId}>
+    <div className={`rh-mini-rail ${featured ? 'rh-mini-rail-featured' : ''}`} data-testid={testId}>
       <div className="rh-mini-rail-header">
         <div className="rh-mini-rail-title">{title}</div>
         <div className="rh-mini-rail-actions">
@@ -372,12 +464,22 @@ function MiniRail({
       </div>
       <div className="rh-mini-rail-viewport">
         <div ref={trackRef} className="rh-mini-rail-track" onScroll={updateScrollState}>
-          {items.map((item) => (
-            <GamePoster
-              key={`${zone}:${item.game.id}`}
-              item={item}
+          {items.map((entry) => entry.kind === 'fusion_source' ? (
+            <FusionGamePoster
+              key={`${zone}:${entry.key}`}
+              item={entry}
               compact
-              focusId={`game:${zone}:${encodeURIComponent(item.game.id)}`}
+              focusId={`fusion-game:${zone}:${encodeURIComponent(fusionGameKey(entry.game))}`}
+              zone={zone}
+              onOpen={onOpenFusion}
+              onFocus={onFocus}
+            />
+          ) : (
+            <GamePoster
+              key={`${zone}:${entry.key}`}
+              item={entry.item}
+              compact
+              focusId={`game:${zone}:${encodeURIComponent(entry.item.game.id)}`}
               zone={zone}
               onOpen={onOpenDetails}
               onAction={onPrimaryAction}

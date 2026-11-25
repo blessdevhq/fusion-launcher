@@ -16,6 +16,7 @@ npx playwright install chromium
 npm run qa
 npm run mvp:smoke
 npm run mvp:visual
+npm run marketing:audit
 npm run mvp:release:windows
 git diff --check
 ```

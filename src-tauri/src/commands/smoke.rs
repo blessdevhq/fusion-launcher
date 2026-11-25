@@ -4,6 +4,15 @@ pub(crate) fn run_package_smoke(data_dir: &Path) -> Result<(), String> {
     let db_path = data_dir.join("fusion-launcher.db");
     let mut store = RepositoryStore::open(&db_path)?;
 
+    let resolved_steamgriddb_key = crate::scrapers::steamgriddb::resolve_api_key(None)
+        .ok_or_else(|| "Package smoke expected a built-in SteamGridDB key.".to_string())?;
+    if !matches!(
+        resolved_steamgriddb_key.source,
+        crate::scrapers::steamgriddb::ApiKeySource::BuiltIn
+    ) {
+        return Err("Package smoke expected SteamGridDB key source to be built-in.".to_string());
+    }
+
     let demo_repo = builtin_demo::repository_schema()?;
     builtin_demo::verify_embedded_assets(&demo_repo)?;
     store.store_repository(builtin_demo::BUILTIN_DEMO_REPOSITORY_URL, &demo_repo)?;
