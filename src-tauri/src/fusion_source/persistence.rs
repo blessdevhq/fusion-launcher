@@ -509,7 +509,14 @@ impl PersistenceManager {
                         .map_err(|error| io_error("read workspace save link", target, error))?;
                     let expected = fs::canonicalize(&persistent)
                         .map_err(|error| io_error("resolve save slot", &persistent, error))?;
-                    if actual != expected && actual != persistent {
+                    let actual_plain = fs::symlink_metadata(&actual)
+                        .ok()
+                        .is_some_and(|meta| !is_reparse(&meta));
+                    if actual != expected
+                        && actual != persistent
+                        && !(actual_plain
+                            && fs::canonicalize(&actual).ok().as_ref() == Some(&expected))
+                    {
                         return Err(invalid(
                             "Workspace save link points outside its recorded slot.",
                         ));
@@ -1420,5 +1427,75 @@ mod tests {
         assert!(manager.snapshot_before_update().is_err());
         assert_eq!(fs::read(external.join("precious")).unwrap(), b"keep");
         unlink_workspace_save_link(&manager.root().join("data/escaped")).unwrap();
+    }
+
+    #[test]
+    fn manual_backup_accepts_canonical_link_target_and_rejects_chained_or_external_links() {
+        let (temporary, manager, roots, workspace) = setup();
+        let canonical_library = fs::canonicalize(temporary.path().join("library")).unwrap();
+        let canonical_manager = PersistenceManager::open(
+            &canonical_library,
+            &QualifiedGameId {
+                source_id: "source".into(),
+                game_id: "game".into(),
+            },
+        )
+        .unwrap();
+        let spec = PersistenceSpec {
+            saves_paths: vec!["workspace/saves".into()],
+        };
+        let bindings = canonical_manager
+            .prepare(&workspace, &spec, &roots)
+            .unwrap();
+        canonical_manager
+            .bind_workspace(&workspace, &bindings)
+            .unwrap();
+        let save_dir = workspace.join("saves");
+        fs::write(save_dir.join("slot.dat"), b"canonical-alias-save").unwrap();
+
+        canonical_manager
+            .snapshot_manually(&workspace, &bindings, &Cancellation::default())
+            .unwrap();
+
+        // Reject links whose raw reparse target is itself another reparse point
+        // (workspace/saves -> chain -> persistent).
+        unlink_workspace_save_link(&save_dir).unwrap();
+        let chain = temporary.path().join("chain");
+        create_directory_link(&bindings.bindings[0].persistent_path, &chain).unwrap();
+        #[cfg(windows)]
+        {
+            let created = std::process::Command::new("cmd")
+                .arg("/C")
+                .arg("mklink")
+                .arg("/J")
+                .arg(&save_dir)
+                .arg(&chain)
+                .output()
+                .unwrap();
+            assert!(
+                created.status.success(),
+                "{}",
+                String::from_utf8_lossy(&created.stderr)
+            );
+            let chained_err = canonical_manager
+                .snapshot_manually(&workspace, &bindings, &Cancellation::default())
+                .unwrap_err();
+            assert_eq!(chained_err.code, ErrorCode::PersistenceConflict);
+            unlink_workspace_save_link(&save_dir).unwrap();
+        }
+        unlink_workspace_save_link(&chain).unwrap();
+
+        // Reject links pointing outside the recorded persistent save slot.
+        let external = temporary.path().join("external");
+        fs::create_dir(&external).unwrap();
+        fs::write(external.join("slot.dat"), b"outside").unwrap();
+        create_directory_link(&external, &save_dir).unwrap();
+        let external_err = canonical_manager
+            .snapshot_manually(&workspace, &bindings, &Cancellation::default())
+            .unwrap_err();
+        assert_eq!(external_err.code, ErrorCode::PersistenceConflict);
+        unlink_workspace_save_link(&save_dir).unwrap();
+
+        drop(manager);
     }
 }
