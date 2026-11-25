@@ -36,12 +36,37 @@ pub trait JobHandler: Send + Sync {
     ) -> Result<(), FusionError> {
         Ok(())
     }
+    fn validate_write_roots_for_request(
+        &self,
+        _request: &CreatorJobStartRequest,
+        project: &CreatorProgramProject,
+        bindings: Option<&SavedPrivateBindings>,
+        workspace: &Path,
+        release_cas: &Path,
+    ) -> Result<(), FusionError> {
+        self.validate_write_roots(project, bindings, workspace, release_cas)
+    }
     fn input_hashes(
         &self,
         project: &CreatorProgramProject,
         bindings: Option<&SavedPrivateBindings>,
     ) -> Result<BTreeMap<String, String>, FusionError>;
-    /// The runner has audited the selected release before calling this hook.
+    /// Defer the selected release and input audit until a worker owns the job.
+    fn deferred_input_audit(&self) -> bool {
+        false
+    }
+    fn input_hashes_checked(
+        &self,
+        project: &CreatorProgramProject,
+        bindings: Option<&SavedPrivateBindings>,
+        release: Option<&ReleaseContent>,
+        check: &dyn Fn() -> Result<(), FusionError>,
+    ) -> Result<BTreeMap<String, String>, FusionError> {
+        check()?;
+        let hashes = self.input_hashes_for_release(project, bindings, release)?;
+        check()?;
+        Ok(hashes)
+    }
     fn input_hashes_for_release(
         &self,
         project: &CreatorProgramProject,
@@ -195,7 +220,7 @@ fn lock<T>(mutex: &Mutex<T>) -> Result<MutexGuard<'_, T>, FusionError> {
 }
 
 /// Resolve existing aliases without creating missing workspace or CAS directories.
-fn prospective_root(path: &Path) -> std::io::Result<PathBuf> {
+pub(super) fn prospective_root(path: &Path) -> std::io::Result<PathBuf> {
     let mut existing = path;
     let mut missing = Vec::new();
     loop {
@@ -217,7 +242,7 @@ fn prospective_root(path: &Path) -> std::io::Result<PathBuf> {
     }
 }
 
-fn path_contains(parent: &Path, child: &Path) -> bool {
+pub(super) fn path_contains(parent: &Path, child: &Path) -> bool {
     #[cfg(windows)]
     {
         let mut child = child.components();
@@ -388,6 +413,17 @@ impl JobRunner {
         revision: u64,
         release_id: &str,
     ) -> Result<ReleaseContent, FusionError> {
+        self.read_release_content_checked(project_id, revision, release_id, &|| Ok(()))
+    }
+
+    fn read_release_content_checked(
+        &self,
+        project_id: &str,
+        revision: u64,
+        release_id: &str,
+        check: &dyn Fn() -> Result<(), FusionError>,
+    ) -> Result<ReleaseContent, FusionError> {
+        check()?;
         let (release, evidence) = {
             let store = lock(&self.0.store)?;
             let bytes: Vec<u8> = store.conn.query_row(
@@ -420,16 +456,24 @@ impl JobRunner {
             }
             (release, evidence)
         };
-        ReleaseReceipt::audit(&self.0.root, release, &evidence)
+        ReleaseReceipt::audit(&self.0.root, release, &evidence, check)
     }
     fn selected_release(
         &self,
         request: &CreatorJobStartRequest,
+        check: &dyn Fn() -> Result<(), FusionError>,
     ) -> Result<Option<ReleaseContent>, FusionError> {
         request
             .release_id
             .as_deref()
-            .map(|id| self.read_release_content(&request.project_id, request.project_revision, id))
+            .map(|id| {
+                self.read_release_content_checked(
+                    &request.project_id,
+                    request.project_revision,
+                    id,
+                    check,
+                )
+            })
             .transpose()
     }
     fn inputs(
@@ -450,7 +494,17 @@ impl JobRunner {
         handler: &dyn JobHandler,
         release: Option<&ReleaseContent>,
     ) -> Result<CreatorResumeStamp, FusionError> {
-        let mut hashes = handler.input_hashes_for_release(project, bindings, release)?;
+        self.stamp_checked(project, bindings, handler, release, &|| Ok(()))
+    }
+    fn stamp_checked(
+        &self,
+        project: &CreatorProgramProject,
+        bindings: Option<&SavedPrivateBindings>,
+        handler: &dyn JobHandler,
+        release: Option<&ReleaseContent>,
+        check: &dyn Fn() -> Result<(), FusionError>,
+    ) -> Result<CreatorResumeStamp, FusionError> {
+        let mut hashes = handler.input_hashes_checked(project, bindings, release, check)?;
         if !hashes.contains_key("executor_implementation")
             || hashes.values().any(|value| !valid_hash(value))
         {
@@ -493,15 +547,38 @@ impl JobRunner {
         let (project, bindings) = self.inputs(&request.project_id)?;
         validate_request(&project, &request)?;
         let workspace = self.workspace(&project.project_id);
-        handler.validate_write_roots(
+        handler.validate_write_roots_for_request(
+            &request,
             &project,
             bindings.as_ref(),
             &workspace,
             &self.release_cas(),
         )?;
         let lease = Lease::acquire(&workspace, "writer.lock")?;
-        let release = self.selected_release(&request)?;
-        let stamp = self.stamp(&project, bindings.as_ref(), &*handler, release.as_ref())?;
+        let deferred = handler.deferred_input_audit();
+        let release = if deferred {
+            None
+        } else {
+            self.selected_release(&request, &|| Ok(()))?
+        };
+        let stamp = if deferred {
+            CreatorResumeStamp {
+                project_revision: project.revision,
+                executor: project.program_descriptor.executor.clone(),
+                input_hashes: BTreeMap::from([
+                    (
+                        "program_descriptor".into(),
+                        canonical_hash(&project.program_descriptor)?,
+                    ),
+                    (
+                        "private_bindings".into(),
+                        canonical_hash(&bindings.as_ref())?,
+                    ),
+                ]),
+            }
+        } else {
+            self.stamp(&project, bindings.as_ref(), &*handler, release.as_ref())?
+        };
         let token = id();
         let job_id = format!("job-{}", id());
         let job = CreatorJob {
@@ -551,14 +628,28 @@ impl JobRunner {
             },
             lease,
             None,
+            deferred,
         );
         Ok(receipt)
     }
-    fn spawn(&self, context: JobContext, lease: Lease, resume: Option<ResumePoint>) {
+    fn spawn(
+        &self,
+        mut context: JobContext,
+        lease: Lease,
+        resume: Option<ResumePoint>,
+        deferred: bool,
+    ) {
         tauri::async_runtime::spawn_blocking(move || {
             let _lease = lease;
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 context.begin()?;
+                if deferred {
+                    if resume.is_some() {
+                        context.verify_resumed_stamp()?;
+                    } else {
+                        context.initialize_stamp()?;
+                    }
+                }
                 context.handler.run(context.clone(), resume)?;
                 context.check_cancelled()?;
                 context.recheck_stamp()
@@ -624,19 +715,65 @@ impl JobRunner {
         }
         let (project, bindings) = self.inputs(&request.project_id)?;
         validate_request(&project, &request)?;
-        handler.validate_write_roots(
+        handler.validate_write_roots_for_request(
+            &request,
             &project,
             bindings.as_ref(),
             &workspace,
             &self.release_cas(),
         )?;
         let lease = Lease::acquire(&workspace, "writer.lock")?;
-        let release = self.selected_release(&request)?;
-        let stamp = self.stamp(&project, bindings.as_ref(), &*handler, release.as_ref())?;
+        let deferred = handler.deferred_input_audit();
+        let (release, stamp) = if deferred {
+            if saved_stamp.project_revision != project.revision
+                || saved_stamp.executor != project.program_descriptor.executor
+                || !saved_stamp
+                    .input_hashes
+                    .contains_key("executor_implementation")
+                || !saved_stamp.input_hashes.contains_key("program_descriptor")
+                || !saved_stamp.input_hashes.contains_key("private_bindings")
+                || (request.release_id.is_some()
+                    && !saved_stamp.input_hashes.contains_key("selected_release"))
+                || project
+                    .program_descriptor
+                    .components
+                    .iter()
+                    .any(|component| {
+                        !saved_stamp
+                            .input_hashes
+                            .contains_key(&format!("component:{}", component.id))
+                    })
+                || project
+                    .program_descriptor
+                    .controls_profiles
+                    .iter()
+                    .any(|controls| {
+                        matches!(controls, ProgramControlsProfile::EdenParamPackageV1 { .. })
+                            && !saved_stamp
+                                .input_hashes
+                                .contains_key("capability:eden_param_package_v1")
+                    })
+                || saved_stamp
+                    .input_hashes
+                    .values()
+                    .any(|value| !valid_hash(value))
+            {
+                return Err(conflict());
+            }
+            {
+                let store = lock(&self.0.store)?;
+                current(&store, &project, &saved_stamp)?;
+            }
+            (None, saved_stamp)
+        } else {
+            let release = self.selected_release(&request, &|| Ok(()))?;
+            let stamp = self.stamp(&project, bindings.as_ref(), &*handler, release.as_ref())?;
+            if encode(&saved_stamp)? != encode(&stamp)? {
+                return Err(conflict());
+            }
+            (release, stamp)
+        };
         let encoded_stamp = encode(&stamp)?;
-        if encode(&saved_stamp)? != encoded_stamp {
-            return Err(conflict());
-        }
 
         let mut resume = None;
         let mut checkpoint_ids = std::collections::BTreeSet::new();
@@ -663,7 +800,8 @@ impl JobRunner {
             {
                 return Err(invalid());
             }
-            if checkpoint.boundary == CreatorCheckpointBoundary::ReleaseBuilt
+            if !deferred
+                && checkpoint.boundary == CreatorCheckpointBoundary::ReleaseBuilt
                 && checkpoint
                     .checkpoint_id
                     .starts_with(release_content::CHECKPOINT_PREFIX)
@@ -678,7 +816,7 @@ impl JobRunner {
                     project.revision,
                     &receipt.release_id,
                 )?;
-            } else if (!cfg!(test)
+            } else if ((deferred || !cfg!(test))
                 && checkpoint.boundary == CreatorCheckpointBoundary::ReleaseBuilt)
                 || !handler.validate_checkpoint(checkpoint, &evidence)?
             {
@@ -734,6 +872,7 @@ impl JobRunner {
             },
             lease,
             resume,
+            deferred,
         );
         Ok(receipt)
     }
@@ -858,6 +997,23 @@ impl JobContext {
         self.check_cancelled()?;
         Ok(value)
     }
+    /// Poll durable state in chunked I/O without locking SQLite on every read.
+    pub(super) fn with_work_checks<T>(
+        &self,
+        work: impl FnOnce(&dyn Fn() -> Result<(), FusionError>) -> Result<T, FusionError>,
+    ) -> Result<T, FusionError> {
+        self.check_cancelled()?;
+        let last = std::cell::Cell::new(std::time::Instant::now());
+        let result = work(&|| {
+            if last.get().elapsed() >= std::time::Duration::from_millis(100) {
+                self.check_cancelled()?;
+                last.set(std::time::Instant::now());
+            }
+            Ok(())
+        })?;
+        self.check_cancelled()?;
+        Ok(result)
+    }
     pub fn check_cancelled(&self) -> Result<(), FusionError> {
         let store = lock(&self.runner.0.store)?;
         let (job, token) = load(&store.conn, &self.job_id)?;
@@ -872,14 +1028,60 @@ impl JobContext {
         }
         current(&store, &self.project, &self.stamp)
     }
+    fn initialize_stamp(&mut self) -> Result<(), FusionError> {
+        self.progress("hashing_inputs", 0, None)?;
+        let bindings = self.private_bindings()?;
+        self.release =
+            self.with_work_checks(|check| self.runner.selected_release(&self.request, check))?;
+        let stamp = self.runner.stamp_checked(
+            &self.project,
+            bindings.as_ref(),
+            &*self.handler,
+            self.release.as_ref(),
+            &|| self.check_cancelled(),
+        )?;
+        self.check_cancelled()?;
+        {
+            let store = lock(&self.runner.0.store)?;
+            current(&store, &self.project, &self.stamp)?;
+            let updated = store.conn.execute(
+                "UPDATE creator_jobs SET stamp_json=?1 WHERE job_id=?2 AND run_token=?3 AND status='running'",
+                params![encode(&stamp)?, self.job_id, self.token],
+            ).map_err(|_| io())?;
+            if updated != 1 {
+                return Err(cancelled());
+            }
+        }
+        self.stamp = stamp;
+        Ok(())
+    }
+    fn verify_resumed_stamp(&mut self) -> Result<(), FusionError> {
+        self.progress("auditing_resume", 0, None)?;
+        let bindings = self.private_bindings()?;
+        self.release =
+            self.with_work_checks(|check| self.runner.selected_release(&self.request, check))?;
+        let actual = self.runner.stamp_checked(
+            &self.project,
+            bindings.as_ref(),
+            &*self.handler,
+            self.release.as_ref(),
+            &|| self.check_cancelled(),
+        )?;
+        if encode(&actual)? != encode(&self.stamp)? {
+            return Err(conflict());
+        }
+        self.check_cancelled()
+    }
     fn recheck_stamp(&self) -> Result<(), FusionError> {
         let (project, bindings) = self.runner.inputs(&self.project.project_id)?;
-        let release = self.runner.selected_release(&self.request)?;
-        if encode(&self.runner.stamp(
+        let release =
+            self.with_work_checks(|check| self.runner.selected_release(&self.request, check))?;
+        if encode(&self.runner.stamp_checked(
             &project,
             bindings.as_ref(),
             &*self.handler,
             release.as_ref(),
+            &|| self.check_cancelled(),
         )?)? != encode(&self.stamp)?
         {
             return Err(conflict());
@@ -926,7 +1128,125 @@ impl JobContext {
         if output.boundary == CreatorCheckpointBoundary::ReleaseBuilt && !cfg!(test) {
             return Err(release_content::integrity());
         }
-        self.commit_checkpoint(output, None)
+        self.commit_checkpoint(output, None, false)
+    }
+
+    pub(super) fn release_reports(
+        &self,
+        release_id: &str,
+    ) -> Result<Vec<CreatorReport>, FusionError> {
+        let store = lock(&self.runner.0.store)?;
+        let mut stmt = store
+            .conn
+            .prepare(
+                "SELECT report_json FROM creator_reports WHERE project_id=?1 AND project_revision=?2",
+            )
+            .map_err(|_| io())?;
+        let mut rows = stmt
+            .query(params![self.project.project_id, self.project.revision])
+            .map_err(|_| io())?;
+        let mut reports = Vec::new();
+        while let Some(row) = rows.next().map_err(|_| io())? {
+            let bytes: Vec<u8> = row.get(0).map_err(|_| invalid())?;
+            let report: CreatorReport = serde_json::from_slice(&bytes).map_err(|_| invalid())?;
+            if report.release_id == release_id {
+                reports.push(report);
+            }
+        }
+        Ok(reports)
+    }
+
+    pub(super) fn checkpoint_verified(
+        &self,
+        output: CheckpointOutput,
+    ) -> Result<CreatorCheckpoint, FusionError> {
+        let expected_kind = match self.progress_kind_expected() {
+            CreatorJobKind::Verify => CreatorReportKind::CleanInstall,
+            CreatorJobKind::VerifyHttps => CreatorReportKind::HttpsAcquisition,
+            _ => return Err(invalid()),
+        };
+        if output.boundary != CreatorCheckpointBoundary::VerificationCompleted
+            || !output.report.as_ref().is_some_and(|report| {
+                report.kind == expected_kind && report.status == CreatorReportStatus::Passed
+            })
+        {
+            return Err(invalid());
+        }
+        self.commit_checkpoint(output, None, true)
+    }
+
+    pub(super) fn checkpoint_exported(
+        &self,
+        evidence: Vec<u8>,
+    ) -> Result<CreatorCheckpoint, FusionError> {
+        if self.progress_kind_expected() != CreatorJobKind::Export {
+            return Err(invalid());
+        }
+        self.commit_checkpoint(
+            CheckpointOutput {
+                boundary: CreatorCheckpointBoundary::ExportCompleted,
+                evidence,
+                artifact_id: None,
+                release: None,
+                report: None,
+            },
+            None,
+            true,
+        )
+    }
+
+    fn progress_kind_expected(&self) -> CreatorJobKind {
+        if self.request.source_url.is_some() {
+            CreatorJobKind::VerifyHttps
+        } else if self.request.target_directory.is_some() {
+            CreatorJobKind::Export
+        } else if self.request.release_id.is_some() {
+            CreatorJobKind::Verify
+        } else {
+            CreatorJobKind::Build
+        }
+    }
+
+    pub(super) fn fail_with_report(
+        &self,
+        report: CreatorReport,
+        error: FusionError,
+    ) -> Result<(), FusionError> {
+        self.check_cancelled()?;
+        self.recheck_stamp()?;
+        let expected = match report.kind {
+            CreatorReportKind::CleanInstall => CreatorJobKind::Verify,
+            CreatorReportKind::HttpsAcquisition => CreatorJobKind::VerifyHttps,
+            _ => return Err(invalid()),
+        };
+        if report.status != CreatorReportStatus::Failed
+            || self
+                .request
+                .release_id
+                .as_ref()
+                .is_some_and(|id| *id != report.release_id)
+        {
+            return Err(invalid());
+        }
+        let store = lock(&self.runner.0.store)?;
+        let tx = rusqlite::Transaction::new_unchecked(&store.conn, TransactionBehavior::Immediate)
+            .map_err(|_| io())?;
+        let (mut job, token) = load(&tx, &self.job_id)?;
+        if token != self.token
+            || job.progress.status != CreatorJobStatus::Running
+            || job.progress.kind != expected
+        {
+            return Err(conflict());
+        }
+        current(&store, &self.project, &self.stamp)?;
+        publish_report_row(&tx, &mut job, &report, &self.project)?;
+        job.progress.status = CreatorJobStatus::Failed;
+        job.progress.phase = "failed".into();
+        job.progress.error = Some(error);
+        persist(&tx, &mut job, &token)?;
+        tx.commit().map_err(|_| io())?;
+        (self.runner.0.sink)(job.progress);
+        Ok(())
     }
 
     /// Commit manifest.json and artifacts/<id> from a direct child of the owned workspace.
@@ -946,8 +1266,14 @@ impl JobContext {
         if stage.components().count() != 1 {
             return Err(release_content::integrity());
         }
-        let evidence =
-            ReleaseReceipt::capture(&self.runner.0.root, &self.workspace.join(stage), &release)?;
+        let evidence = self.with_work_checks(|check| {
+            ReleaseReceipt::capture(
+                &self.runner.0.root,
+                &self.workspace.join(stage),
+                &release,
+                check,
+            )
+        })?;
         let checkpoint_id = release_content::checkpoint_id(&release.release_id);
         self.commit_checkpoint(
             CheckpointOutput {
@@ -958,6 +1284,7 @@ impl JobContext {
                 report: None,
             },
             Some(checkpoint_id),
+            false,
         )
     }
 
@@ -965,6 +1292,7 @@ impl JobContext {
         &self,
         output: CheckpointOutput,
         receipt_id: Option<String>,
+        final_verification: bool,
     ) -> Result<CreatorCheckpoint, FusionError> {
         self.check_cancelled()?;
         self.recheck_stamp()?;
@@ -1006,6 +1334,11 @@ impl JobContext {
         if token != self.token
             || job.progress.status != CreatorJobStatus::Running
             || job.checkpoints.len() >= 4096
+            || (final_verification
+                && !matches!(
+                    job.progress.kind,
+                    CreatorJobKind::Verify | CreatorJobKind::VerifyHttps | CreatorJobKind::Export
+                ))
         {
             return Err(conflict());
         }
@@ -1014,9 +1347,8 @@ impl JobContext {
         tx.execute("INSERT INTO creator_checkpoint_results(checkpoint_id,job_id,evidence) VALUES(?1,?2,?3)", params![checkpoint.checkpoint_id,self.job_id,output.evidence]).map_err(|_| io())?;
         job.progress.checkpoint_id = Some(checkpoint.checkpoint_id.clone());
         job.checkpoints.push(checkpoint.clone());
-        // A durable Build release is terminal. Cancellation or an edit after this
-        // transaction must not turn a successfully published release into a failure.
-        if receipt_backed && job.progress.kind == CreatorJobKind::Build {
+        // Final Build/Verify evidence and Completed share the same transaction.
+        if (receipt_backed && job.progress.kind == CreatorJobKind::Build) || final_verification {
             job.progress.status = CreatorJobStatus::Completed;
             job.progress.phase = "completed".into();
         }
@@ -1087,27 +1419,37 @@ fn publish(
         job.progress.release_id = Some(release.release_id.clone());
     }
     if let Some(report) = &output.report {
-        let bytes: Vec<u8> = conn.query_row("SELECT release_json FROM creator_releases WHERE release_id=?1 AND project_id=?2 AND project_revision=?3", params![report.release_id,project.project_id,project.revision], |r| r.get(0)).map_err(|_| invalid())?;
-        let release: CreatorRelease = serde_json::from_slice(&bytes).map_err(|_| invalid())?;
-        let build = project
-            .program_descriptor
-            .build_profiles
-            .iter()
-            .find(|p| p.id == report.build_profile_id)
-            .ok_or_else(invalid)?;
-        if report.report_id.is_empty()
-            || report.project_revision != project.revision
-            || report.executor != project.program_descriptor.executor
-            || report.release_blake3 != release.manifest_blake3
-            || !build
-                .controls_profile_ids
-                .contains(&report.controls_profile_id)
-        {
-            return Err(invalid());
-        }
-        conn.execute("INSERT INTO creator_reports(report_id,project_id,project_revision,report_json) VALUES(?1,?2,?3,?4)", params![report.report_id,project.project_id,project.revision,encode(report)?]).map_err(|_| io())?;
-        job.report_ids.push(report.report_id.clone());
-        job.progress.release_id = Some(report.release_id.clone());
+        publish_report_row(conn, job, report, project)?;
     }
+    Ok(())
+}
+
+fn publish_report_row(
+    conn: &Connection,
+    job: &mut CreatorJob,
+    report: &CreatorReport,
+    project: &CreatorProgramProject,
+) -> Result<(), FusionError> {
+    let bytes: Vec<u8> = conn.query_row("SELECT release_json FROM creator_releases WHERE release_id=?1 AND project_id=?2 AND project_revision=?3", params![report.release_id,project.project_id,project.revision], |r| r.get(0)).map_err(|_| invalid())?;
+    let release: CreatorRelease = serde_json::from_slice(&bytes).map_err(|_| invalid())?;
+    let build = project
+        .program_descriptor
+        .build_profiles
+        .iter()
+        .find(|p| p.id == report.build_profile_id)
+        .ok_or_else(invalid)?;
+    if report.report_id.is_empty()
+        || report.project_revision != project.revision
+        || report.executor != project.program_descriptor.executor
+        || report.release_blake3 != release.manifest_blake3
+        || !build
+            .controls_profile_ids
+            .contains(&report.controls_profile_id)
+    {
+        return Err(invalid());
+    }
+    conn.execute("INSERT INTO creator_reports(report_id,project_id,project_revision,report_json) VALUES(?1,?2,?3,?4)", params![report.report_id,project.project_id,project.revision,encode(report)?]).map_err(|_| io())?;
+    job.report_ids.push(report.report_id.clone());
+    job.progress.release_id = Some(report.release_id.clone());
     Ok(())
 }

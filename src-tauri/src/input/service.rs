@@ -183,6 +183,23 @@ impl Session {
     }
 }
 
+#[derive(Clone)]
+pub(crate) enum InputServiceHandle {
+    Static(&'static InputService),
+    #[cfg(test)]
+    Owned(Arc<InputService>),
+}
+
+impl InputServiceHandle {
+    pub(crate) fn as_ref(&self) -> &InputService {
+        match self {
+            Self::Static(service) => service,
+            #[cfg(test)]
+            Self::Owned(service) => service.as_ref(),
+        }
+    }
+}
+
 pub struct InputService {
     runtime: Mutex<Runtime>,
     session: Arc<Mutex<Option<Session>>>,
@@ -674,7 +691,7 @@ impl InputService {
         session.state.sequence = MAX_SEQUENCE;
         session.state.status = InputSessionStatus::Failed;
     }
-    pub(super) fn fixture_release_fault(
+    pub(crate) fn fixture_release_fault(
         &self,
         delay: Duration,
         suppress_ack: bool,
@@ -692,7 +709,7 @@ impl InputService {
             .map_err(unavailable)?;
         Ok(())
     }
-    pub(super) fn fixture_attach(&self) -> Result<String, FusionError> {
+    pub(crate) fn fixture_attach(&self) -> Result<String, FusionError> {
         let mut runtime = lock(&self.runtime)?;
         let id = Self::worker(&mut runtime)?
             .fixture_attach()
@@ -706,22 +723,22 @@ impl InputService {
             .0
             .clone())
     }
-    pub(super) fn fixture_button(&self, index: u8, value: bool) -> Result<(), FusionError> {
+    pub(crate) fn fixture_button(&self, index: u8, value: bool) -> Result<(), FusionError> {
         Self::worker(&mut *lock(&self.runtime)?)?
             .fixture_button(index, value)
             .map_err(unavailable)
     }
-    pub(super) fn fixture_axis(&self, index: u8, value: i16) -> Result<(), FusionError> {
+    pub(crate) fn fixture_axis(&self, index: u8, value: i16) -> Result<(), FusionError> {
         Self::worker(&mut *lock(&self.runtime)?)?
             .fixture_axis(index, value)
             .map_err(unavailable)
     }
-    pub(super) fn fixture_hat(&self, value: u8) -> Result<(), FusionError> {
+    pub(crate) fn fixture_hat(&self, value: u8) -> Result<(), FusionError> {
         Self::worker(&mut *lock(&self.runtime)?)?
             .fixture_hat(value)
             .map_err(unavailable)
     }
-    pub(super) fn fixture_detach(&self) -> Result<(), FusionError> {
+    pub(crate) fn fixture_detach(&self) -> Result<(), FusionError> {
         Self::worker(&mut *lock(&self.runtime)?)?
             .fixture_detach()
             .map_err(unavailable)

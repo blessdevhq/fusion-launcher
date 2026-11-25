@@ -82,6 +82,19 @@ export interface FusionExecutableTrust {
   trusted: boolean;
 }
 
+export interface FusionBuildProfileSummary {
+  id: string;
+  title: string;
+  controlsProfileIds: string[];
+}
+
+export interface FusionControlsProfileSummary {
+  id: string;
+  title: string;
+  kind: string;
+  device: string | null;
+}
+
 export interface FusionGameState {
   sourceId: string;
   gameId: string;
@@ -99,6 +112,8 @@ export interface FusionGameState {
   defaultRuntimeChannel: FusionRuntimeChannel | null;
   externalWorkspaceRoot: string | null;
   addons: FusionAddon[];
+  buildProfiles?: FusionBuildProfileSummary[];
+  controlsProfiles?: FusionControlsProfileSummary[];
   runtimeChannels: FusionRuntimeChannel[];
   userLayers: FusionUserLayer[];
   executables: FusionExecutableTrust[];

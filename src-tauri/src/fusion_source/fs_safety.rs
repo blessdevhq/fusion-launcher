@@ -6,7 +6,7 @@
 //! hardlink, including the immutable CAS object.
 
 use std::fs::{self, File, OpenOptions};
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -157,7 +157,7 @@ pub fn open_read(path: &Path) -> Result<File, FusionError> {
     Ok(file)
 }
 
-fn create_new(path: &Path) -> Result<File, FusionError> {
+pub(crate) fn create_new(path: &Path) -> Result<File, FusionError> {
     let mut options = OpenOptions::new();
     options.read(true).write(true).create_new(true);
     #[cfg(windows)]
@@ -174,6 +174,15 @@ fn create_new(path: &Path) -> Result<File, FusionError> {
 }
 
 pub fn copy_file(source: &Path, destination: &Path) -> Result<(), FusionError> {
+    copy_file_checked(source, destination, &|| Ok(()))
+}
+
+pub(crate) fn copy_file_checked(
+    source: &Path,
+    destination: &Path,
+    check: &dyn Fn() -> Result<(), FusionError>,
+) -> Result<(), FusionError> {
+    check()?;
     let _source_parent = guard(
         source
             .parent()
@@ -185,9 +194,12 @@ pub fn copy_file(source: &Path, destination: &Path) -> Result<(), FusionError> {
             FusionError::new(ErrorCode::InvalidPath, "Destination has no parent.")
         })?)?;
     let mut destination_file = create_new(destination)?;
-    let result = std::io::copy(&mut source_file, &mut destination_file)
-        .and_then(|_| destination_file.sync_all())
-        .map_err(|error| io_error("Copy file", destination, error));
+    let result = stream_copy_checked(&mut source_file, &mut destination_file, destination, check)
+        .and_then(|_| {
+            destination_file
+                .sync_all()
+                .map_err(|error| io_error("Sync copy", destination, error))
+        });
     if result.is_err() {
         #[cfg(windows)]
         let _ = windows::delete_handle(&destination_file);
@@ -195,6 +207,27 @@ pub fn copy_file(source: &Path, destination: &Path) -> Result<(), FusionError> {
         let _ = fs::remove_file(destination);
     }
     result
+}
+
+pub(crate) fn stream_copy_checked(
+    source: &mut impl Read,
+    destination: &mut impl Write,
+    output: &Path,
+    check: &dyn Fn() -> Result<(), FusionError>,
+) -> Result<(), FusionError> {
+    let mut buffer = [0u8; 128 * 1024];
+    loop {
+        check()?;
+        let count = match source.read(&mut buffer) {
+            Ok(0) => return Ok(()),
+            Ok(count) => count,
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(error) => return Err(io_error("Read copy input", output, error)),
+        };
+        destination
+            .write_all(&buffer[..count])
+            .map_err(|error| io_error("Write copy output", output, error))?;
+    }
 }
 
 static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
@@ -364,15 +397,25 @@ pub fn safe_remove_tree(root: &Path) -> Result<(), FusionError> {
 }
 
 pub fn list_plain_files(root: &Path) -> Result<Vec<(String, PathBuf)>, FusionError> {
+    list_plain_files_checked(root, &|| Ok(()))
+}
+
+pub(crate) fn list_plain_files_checked(
+    root: &Path,
+    check: &dyn Fn() -> Result<(), FusionError>,
+) -> Result<Vec<(String, PathBuf)>, FusionError> {
     fn walk(
         root: &Path,
         current: &Path,
         files: &mut Vec<(String, PathBuf)>,
+        check: &dyn Fn() -> Result<(), FusionError>,
     ) -> Result<(), FusionError> {
+        check()?;
         let _guard = guard(current)?;
         for entry in
             fs::read_dir(current).map_err(|error| io_error("List directory", current, error))?
         {
+            check()?;
             let path = entry
                 .map_err(|error| io_error("Read directory entry", current, error))?
                 .path();
@@ -380,7 +423,7 @@ pub fn list_plain_files(root: &Path) -> Result<Vec<(String, PathBuf)>, FusionErr
                 .map_err(|error| io_error("Inspect entry", &path, error))?;
             check_metadata(&metadata, &path)?;
             if metadata.is_dir() {
-                walk(root, &path, files)?;
+                walk(root, &path, files, check)?;
             } else {
                 let relative = path
                     .strip_prefix(root)
@@ -398,10 +441,11 @@ pub fn list_plain_files(root: &Path) -> Result<Vec<(String, PathBuf)>, FusionErr
         Ok(())
     }
     let mut files = Vec::new();
-    walk(root, root, &mut files)?;
+    walk(root, root, &mut files, check)?;
     files.sort_by(|left, right| left.0.cmp(&right.0));
     let mut unique = std::collections::BTreeSet::new();
     for (relative, _) in &files {
+        check()?;
         if !unique.insert(relative.to_lowercase()) {
             return Err(FusionError::new(
                 ErrorCode::InvalidPath,
@@ -749,6 +793,27 @@ mod windows {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cancelled_stream_copy_removes_partial_destination() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("original.bin");
+        let output = dir.path().join("output.bin");
+        let payload = vec![0x57; 1024 * 1024];
+        fs::write(&source, &payload).unwrap();
+        let calls = std::cell::Cell::new(0);
+        let error = copy_file_checked(&source, &output, &|| {
+            calls.set(calls.get() + 1);
+            if calls.get() == 4 {
+                return Err(FusionError::new(ErrorCode::Cancelled, "test cancellation"));
+            }
+            Ok(())
+        })
+        .expect_err("copy must check for cancellation between chunks");
+        assert_eq!(error.code, ErrorCode::Cancelled);
+        assert!(!output.exists());
+        assert_eq!(fs::read(source).unwrap(), payload);
+    }
 
     #[cfg(windows)]
     #[test]

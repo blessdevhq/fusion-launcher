@@ -64,6 +64,88 @@ fn terminal(runner: &JobRunner, id: &str) -> CreatorJob {
     }
 }
 struct Complete;
+struct PausedAudit {
+    entered: std::sync::mpsc::SyncSender<()>,
+    resume: Mutex<std::sync::mpsc::Receiver<()>>,
+    observed: std::sync::mpsc::SyncSender<Option<ErrorCode>>,
+    packing_entered: Arc<std::sync::atomic::AtomicBool>,
+}
+impl JobHandler for PausedAudit {
+    fn deferred_input_audit(&self) -> bool {
+        true
+    }
+    fn input_hashes(
+        &self,
+        _: &CreatorProgramProject,
+        _: Option<&SavedPrivateBindings>,
+    ) -> Result<BTreeMap<String, String>, FusionError> {
+        panic!("audit must not block the receipt");
+    }
+    fn input_hashes_checked(
+        &self,
+        project: &CreatorProgramProject,
+        bindings: Option<&SavedPrivateBindings>,
+        _: Option<&ReleaseContent>,
+        check: &dyn Fn() -> Result<(), FusionError>,
+    ) -> Result<BTreeMap<String, String>, FusionError> {
+        self.entered.send(()).unwrap();
+        self.resume
+            .lock()
+            .unwrap()
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap();
+        let result = check();
+        self.observed
+            .send(result.as_ref().err().map(|error| error.code))
+            .unwrap();
+        result?;
+        Complete.input_hashes(project, bindings)
+    }
+    fn validate_checkpoint(&self, _: &CreatorCheckpoint, _: &[u8]) -> Result<bool, FusionError> {
+        Ok(false)
+    }
+    fn run(&self, _: JobContext, _: Option<ResumePoint>) -> Result<(), FusionError> {
+        self.packing_entered
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn deferred_input_audit_can_be_cancelled_using_the_returned_receipt() {
+    let (_dir, runner, _) = setup();
+    let (entered, waiting) = std::sync::mpsc::sync_channel(1);
+    let (resume, barrier) = std::sync::mpsc::sync_channel(1);
+    let (observed, outcome) = std::sync::mpsc::sync_channel(1);
+    let packing_entered = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    runner
+        .register(
+            CreatorJobKind::Build,
+            Arc::new(PausedAudit {
+                entered,
+                resume: Mutex::new(barrier),
+                observed,
+                packing_entered: packing_entered.clone(),
+            }),
+        )
+        .unwrap();
+    let receipt = runner.start(CreatorJobKind::Build, request()).unwrap();
+    waiting.recv_timeout(Duration::from_secs(5)).unwrap();
+    assert_eq!(
+        runner.cancel(&receipt.job_id).unwrap().progress.status,
+        CreatorJobStatus::Cancelling
+    );
+    resume.send(()).unwrap();
+    assert_eq!(
+        outcome.recv_timeout(Duration::from_secs(5)).unwrap(),
+        Some(ErrorCode::Cancelled)
+    );
+    let job = terminal(&runner, &receipt.job_id);
+    assert_eq!(job.progress.status, CreatorJobStatus::Cancelled);
+    assert!(job.checkpoints.is_empty());
+    assert!(!packing_entered.load(std::sync::atomic::Ordering::Relaxed));
+}
+
 impl JobHandler for Complete {
     fn input_hashes(
         &self,
@@ -181,7 +263,7 @@ impl JobHandler for BuildBundle {
         std::fs::create_dir_all(stage.join("artifacts")).unwrap();
         std::fs::write(stage.join("manifest.json"), MANIFEST).unwrap();
         std::fs::write(stage.join("artifacts/runtime"), ARTIFACT).unwrap();
-        context.checkpoint_release(
+        let result = context.checkpoint_release(
             CreatorRelease {
                 release_id: RELEASE.into(),
                 project_id: context.project().project_id.clone(),
@@ -194,11 +276,85 @@ impl JobHandler for BuildBundle {
                 report_ids: vec![],
             },
             "build-output",
-        )?;
+        );
         // Destroy scratch bytes; readback must come from the published CAS copy.
         std::fs::remove_dir_all(stage).unwrap();
+        result?;
         Ok(())
     }
+}
+
+#[tokio::test]
+async fn cancelled_release_capture_commits_neither_checkpoint_nor_release() {
+    use crate::fusion_source::cas::{directory_digest, CasStore};
+    use std::fs;
+    let (dir, runner, _) = setup();
+    let input = tempfile::tempdir().unwrap();
+    fs::create_dir(input.path().join("artifacts")).unwrap();
+    fs::write(input.path().join("manifest.json"), MANIFEST).unwrap();
+    fs::write(input.path().join("artifacts/runtime"), ARTIFACT).unwrap();
+    let digest = directory_digest(input.path(), &|| Ok(())).unwrap();
+    let cas = CasStore::open(dir.path()).unwrap();
+    let held = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create_new(true)
+        .open(cas.root().join("locks").join(format!("{digest}.lock")))
+        .unwrap();
+    fs2::FileExt::lock_exclusive(&held).unwrap();
+    runner
+        .register(
+            CreatorJobKind::Build,
+            Arc::new(BuildBundle { bad_hash: false }),
+        )
+        .unwrap();
+    let receipt = runner.start(CreatorJobKind::Build, request()).unwrap();
+    let staging = cas.root().join("staging");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        if fs::read_dir(&staging)
+            .unwrap()
+            .any(|entry| entry.unwrap().path().join("data/manifest.json").is_file())
+        {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "release capture did not reach CAS staging"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(
+        runner.cancel(&receipt.job_id).unwrap().progress.status,
+        CreatorJobStatus::Cancelling
+    );
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let job = loop {
+        let job = runner.get(&receipt.job_id).unwrap();
+        if matches!(
+            job.progress.status,
+            CreatorJobStatus::Cancelled | CreatorJobStatus::Failed | CreatorJobStatus::Completed
+        ) {
+            break job;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "cancellation must finish before the competing writer unlocks"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    };
+    drop(held);
+    assert_eq!(job.progress.status, CreatorJobStatus::Cancelled);
+    assert!(job.progress.release_id.is_none());
+    assert!(job.checkpoints.is_empty());
+    let store = runner.store();
+    let store = store.lock().unwrap();
+    let count: usize = store.conn.query_row(
+        "SELECT (SELECT COUNT(*) FROM creator_releases) + (SELECT COUNT(*) FROM creator_checkpoint_results)", [], |row| row.get(0)
+    ).unwrap();
+    assert_eq!(count, 0);
+    assert_eq!(fs::read_dir(staging).unwrap().count(), 0);
+    assert!(!cas.root().join("objects").join(digest).exists());
 }
 
 struct VerifyBundle;
@@ -388,4 +544,203 @@ async fn metadata_only_release_cannot_authorize_selected_job() {
         ErrorCode::IntegrityViolation
     );
     assert!(events.lock().unwrap().is_empty());
+}
+
+const DEFERRED_RESUME_CHILD: &str = "FUSION_CREATOR_DEFERRED_RESUME_CHILD";
+
+struct DeferredResumeHandler {
+    entered: Option<std::sync::mpsc::SyncSender<()>>,
+    resume: Option<Mutex<std::sync::mpsc::Receiver<()>>>,
+    observed: Option<std::sync::mpsc::SyncSender<Option<ErrorCode>>>,
+    run_entered: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl JobHandler for DeferredResumeHandler {
+    fn deferred_input_audit(&self) -> bool {
+        true
+    }
+    fn input_hashes(
+        &self,
+        _: &CreatorProgramProject,
+        _: Option<&SavedPrivateBindings>,
+    ) -> Result<BTreeMap<String, String>, FusionError> {
+        panic!(
+            "deferred resume must re-audit inside the worker, not synchronously on start/resume"
+        );
+    }
+    fn input_hashes_checked(
+        &self,
+        project: &CreatorProgramProject,
+        bindings: Option<&SavedPrivateBindings>,
+        _: Option<&ReleaseContent>,
+        check: &dyn Fn() -> Result<(), FusionError>,
+    ) -> Result<BTreeMap<String, String>, FusionError> {
+        if let Some(entered) = &self.entered {
+            let _ = entered.send(());
+        }
+        if let Some(resume) = &self.resume {
+            resume
+                .lock()
+                .unwrap()
+                .recv_timeout(Duration::from_secs(5))
+                .unwrap();
+        }
+        let result = check();
+        if let Some(observed) = &self.observed {
+            let _ = observed.send(result.as_ref().err().map(|error| error.code));
+        }
+        result?;
+        Complete.input_hashes(project, bindings)
+    }
+    fn validate_checkpoint(
+        &self,
+        checkpoint: &CreatorCheckpoint,
+        evidence: &[u8],
+    ) -> Result<bool, FusionError> {
+        Ok(
+            checkpoint.boundary == CreatorCheckpointBoundary::ScanClassificationSaved
+                && evidence == b"complete scan and classification",
+        )
+    }
+    fn run(&self, context: JobContext, resume: Option<ResumePoint>) -> Result<(), FusionError> {
+        self.run_entered
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        if let Some(point) = resume {
+            assert_eq!(
+                point.checkpoint.boundary,
+                CreatorCheckpointBoundary::ScanClassificationSaved
+            );
+            context.progress("resumed", 2, Some(2))?;
+            return Ok(());
+        }
+        Complete.run(context, None)
+    }
+}
+
+#[tokio::test]
+async fn deferred_resume_reaudits_in_worker_and_can_be_cancelled_from_receipt() {
+    if let Some(root) = std::env::var_os(DEFERRED_RESUME_CHILD) {
+        let root = std::path::PathBuf::from(root);
+        let mut store = RepositoryStore::open(&root.join("library.db")).unwrap();
+        project_storage::save_project_bytes(
+            &mut store,
+            &serde_json::to_vec(&fixture(1)).unwrap(),
+            None,
+        )
+        .unwrap();
+        let runner = JobRunner::new(
+            Arc::new(Mutex::new(store)),
+            &root,
+            Arc::new(|progress| {
+                if progress.checkpoint_id.is_some() {
+                    std::process::exit(99);
+                }
+            }),
+        )
+        .unwrap();
+        runner
+            .register(
+                CreatorJobKind::Scan,
+                Arc::new(DeferredResumeHandler {
+                    entered: None,
+                    resume: None,
+                    observed: None,
+                    run_entered: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                }),
+            )
+            .unwrap();
+        runner.start(CreatorJobKind::Scan, request()).unwrap();
+        std::thread::sleep(Duration::from_secs(15));
+        panic!("child should have exited at checkpoint commit");
+    }
+
+    let spawn_interrupted = || -> (tempfile::TempDir, String) {
+        let dir = tempfile::tempdir().unwrap();
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "fusion_creator::runner_tests::deferred_resume_reaudits_in_worker_and_can_be_cancelled_from_receipt",
+                "--nocapture",
+            ])
+            .env(DEFERRED_RESUME_CHILD, dir.path())
+            .status()
+            .unwrap();
+        assert_eq!(status.code(), Some(99));
+        let store = RepositoryStore::open(&dir.path().join("library.db")).unwrap();
+        let job_id: String = store
+            .conn
+            .query_row("SELECT job_id FROM creator_jobs", [], |r| r.get(0))
+            .unwrap();
+        (dir, job_id)
+    };
+
+    // 1. Cancel during deferred worker re-audit using the receipt returned by resume().
+    {
+        let (dir, job_id) = spawn_interrupted();
+        let store = RepositoryStore::open(&dir.path().join("library.db")).unwrap();
+        let runner =
+            JobRunner::new(Arc::new(Mutex::new(store)), dir.path(), Arc::new(|_| {})).unwrap();
+        assert_eq!(
+            runner.get(&job_id).unwrap().progress.status,
+            CreatorJobStatus::Interrupted
+        );
+        let (entered, waiting) = std::sync::mpsc::sync_channel(1);
+        let (resume_tx, barrier) = std::sync::mpsc::sync_channel(1);
+        let (observed, outcome) = std::sync::mpsc::sync_channel(1);
+        let run_entered = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        runner
+            .register(
+                CreatorJobKind::Scan,
+                Arc::new(DeferredResumeHandler {
+                    entered: Some(entered),
+                    resume: Some(Mutex::new(barrier)),
+                    observed: Some(observed),
+                    run_entered: run_entered.clone(),
+                }),
+            )
+            .unwrap();
+        let receipt = runner.resume(&job_id).unwrap();
+        waiting.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_eq!(
+            runner.cancel(&receipt.job_id).unwrap().progress.status,
+            CreatorJobStatus::Cancelling
+        );
+        resume_tx.send(()).unwrap();
+        assert_eq!(
+            outcome.recv_timeout(Duration::from_secs(5)).unwrap(),
+            Some(ErrorCode::Cancelled)
+        );
+        let job = terminal(&runner, &receipt.job_id);
+        assert_eq!(job.progress.status, CreatorJobStatus::Cancelled);
+        assert!(!run_entered.load(std::sync::atomic::Ordering::SeqCst));
+    }
+
+    // 2. Happy path deferred resume re-audits in worker and completes.
+    {
+        let (dir, job_id) = spawn_interrupted();
+        let store = RepositoryStore::open(&dir.path().join("library.db")).unwrap();
+        let runner =
+            JobRunner::new(Arc::new(Mutex::new(store)), dir.path(), Arc::new(|_| {})).unwrap();
+        let run_entered = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        runner
+            .register(
+                CreatorJobKind::Scan,
+                Arc::new(DeferredResumeHandler {
+                    entered: None,
+                    resume: None,
+                    observed: None,
+                    run_entered: run_entered.clone(),
+                }),
+            )
+            .unwrap();
+        let receipt = runner.resume(&job_id).unwrap();
+        let job = terminal(&runner, &receipt.job_id);
+        assert_eq!(
+            job.progress.status,
+            CreatorJobStatus::Completed,
+            "{:?}",
+            job.progress.error
+        );
+        assert!(run_entered.load(std::sync::atomic::Ordering::SeqCst));
+    }
 }

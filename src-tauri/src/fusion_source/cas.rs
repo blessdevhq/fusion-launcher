@@ -59,6 +59,15 @@ impl CasStore {
     }
 
     pub fn import_directory(&self, source: &Path) -> Result<CasObject, FusionError> {
+        self.import_directory_checked(source, &|| Ok(()))
+    }
+
+    pub(crate) fn import_directory_checked(
+        &self,
+        source: &Path,
+        check: &dyn Fn() -> Result<(), FusionError>,
+    ) -> Result<CasObject, FusionError> {
+        check()?;
         let _source = fs_safety::guard(source)?;
         let _store = fs_safety::guard(&self.root)?;
         let canonical_source = source
@@ -74,23 +83,35 @@ impl CasStore {
                 "An import source must not contain the CAS store.",
             ));
         }
-        let inputs = fs_safety::list_plain_files(source)?;
+        let inputs = fs_safety::list_plain_files_checked(source, check)?;
         self.import(
             inputs
                 .iter()
                 .map(|(relative, path)| (relative.as_str(), path.as_path())),
+            check,
         )
     }
 
     pub fn import_file(&self, source: &Path, relative: &str) -> Result<CasObject, FusionError> {
+        self.import_file_checked(source, relative, &|| Ok(()))
+    }
+
+    pub(crate) fn import_file_checked(
+        &self,
+        source: &Path,
+        relative: &str,
+        check: &dyn Fn() -> Result<(), FusionError>,
+    ) -> Result<CasObject, FusionError> {
         fs_safety::validate_relative_path(relative)?;
-        self.import(std::iter::once((relative, source)))
+        self.import(std::iter::once((relative, source)), check)
     }
 
     fn import<'a>(
         &self,
         inputs: impl Iterator<Item = (&'a str, &'a Path)>,
+        check: &dyn Fn() -> Result<(), FusionError>,
     ) -> Result<CasObject, FusionError> {
+        check()?;
         let _store = fs_safety::guard(&self.root)?;
         let stage = self
             .root
@@ -108,21 +129,22 @@ impl CasStore {
             let _data = fs_safety::ensure_directory(&data)?;
             for (relative, input) in inputs {
                 let relative = fs_safety::validate_relative_path(relative)?;
-                fs_safety::copy_file(input, &data.join(relative))?;
+                fs_safety::copy_file_checked(input, &data.join(relative), check)?;
             }
             // All copy writers have closed before bytes and lengths are read.
-            let files = inventory_directory(&data)?;
+            let files = inventory_directory_checked(&data, check)?;
             let digest = inventory_digest(&files)?;
             let object = self.object_path(&digest)?;
-            let _object_lock = self.lock(&digest)?;
+            let _object_lock = self.lock_checked(&digest, check)?;
             if object
                 .try_exists()
                 .map_err(|error| io_error("Inspect CAS object", &object, error))?
             {
-                let existing = self.verify(&digest)?;
+                let existing = self.verify_checked(&digest, check)?;
                 return Ok(existing);
             }
             for file in &files {
+                check()?;
                 let path = data.join(fs_safety::validate_relative_path(&file.path)?);
                 let handle = fs_safety::open_read(&path)?;
                 if fs_safety::link_count(&handle)? != 1 {
@@ -164,7 +186,8 @@ impl CasStore {
                 .map_err(|error| io_error("Protect inventory", &inventory_path, error))?;
             drop(inventory_handle);
             // Read back the immutable staged data and metadata before publication.
-            verify_directory(&data, &files)?;
+            verify_directory_checked(&data, &files, check)?;
+            check()?;
             // Directory handles cannot deny DELETE while this directory is
             // renamed. The unique private stage and object lock remain owned.
         }
@@ -172,18 +195,19 @@ impl CasStore {
             serde_json::from_reader(fs_safety::open_read(&stage.join("inventory.json"))?)
                 .map_err(|error| io_error("Read completed inventory", &stage, error))?;
         // Retain the per-object lock across the final no-replace publication too.
-        let _object_lock = self.lock(&inventory.digest)?;
+        let _object_lock = self.lock_checked(&inventory.digest, check)?;
         let destination = self.object_path(&inventory.digest)?;
         if destination
             .try_exists()
             .map_err(|error| io_error("Inspect publication target", &destination, error))?
         {
-            return self.verify(&inventory.digest);
+            return self.verify_checked(&inventory.digest, check);
         }
         let _parent = fs_safety::guard(&self.root.join("objects"))?;
+        check()?;
         fs_safety::publish_directory(&stage, &destination)?;
         owned_stage.0 = None;
-        self.verify(&inventory.digest)
+        self.verify_checked(&inventory.digest, check)
     }
 
     fn object_path(&self, digest: &str) -> Result<PathBuf, FusionError> {
@@ -197,6 +221,15 @@ impl CasStore {
     /// corruption requires `verify` or a critical-file integrity check to detect.
     /// The returned root is derived from the store, never persisted absolute data.
     pub fn get(&self, digest: &str) -> Result<CasObject, FusionError> {
+        self.get_checked(digest, &|| Ok(()))
+    }
+
+    fn get_checked(
+        &self,
+        digest: &str,
+        check: &dyn Fn() -> Result<(), FusionError>,
+    ) -> Result<CasObject, FusionError> {
+        check()?;
         let object = self.object_path(digest)?;
         let _object = fs_safety::guard(&object)?;
         let manifest = object.join("inventory.json");
@@ -224,7 +257,7 @@ impl CasStore {
             ));
         }
         let root = object.join("data");
-        verify_structure(&root, &inventory.files)?;
+        verify_structure(&root, &inventory.files, check)?;
         Ok(CasObject {
             digest: digest.to_owned(),
             root,
@@ -236,13 +269,27 @@ impl CasStore {
     /// audit of every payload file. Publication and import reuse always take this
     /// full audit path; ordinary layer-cache access can use the cheaper `get`.
     pub fn verify(&self, digest: &str) -> Result<CasObject, FusionError> {
-        let object = self.get(digest)?;
+        self.verify_checked(digest, &|| Ok(()))
+    }
+
+    pub(crate) fn verify_checked(
+        &self,
+        digest: &str,
+        check: &dyn Fn() -> Result<(), FusionError>,
+    ) -> Result<CasObject, FusionError> {
+        check()?;
+        let object = self.get_checked(digest, check)?;
         let _root = fs_safety::guard(&object.root)?;
-        verify_directory(&object.root, &object.files)?;
+        verify_directory_checked(&object.root, &object.files, check)?;
         Ok(object)
     }
 
-    fn lock(&self, digest: &str) -> Result<File, FusionError> {
+    fn lock_checked(
+        &self,
+        digest: &str,
+        check: &dyn Fn() -> Result<(), FusionError>,
+    ) -> Result<File, FusionError> {
+        check()?;
         validate_hash(digest)?;
         let parent = self.root.join("locks");
         let _parent = fs_safety::guard(&parent)?;
@@ -271,9 +318,20 @@ impl CasStore {
                 .map_err(|error| io_error("Inspect CAS lock", &path, error))?,
             &path,
         )?;
-        fs2::FileExt::lock_exclusive(&lock)
-            .map_err(|error| io_error("Lock CAS object", &path, error))?;
-        Ok(lock)
+        let contended = fs2::lock_contended_error().raw_os_error();
+        loop {
+            match fs2::FileExt::try_lock_exclusive(&lock) {
+                Ok(()) => {
+                    check()?;
+                    return Ok(lock);
+                }
+                Err(error) if contended.is_some() && error.raw_os_error() == contended => {
+                    check()?;
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                }
+                Err(error) => return Err(io_error("Lock CAS object", &path, error)),
+            }
+        }
     }
 }
 
@@ -310,22 +368,41 @@ fn path_contains(parent: &Path, child: &Path) -> bool {
 }
 
 /// Hash a plain directory using the same checked inventory encoding as CAS import.
-pub(crate) fn directory_digest(root: &Path) -> Result<String, FusionError> {
+pub(crate) fn directory_digest(
+    root: &Path,
+    check: &dyn Fn() -> Result<(), FusionError>,
+) -> Result<String, FusionError> {
+    check()?;
     let _root = fs_safety::guard(root)?;
-    inventory_digest(&inventory_directory(root)?)
+    inventory_digest(&inventory_directory_checked(root, check)?)
 }
 
-fn inventory_directory(root: &Path) -> Result<Vec<CasFile>, FusionError> {
-    fs_safety::list_plain_files(root)?
+fn inventory_directory_checked(
+    root: &Path,
+    check: &dyn Fn() -> Result<(), FusionError>,
+) -> Result<Vec<CasFile>, FusionError> {
+    fs_safety::list_plain_files_checked(root, check)?
         .into_iter()
         .map(|(path, absolute)| {
+            check()?;
             let mut file = fs_safety::open_read(&absolute)?;
             let size = file
                 .metadata()
                 .map_err(|error| io_error("Inspect inventory file", &absolute, error))?
                 .len();
-            let blake3 = hash_reader(&mut file, DigestAlgorithm::Blake3)
-                .map_err(|error| io_error("Hash inventory file", &absolute, error))?;
+            let mut hasher = blake3::Hasher::new();
+            let mut buffer = [0u8; 128 * 1024];
+            loop {
+                check()?;
+                let size = file
+                    .read(&mut buffer)
+                    .map_err(|error| io_error("Hash inventory file", &absolute, error))?;
+                if size == 0 {
+                    break;
+                }
+                hasher.update(&buffer[..size]);
+            }
+            let blake3 = hasher.finalize().to_hex().to_string();
             Ok(CasFile { path, blake3, size })
         })
         .collect()
@@ -359,8 +436,12 @@ fn inventory_digest(files: &[CasFile]) -> Result<String, FusionError> {
     Ok(hasher.finalize().to_hex().to_string())
 }
 
-fn verify_directory(root: &Path, expected: &[CasFile]) -> Result<(), FusionError> {
-    let actual = inventory_directory(root)?;
+fn verify_directory_checked(
+    root: &Path,
+    expected: &[CasFile],
+    check: &dyn Fn() -> Result<(), FusionError>,
+) -> Result<(), FusionError> {
+    let actual = inventory_directory_checked(root, check)?;
     if actual != expected {
         return Err(FusionError::new(
             ErrorCode::IntegrityViolation,
@@ -370,8 +451,12 @@ fn verify_directory(root: &Path, expected: &[CasFile]) -> Result<(), FusionError
     Ok(())
 }
 
-fn verify_structure(root: &Path, expected: &[CasFile]) -> Result<(), FusionError> {
-    let actual = fs_safety::list_plain_files(root)?;
+fn verify_structure(
+    root: &Path,
+    expected: &[CasFile],
+    check: &dyn Fn() -> Result<(), FusionError>,
+) -> Result<(), FusionError> {
+    let actual = fs_safety::list_plain_files_checked(root, check)?;
     if actual.len() != expected.len() {
         return Err(FusionError::new(
             ErrorCode::IntegrityViolation,
@@ -379,6 +464,7 @@ fn verify_structure(root: &Path, expected: &[CasFile]) -> Result<(), FusionError
         ));
     }
     for ((relative, absolute), expected) in actual.iter().zip(expected) {
+        check()?;
         if relative != &expected.path {
             return Err(FusionError::new(
                 ErrorCode::IntegrityViolation,
@@ -414,13 +500,19 @@ pub(crate) fn validate_hash(value: &str) -> Result<(), FusionError> {
     Ok(())
 }
 
-fn hash_reader(file: &mut impl Read, algorithm: DigestAlgorithm) -> std::io::Result<String> {
+fn hash_reader(
+    file: &mut impl Read,
+    algorithm: DigestAlgorithm,
+    check: &dyn Fn() -> Result<(), FusionError>,
+    map_io: impl Fn(std::io::Error) -> FusionError,
+) -> Result<String, FusionError> {
     let mut buffer = [0u8; 128 * 1024];
     match algorithm {
         DigestAlgorithm::Blake3 => {
             let mut hasher = blake3::Hasher::new();
             loop {
-                let size = file.read(&mut buffer)?;
+                check()?;
+                let size = file.read(&mut buffer).map_err(&map_io)?;
                 if size == 0 {
                     break;
                 }
@@ -431,7 +523,8 @@ fn hash_reader(file: &mut impl Read, algorithm: DigestAlgorithm) -> std::io::Res
         DigestAlgorithm::Sha256 => {
             let mut hasher = Sha256::new();
             loop {
-                let size = file.read(&mut buffer)?;
+                check()?;
+                let size = file.read(&mut buffer).map_err(&map_io)?;
                 if size == 0 {
                     break;
                 }
@@ -443,17 +536,36 @@ fn hash_reader(file: &mut impl Read, algorithm: DigestAlgorithm) -> std::io::Res
 }
 
 pub fn hash_file(path: &Path, algorithm: DigestAlgorithm) -> Result<String, FusionError> {
+    hash_file_checked(path, algorithm, &|| Ok(()))
+}
+
+pub fn verify_digest(path: &Path, expected: &DigestSpec) -> Result<(), FusionError> {
+    verify_digest_checked(path, expected, &|| Ok(()))
+}
+
+pub(crate) fn hash_file_checked(
+    path: &Path,
+    algorithm: DigestAlgorithm,
+    check: &dyn Fn() -> Result<(), FusionError>,
+) -> Result<String, FusionError> {
+    check()?;
     let _parent =
         fs_safety::guard(path.parent().ok_or_else(|| {
             FusionError::new(ErrorCode::InvalidPath, "Hash input has no parent.")
         })?)?;
     let mut file = fs_safety::open_read(path)?;
-    hash_reader(&mut file, algorithm).map_err(|error| io_error("Hash file", path, error))
+    hash_reader(&mut file, algorithm, check, |error| {
+        io_error("Hash file", path, error)
+    })
 }
 
-pub fn verify_digest(path: &Path, expected: &DigestSpec) -> Result<(), FusionError> {
+pub(crate) fn verify_digest_checked(
+    path: &Path,
+    expected: &DigestSpec,
+    check: &dyn Fn() -> Result<(), FusionError>,
+) -> Result<(), FusionError> {
     validate_hash(&expected.value)?;
-    let actual = hash_file(path, expected.algorithm)?;
+    let actual = hash_file_checked(path, expected.algorithm, check)?;
     if actual != expected.value {
         return Err(FusionError::new(
             ErrorCode::IntegrityViolation,
@@ -468,6 +580,14 @@ pub fn verify_digest(path: &Path, expected: &DigestSpec) -> Result<(), FusionErr
 /// Hashes the retained descriptor, needed when publication must use exactly the
 /// bytes verified before a rename rather than reopening a mutable pathname.
 pub fn verify_open_digest(file: &mut File, expected: &DigestSpec) -> Result<(), FusionError> {
+    verify_open_digest_checked(file, expected, &|| Ok(()))
+}
+
+pub(crate) fn verify_open_digest_checked(
+    file: &mut File,
+    expected: &DigestSpec,
+    check: &dyn Fn() -> Result<(), FusionError>,
+) -> Result<(), FusionError> {
     validate_hash(&expected.value)?;
     file.seek(SeekFrom::Start(0)).map_err(|error| {
         FusionError::new(
@@ -475,7 +595,7 @@ pub fn verify_open_digest(file: &mut File, expected: &DigestSpec) -> Result<(), 
             format!("Seek verified file: {error}"),
         )
     })?;
-    let actual = hash_reader(file, expected.algorithm).map_err(|error| {
+    let actual = hash_reader(file, expected.algorithm, check, |error| {
         FusionError::new(
             ErrorCode::IntegrityViolation,
             format!("Hash verified file: {error}"),
@@ -493,6 +613,77 @@ pub fn verify_open_digest(file: &mut File, expected: &DigestSpec) -> Result<(), 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn contended_cas_lock_checks_cancel_before_writer_unlocks() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = CasStore::open(dir.path()).unwrap();
+        let digest = "f".repeat(64);
+        let held = store.lock_checked(&digest, &|| Ok(())).unwrap();
+        let (send, receive) = std::sync::mpsc::sync_channel(1);
+        let worker = std::thread::spawn(move || {
+            let entered = std::cell::Cell::new(false);
+            let result = store.lock_checked(&digest, &|| {
+                if entered.replace(true) {
+                    Err(FusionError::new(ErrorCode::Cancelled, "stop waiting"))
+                } else {
+                    Ok(())
+                }
+            });
+            send.send(result.map(|_| ()).map_err(|error| error.code))
+                .unwrap();
+        });
+        let observed = receive.recv_timeout(std::time::Duration::from_secs(3));
+        drop(held);
+        worker.join().unwrap();
+        assert_eq!(observed.unwrap(), Err(ErrorCode::Cancelled));
+    }
+
+    #[test]
+    fn final_cas_audit_checks_cancel_without_removing_published_object() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("input");
+        fs::create_dir(&input).unwrap();
+        fs::write(input.join("payload"), b"immutable payload").unwrap();
+        let digest = directory_digest(&input, &|| Ok(())).unwrap();
+        let store = CasStore::open(&dir.path().join("library")).unwrap();
+        let address = store.object_path(&digest).unwrap();
+        let error = store
+            .import_directory_checked(&input, &|| {
+                if address.exists() {
+                    Err(FusionError::new(
+                        ErrorCode::Cancelled,
+                        "stop after object publication",
+                    ))
+                } else {
+                    Ok(())
+                }
+            })
+            .unwrap_err();
+        assert_eq!(error.code, ErrorCode::Cancelled);
+        assert_eq!(store.verify(&digest).unwrap().digest, digest);
+        assert_eq!(
+            fs::read_dir(store.root().join("staging")).unwrap().count(),
+            0
+        );
+    }
+
+    #[test]
+    fn directory_digest_checks_cancellation_inside_a_single_large_file() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("payload"), vec![7u8; 1024 * 1024]).unwrap();
+        let calls = std::cell::Cell::new(0usize);
+        let actual = directory_digest(dir.path(), &|| {
+            calls.set(calls.get() + 1);
+            if calls.get() == 9 {
+                Err(FusionError::new(ErrorCode::Cancelled, "cancelled"))
+            } else {
+                Ok(())
+            }
+        });
+        assert_eq!(actual.unwrap_err().code, ErrorCode::Cancelled);
+        assert_eq!(calls.get(), 9);
+    }
 
     #[test]
     fn known_streaming_digest_vectors_and_mismatch() {

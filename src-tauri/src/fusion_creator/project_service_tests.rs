@@ -76,6 +76,47 @@ fn save_with_path(store: &mut RepositoryStore, project: &CreatorProgramProject, 
     .unwrap();
 }
 
+fn evidence_for(
+    store: &RepositoryStore,
+    project: &CreatorProgramProject,
+    release_id: &str,
+    id: &str,
+    build_profile_id: &str,
+    kind: CreatorReportKind,
+    status: CreatorReportStatus,
+) {
+    let manifest_blake3 = "b".repeat(64);
+    let release = CreatorRelease {
+        release_id: release_id.into(),
+        project_id: project.project_id.clone(),
+        project_revision: project.revision,
+        manifest_blake3: manifest_blake3.clone(),
+        artifact_hashes: BTreeMap::new(),
+        report_ids: vec![],
+    };
+    let report = CreatorReport {
+        report_id: id.into(),
+        release_id: release_id.into(),
+        release_blake3: manifest_blake3,
+        project_revision: project.revision,
+        kind,
+        status,
+        executor: project.program_descriptor.executor.clone(),
+        build_profile_id: build_profile_id.into(),
+        controls_profile_id: "native".into(),
+        environment: BTreeMap::from([("os".into(), "windows".into())]),
+        diagnostics: vec![],
+    };
+    store.conn.execute(
+        "INSERT OR IGNORE INTO creator_releases(release_id,project_id,project_revision,release_json) VALUES(?1,?2,?3,?4)",
+        params![release.release_id, release.project_id, release.project_revision, serde_json::to_vec(&release).unwrap()],
+    ).unwrap();
+    store.conn.execute(
+        "INSERT INTO creator_reports(report_id,project_id,project_revision,report_json) VALUES(?1,?2,?3,?4)",
+        params![report.report_id, project.project_id, project.revision, serde_json::to_vec(&report).unwrap()],
+    ).unwrap();
+}
+
 fn evidence(
     store: &RepositoryStore,
     project: &CreatorProgramProject,
@@ -83,36 +124,15 @@ fn evidence(
     kind: CreatorReportKind,
     status: CreatorReportStatus,
 ) {
-    let release_id = format!("release-{id}");
-    let release = CreatorRelease {
-        release_id: release_id.clone(),
-        project_id: project.project_id.clone(),
-        project_revision: project.revision,
-        manifest_blake3: "b".repeat(64),
-        artifact_hashes: BTreeMap::new(),
-        report_ids: vec![id.into()],
-    };
-    let report = CreatorReport {
-        report_id: id.into(),
-        release_id,
-        release_blake3: release.manifest_blake3.clone(),
-        project_revision: project.revision,
+    evidence_for(
+        store,
+        project,
+        &format!("release-{id}"),
+        id,
+        "windowed",
         kind,
         status,
-        executor: project.program_descriptor.executor.clone(),
-        build_profile_id: "windowed".into(),
-        controls_profile_id: "native".into(),
-        environment: BTreeMap::from([("os".into(), "windows".into())]),
-        diagnostics: vec![],
-    };
-    store.conn.execute(
-        "INSERT INTO creator_releases(release_id,project_id,project_revision,release_json) VALUES(?1,?2,?3,?4)",
-        params![release.release_id, release.project_id, release.project_revision, serde_json::to_vec(&release).unwrap()],
-    ).unwrap();
-    store.conn.execute(
-        "INSERT INTO creator_reports(report_id,project_id,project_revision,report_json) VALUES(?1,?2,?3,?4)",
-        params![report.report_id, project.project_id, project.revision, serde_json::to_vec(&report).unwrap()],
-    ).unwrap();
+    );
 }
 
 #[test]
@@ -293,7 +313,7 @@ fn private_binding_save_reopens_without_mutating_portable_project() {
 }
 
 #[test]
-fn service_list_aggregates_structure_only_and_failed_wins_for_current_revision() {
+fn service_list_requires_structure_and_clean_install_for_all_pairs_and_failed_wins() {
     let dir = tempfile::tempdir().unwrap();
     let mut store = open_store(&dir.path().join("library.db")).unwrap();
     let initial = project("project", 0);
@@ -309,11 +329,74 @@ fn service_list_aggregates_structure_only_and_failed_wins_for_current_revision()
         project_service::list(&store).unwrap()[0].verification_status,
         CreatorReportStatus::NotTested
     );
-    evidence(
+    // StructureIntegrity alone across all pairs must never report Passed.
+    evidence_for(
         &store,
         &initial,
-        "structure-pass",
+        "release-a",
+        "a-struct-windowed",
+        "windowed",
         CreatorReportKind::StructureIntegrity,
+        CreatorReportStatus::Passed,
+    );
+    evidence_for(
+        &store,
+        &initial,
+        "release-a",
+        "a-struct-fullscreen",
+        "fullscreen",
+        CreatorReportKind::StructureIntegrity,
+        CreatorReportStatus::Passed,
+    );
+    assert_eq!(
+        project_service::list(&store).unwrap()[0].verification_status,
+        CreatorReportStatus::NotTested
+    );
+    // CleanInstall on a different release B does not satisfy release A.
+    evidence_for(
+        &store,
+        &initial,
+        "release-b",
+        "b-clean-windowed",
+        "windowed",
+        CreatorReportKind::CleanInstall,
+        CreatorReportStatus::Passed,
+    );
+    evidence_for(
+        &store,
+        &initial,
+        "release-b",
+        "b-clean-fullscreen",
+        "fullscreen",
+        CreatorReportKind::CleanInstall,
+        CreatorReportStatus::Passed,
+    );
+    assert_eq!(
+        project_service::list(&store).unwrap()[0].verification_status,
+        CreatorReportStatus::NotTested
+    );
+    // Partial pairs on release A remain NotTested.
+    evidence_for(
+        &store,
+        &initial,
+        "release-a",
+        "a-clean-windowed",
+        "windowed",
+        CreatorReportKind::CleanInstall,
+        CreatorReportStatus::Passed,
+    );
+    assert_eq!(
+        project_service::list(&store).unwrap()[0].verification_status,
+        CreatorReportStatus::NotTested
+    );
+    // All declared pairs passing both StructureIntegrity and CleanInstall on release A -> Passed.
+    evidence_for(
+        &store,
+        &initial,
+        "release-a",
+        "a-clean-fullscreen",
+        "fullscreen",
+        CreatorReportKind::CleanInstall,
         CreatorReportStatus::Passed,
     );
     assert_eq!(
@@ -330,6 +413,19 @@ fn service_list_aggregates_structure_only_and_failed_wins_for_current_revision()
     assert_eq!(
         project_service::list(&store).unwrap()[0].verification_status,
         CreatorReportStatus::Passed
+    );
+    evidence_for(
+        &store,
+        &initial,
+        "release-a",
+        "a-clean-fail",
+        "windowed",
+        CreatorReportKind::CleanInstall,
+        CreatorReportStatus::Failed,
+    );
+    assert_eq!(
+        project_service::list(&store).unwrap()[0].verification_status,
+        CreatorReportStatus::Failed
     );
     evidence(
         &store,
@@ -356,13 +452,22 @@ fn service_list_never_borrows_another_projects_evidence() {
     let other = project("other", 0);
     save(&mut store, other.clone(), None);
     save(&mut store, project("target", 0), None);
-    evidence(
-        &store,
-        &other,
-        "other-report",
-        CreatorReportKind::StructureIntegrity,
-        CreatorReportStatus::Passed,
-    );
+    for (profile, kind) in [
+        ("windowed", CreatorReportKind::StructureIntegrity),
+        ("windowed", CreatorReportKind::CleanInstall),
+        ("fullscreen", CreatorReportKind::StructureIntegrity),
+        ("fullscreen", CreatorReportKind::CleanInstall),
+    ] {
+        evidence_for(
+            &store,
+            &other,
+            "other-release",
+            &format!("other-{profile}-{kind:?}"),
+            profile,
+            kind,
+            CreatorReportStatus::Passed,
+        );
+    }
     let rows = project_service::list(&store).unwrap();
     assert_eq!(rows[0].verification_status, CreatorReportStatus::Passed);
     assert_eq!(rows[1].verification_status, CreatorReportStatus::NotTested);

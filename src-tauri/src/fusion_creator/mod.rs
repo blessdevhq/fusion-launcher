@@ -2,6 +2,7 @@
 pub mod bridge;
 mod build;
 pub mod declarative;
+mod export;
 pub mod input;
 pub mod jobs;
 pub(crate) mod jobs_schema;
@@ -9,6 +10,8 @@ pub mod profiles;
 pub(crate) mod project_service;
 pub(crate) mod project_storage;
 pub mod projection;
+mod verify;
+mod verify_https;
 
 #[cfg(test)]
 mod jobs_tests;

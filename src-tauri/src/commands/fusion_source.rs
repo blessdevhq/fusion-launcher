@@ -230,14 +230,21 @@ impl FusionBridge {
         let progress = self.0.progress.clone();
         let environment = self.0.environment.clone();
         let service = blocking(move || {
-            FusionService::open(
+            let service = FusionService::open(
                 &library,
                 storage.clone(),
                 Arc::new(DesktopSourceTransport::new(storage.clone())),
                 progress,
                 environment,
             )?
-            .with_host_adapters(adapters)
+            .with_host_adapters(adapters)?;
+            #[cfg(windows)]
+            let service = if let Ok(input) = crate::input::ipc::service() {
+                service.with_static_input_service(input)?
+            } else {
+                service
+            };
+            Ok::<_, FusionError>(service)
         })
         .await?;
         self.0

@@ -15,7 +15,7 @@ use crate::fusion_source::program_schema::{
 use crate::storage::RepositoryStore;
 use rusqlite::params;
 use serde::de::DeserializeOwned;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 fn invalid_stored() -> FusionError {
@@ -301,7 +301,9 @@ fn verification_status(
     let mut rows = statement
         .query(params![project.project_id, project.revision])
         .map_err(sql_error)?;
-    let mut status = CreatorReportStatus::NotTested;
+    let mut any_failed = false;
+    let mut structure_passed: BTreeMap<String, BTreeSet<(String, String)>> = BTreeMap::new();
+    let mut clean_install_passed: BTreeMap<String, BTreeSet<(String, String)>> = BTreeMap::new();
     while let Some(row) = rows.next().map_err(sql_error)? {
         let id: String = row.get(0).map_err(|_| invalid_stored())?;
         let bytes: Vec<u8> = row.get(1).map_err(|_| invalid_stored())?;
@@ -310,17 +312,54 @@ fn verification_status(
             return Err(invalid_stored());
         }
         validate_report_release(store, project, &report)?;
-        if report.kind == CreatorReportKind::StructureIntegrity {
-            match report.status {
-                CreatorReportStatus::Failed => status = CreatorReportStatus::Failed,
-                CreatorReportStatus::Passed if status != CreatorReportStatus::Failed => {
-                    status = CreatorReportStatus::Passed;
-                }
-                _ => {}
+        if !matches!(
+            report.kind,
+            CreatorReportKind::StructureIntegrity | CreatorReportKind::CleanInstall
+        ) {
+            continue;
+        }
+        match report.status {
+            CreatorReportStatus::Failed => any_failed = true,
+            CreatorReportStatus::Passed => {
+                let pair = (report.build_profile_id, report.controls_profile_id);
+                let map = match report.kind {
+                    CreatorReportKind::StructureIntegrity => &mut structure_passed,
+                    CreatorReportKind::CleanInstall => &mut clean_install_passed,
+                    _ => unreachable!(),
+                };
+                map.entry(report.release_id).or_default().insert(pair);
             }
+            CreatorReportStatus::NotTested => {}
         }
     }
-    Ok(status)
+    if any_failed {
+        return Ok(CreatorReportStatus::Failed);
+    }
+    let required_pairs: BTreeSet<(String, String)> = project
+        .program_descriptor
+        .build_profiles
+        .iter()
+        .flat_map(|build| {
+            build
+                .controls_profile_ids
+                .iter()
+                .map(move |controls_id| (build.id.clone(), controls_id.clone()))
+        })
+        .collect();
+    if !required_pairs.is_empty()
+        && structure_passed
+            .iter()
+            .any(|(release_id, structure_pairs)| {
+                required_pairs.is_subset(structure_pairs)
+                    && clean_install_passed
+                        .get(release_id)
+                        .is_some_and(|clean_pairs| required_pairs.is_subset(clean_pairs))
+            })
+    {
+        Ok(CreatorReportStatus::Passed)
+    } else {
+        Ok(CreatorReportStatus::NotTested)
+    }
 }
 
 fn validate_report_release(

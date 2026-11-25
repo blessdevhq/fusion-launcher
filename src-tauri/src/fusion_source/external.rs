@@ -50,8 +50,11 @@ pub async fn acquire(
     let abort_guard = AbortOnDrop(abort.clone());
     let result = tokio::task::spawn_blocking(move || {
         let _stage = stage;
-        cancellation.check()?;
-        abort.check()?;
+        let check = || {
+            cancellation.check()?;
+            abort.check()
+        };
+        check()?;
         // Stage ownership travels into this worker BEFORE transport hashing,
         // including when it is queued and its async caller is aborted.
         let _archive_parent = fs_safety::guard(&_stage.root)?;
@@ -65,15 +68,14 @@ pub async fn acquire(
                 "The external transfer returned inconsistent or oversized output.",
             ));
         }
-        super::cas::verify_digest(&artifact, &digest).map_err(|mut error| {
+        super::cas::verify_digest_checked(&artifact, &digest, &check).map_err(|mut error| {
             if error.code == ErrorCode::IntegrityViolation {
                 error.code = ErrorCode::TransportDigestMismatch;
                 error.message = "The downloaded container failed its expected digest.".into();
             }
             error
         })?;
-        cancellation.check()?;
-        abort.check()?;
+        check()?;
         // X's normalizer publishes before checking its expected inventory. Keep
         // that publication private so a bad pin cannot pollute the library CAS.
         let quarantine = CasStore::open(&_stage.root.join("quarantine"))?;
@@ -84,9 +86,8 @@ pub async fn acquire(
             &component,
             zip_limits,
         )?;
-        cancellation.check()?;
-        abort.check()?;
-        let committed = CasStore::open(&library)?.import_directory(&object.root)?;
+        check()?;
+        let committed = CasStore::open(&library)?.import_directory_checked(&object.root, &check)?;
         Ok(LayerInput::Cas {
             digest: committed.digest,
             runtime_lock: None,

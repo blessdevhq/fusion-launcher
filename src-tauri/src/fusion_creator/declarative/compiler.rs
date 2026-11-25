@@ -49,11 +49,19 @@ impl CompiledProgram {
     }
 }
 
-pub fn compile_descriptor(
+fn validate_inventories<'a>(
     descriptor: &ProgramDescriptor,
-    inventories: &[ProjectionLayer],
-) -> Result<CompiledProgram, FusionError> {
-    validate_descriptor_metadata(descriptor)?;
+    inventories: &'a [ProjectionLayer],
+    allowed_layers: Option<&[String]>,
+) -> Result<BTreeMap<&'a str, &'a ProjectionLayer>, FusionError> {
+    let expected: BTreeSet<&str> = match allowed_layers {
+        Some(allowed) => allowed.iter().map(String::as_str).collect(),
+        None => descriptor
+            .components
+            .iter()
+            .map(|c| c.layer_id.as_str())
+            .collect(),
+    };
     // Filtering before binding would hide missing, duplicate or foreign inputs.
     let mut inputs = BTreeMap::new();
     for layer in inventories {
@@ -62,6 +70,11 @@ pub fn compile_descriptor(
             .iter()
             .find(|c| c.layer_id == layer.layer_id)
             .ok_or_else(|| invalid("An inventory references an undeclared component layer."))?;
+        if allowed_layers.is_some() && !expected.contains(layer.layer_id.as_str()) {
+            return Err(invalid(
+                "An inventory references an unselected component layer.",
+            ));
+        }
         if layer.mount_path != component.mount_path
             || inputs.insert(layer.layer_id.as_str(), layer).is_some()
         {
@@ -69,7 +82,7 @@ pub fn compile_descriptor(
                 "Inventory layer/mount identity differs from the descriptor.",
             ));
         }
-        // Unselected components must also contain safe inventories.
+        // Unselected/component inputs must also contain safe inventories.
         for file in &layer.verified_inventory {
             safe_path(&file.path)?;
         }
@@ -79,32 +92,57 @@ pub fn compile_descriptor(
             rules: &[],
         })?;
     }
-    if inputs.len() != descriptor.components.len() {
-        return Err(invalid(
-            "Every descriptor component requires a verified inventory.",
-        ));
+    if inputs.len() != expected.len() {
+        return Err(invalid(if allowed_layers.is_some() {
+            "Every selected build profile component requires a verified inventory."
+        } else {
+            "Every descriptor component requires a verified inventory."
+        }));
     }
-    let rules: Vec<_> = descriptor
+    Ok(inputs)
+}
+
+fn projection_rules(descriptor: &ProgramDescriptor) -> Vec<ProjectionRule> {
+    descriptor
         .projection_rules
         .iter()
         .map(|rule| ProjectionRule {
             path: rule.path.clone(),
             winning_layer: rule.winning_layer.clone(),
         })
+        .collect()
+}
+
+fn compile_profile_projection(
+    descriptor: &ProgramDescriptor,
+    profile: &ProgramBuildProfile,
+    inventories: &[ProjectionLayer],
+    rules: &[ProjectionRule],
+) -> Result<ResolvedProjection, FusionError> {
+    let layers: Vec<_> = inventories
+        .iter()
+        .filter(|layer| profile.layer_ids.contains(&layer.layer_id))
+        .cloned()
         .collect();
+    let projection = resolve_projection(ProjectionRequest {
+        semantics: ProjectionSemantics::Explicit11,
+        selected_layers: &layers,
+        rules,
+    })?;
+    validate_projected_layout(descriptor, &projection)?;
+    Ok(projection)
+}
+
+pub fn compile_descriptor(
+    descriptor: &ProgramDescriptor,
+    inventories: &[ProjectionLayer],
+) -> Result<CompiledProgram, FusionError> {
+    validate_descriptor_metadata(descriptor)?;
+    validate_inventories(descriptor, inventories, None)?;
+    let rules = projection_rules(descriptor);
     let mut projections = BTreeMap::new();
     for profile in &descriptor.build_profiles {
-        let layers: Vec<_> = inventories
-            .iter()
-            .filter(|layer| profile.layer_ids.contains(&layer.layer_id))
-            .cloned()
-            .collect();
-        let projection = resolve_projection(ProjectionRequest {
-            semantics: ProjectionSemantics::Explicit11,
-            selected_layers: &layers,
-            rules: &rules,
-        })?;
-        validate_projected_layout(descriptor, &projection)?;
+        let projection = compile_profile_projection(descriptor, profile, inventories, &rules)?;
         projections.insert(profile.id.clone(), projection);
     }
     let value = serde_json::to_value(descriptor)
@@ -116,6 +154,23 @@ pub fn compile_descriptor(
         descriptor_blake3: blake3::hash(&bytes).to_hex().to_string(),
         projections,
     })
+}
+
+/// Compile only the selected build profile's projection against its selected layer inventories.
+pub fn compile_selected_profile(
+    descriptor: &ProgramDescriptor,
+    build_profile_id: &str,
+    inventories: &[ProjectionLayer],
+) -> Result<ResolvedProjection, FusionError> {
+    validate_descriptor_metadata(descriptor)?;
+    let profile = descriptor
+        .build_profiles
+        .iter()
+        .find(|p| p.id == build_profile_id)
+        .ok_or_else(|| invalid("Unknown build profile."))?;
+    validate_inventories(descriptor, inventories, Some(&profile.layer_ids))?;
+    let rules = projection_rules(descriptor);
+    compile_profile_projection(descriptor, profile, inventories, &rules)
 }
 
 fn invalid(message: &str) -> FusionError {
@@ -180,7 +235,7 @@ pub fn validate_descriptor_metadata(descriptor: &ProgramDescriptor) -> Result<()
     }
     unique_ids(descriptor.components.iter().map(|c| c.id.as_str()))?;
     let layers = unique_ids(descriptor.components.iter().map(|c| c.layer_id.as_str()))?;
-    let configs = unique_ids(descriptor.configs.iter().map(|c| c.id.as_str()))?;
+    let _configs = unique_ids(descriptor.configs.iter().map(|c| c.id.as_str()))?;
     let controls = unique_ids(
         descriptor
             .controls_profiles
@@ -257,13 +312,8 @@ pub fn validate_descriptor_metadata(descriptor: &ProgramDescriptor) -> Result<()
         ));
     }
     for profile in &descriptor.controls_profiles {
-        if let ProgramControlsProfile::EdenParamPackageV1 { config_id, .. } = profile {
-            if !configs.contains(config_id.as_str()) {
-                return Err(invalid(
-                    "A controls writer references an undeclared config.",
-                ));
-            }
-        }
+        super::capabilities::ProgramCapabilityRegistry
+            .validate_controls_profile(profile, &descriptor.configs)?;
     }
     Ok(())
 }

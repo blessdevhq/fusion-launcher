@@ -54,6 +54,17 @@ impl ArchiveTransformer {
         format: ArchiveFormat,
         staging_root: &Path,
     ) -> Result<(), FusionError> {
+        self.extract_checked(archive_path, format, staging_root, &|| Ok(()))
+    }
+
+    pub(crate) fn extract_checked(
+        &self,
+        archive_path: &Path,
+        format: ArchiveFormat,
+        staging_root: &Path,
+        check: &dyn Fn() -> Result<(), FusionError>,
+    ) -> Result<(), FusionError> {
+        check()?;
         if format == ArchiveFormat::Raw {
             return Err(FusionError::new(
                 ErrorCode::ArchiveInvalid,
@@ -80,8 +91,8 @@ impl ArchiveTransformer {
         })?)?;
         let file = fs_safety::open_read(archive_path)?;
         match format {
-            ArchiveFormat::Zip => self.extract_zip(file, staging_root),
-            ArchiveFormat::SevenZip => self.extract_seven_zip(file, staging_root),
+            ArchiveFormat::Zip => self.extract_zip(file, staging_root, check),
+            ArchiveFormat::SevenZip => self.extract_seven_zip(file, staging_root, check),
             ArchiveFormat::Raw => unreachable!(),
         }
     }
@@ -107,11 +118,17 @@ impl ArchiveTransformer {
         Ok(())
     }
 
-    fn extract_zip(&self, source: File, root: &Path) -> Result<(), FusionError> {
+    fn extract_zip(
+        &self,
+        source: File,
+        root: &Path,
+        check: &dyn Fn() -> Result<(), FusionError>,
+    ) -> Result<(), FusionError> {
         let mut archive = zip::ZipArchive::new(source).map_err(archive_error)?;
         let mut inventory = ArchiveInventory::new(self.limits);
         // Preflight every header before creating the first output file.
         for index in 0..archive.len() {
+            check()?;
             let entry = archive.by_index(index).map_err(archive_error)?;
             if entry.is_symlink()
                 || entry.unix_mode().is_some_and(|mode| {
@@ -127,6 +144,7 @@ impl ArchiveTransformer {
         }
         let mut total = 0;
         for index in 0..archive.len() {
+            check()?;
             let mut entry = archive.by_index(index).map_err(archive_error)?;
             let relative = archive_relative(entry.name(), entry.is_dir())?;
             let output = root.join(relative);
@@ -147,6 +165,7 @@ impl ArchiveTransformer {
                 expected,
                 &mut total,
                 self.limits.max_uncompressed_bytes,
+                check,
             )?;
             destination
                 .sync_all()
@@ -155,7 +174,12 @@ impl ArchiveTransformer {
         Ok(())
     }
 
-    fn extract_seven_zip(&self, source: File, root: &Path) -> Result<(), FusionError> {
+    fn extract_seven_zip(
+        &self,
+        source: File,
+        root: &Path,
+        check: &dyn Fn() -> Result<(), FusionError>,
+    ) -> Result<(), FusionError> {
         let length = source
             .metadata()
             .map_err(|error| io_error("inspect 7z archive", error))?
@@ -165,6 +189,7 @@ impl ArchiveTransformer {
                 .map_err(archive_error)?;
         let mut inventory = ArchiveInventory::new(self.limits);
         for entry in &archive.archive().files {
+            check()?;
             validate_seven_zip_attributes(entry)?;
             inventory.add(entry.name(), entry.is_directory(), entry.size())?;
         }
@@ -173,6 +198,7 @@ impl ArchiveTransformer {
         let mut failure = None;
         let result = archive.for_each_entries(|entry, reader| {
             let mut extract = || -> Result<(), FusionError> {
+                check()?;
                 let relative = archive_relative(entry.name(), entry.is_directory())?;
                 let output = root.join(relative);
                 if entry.is_directory() {
@@ -189,6 +215,7 @@ impl ArchiveTransformer {
                         entry.size(),
                         &mut total,
                         self.limits.max_uncompressed_bytes,
+                        check,
                     )?;
                     destination
                         .sync_all()
@@ -307,10 +334,12 @@ fn copy_bounded(
     expected: u64,
     total: &mut u64,
     limit: u64,
+    check: &dyn Fn() -> Result<(), FusionError>,
 ) -> Result<(), FusionError> {
     let mut bytes = 0_u64;
     let mut buffer = [0_u8; 64 * 1024];
     loop {
+        check()?;
         let count = reader.read(&mut buffer).map_err(archive_error)?;
         if count == 0 {
             if bytes != expected {
@@ -956,14 +985,22 @@ mod tests {
             3,
             &mut total,
             99,
+            &|| Ok(()),
         )
         .unwrap_err();
         assert_eq!(error.code, ErrorCode::ExtractionLimitExceeded);
         let mut total = 0;
         assert_eq!(
-            copy_bounded(&mut &b"short"[..], &mut Vec::new(), 8, &mut total, 99)
-                .unwrap_err()
-                .code,
+            copy_bounded(
+                &mut &b"short"[..],
+                &mut Vec::new(),
+                8,
+                &mut total,
+                99,
+                &|| Ok(())
+            )
+            .unwrap_err()
+            .code,
             ErrorCode::ArchiveInvalid
         );
     }

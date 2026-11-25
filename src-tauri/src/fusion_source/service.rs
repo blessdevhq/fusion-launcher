@@ -222,6 +222,8 @@ struct ServiceInner {
     attestations: BTreeMap<QualifiedGameId, DynamicAssetAttestation>,
     program_environment_approvals:
         BTreeMap<QualifiedGameId, crate::fusion_creator::declarative::runtime::EnvironmentApproval>,
+    #[cfg(windows)]
+    input_service: Option<crate::input::service::InputServiceHandle>,
 }
 
 #[derive(Clone)]
@@ -274,6 +276,8 @@ impl FusionService {
                 adapters: FusionHostAdapters::default(),
                 attestations: BTreeMap::new(),
                 program_environment_approvals: BTreeMap::new(),
+                #[cfg(windows)]
+                input_service: None,
             }),
         })
     }
@@ -338,6 +342,38 @@ impl FusionService {
             })?
             .program_environment_approvals
             .insert(game, approval);
+        Ok(self)
+    }
+
+    #[cfg(all(test, windows))]
+    pub(crate) fn with_input_service(
+        mut self,
+        input: Arc<crate::input::service::InputService>,
+    ) -> Result<Self, FusionError> {
+        Arc::get_mut(&mut self.inner)
+            .ok_or_else(|| {
+                FusionError::new(
+                    ErrorCode::OperationInProgress,
+                    "Configure input service before sharing the service.",
+                )
+            })?
+            .input_service = Some(crate::input::service::InputServiceHandle::Owned(input));
+        Ok(self)
+    }
+
+    #[cfg(windows)]
+    pub(crate) fn with_static_input_service(
+        mut self,
+        input: &'static crate::input::service::InputService,
+    ) -> Result<Self, FusionError> {
+        Arc::get_mut(&mut self.inner)
+            .ok_or_else(|| {
+                FusionError::new(
+                    ErrorCode::OperationInProgress,
+                    "Configure input service before sharing the service.",
+                )
+            })?
+            .input_service = Some(crate::input::service::InputServiceHandle::Static(input));
         Ok(self)
     }
 
@@ -442,17 +478,13 @@ impl FusionService {
             .fetcher()?
             .fetch_index(url, &Cancellation::default())
             .await?;
-        let base = super::adapters::https_url(url)?;
         for entry in &mut index.games {
             if !entry.manifest_url.contains(':') {
-                entry.manifest_url = base
-                    .join(&entry.manifest_url)
-                    .map_err(|_| {
-                        FusionError::new(ErrorCode::InvalidUri, "Cannot resolve manifest URL.")
-                    })?
-                    .to_string();
+                entry.manifest_url =
+                    super::evolution::resolve_source_relative_url(url, &entry.manifest_url)?;
+            } else {
+                super::adapters::https_url(&entry.manifest_url)?;
             }
-            super::adapters::https_url(&entry.manifest_url)?;
         }
         Ok(index)
     }
@@ -632,18 +664,12 @@ impl FusionService {
                         "A source changed identity during strict synchronization.",
                     ));
                 }
-                let base = super::adapters::https_url(&source.url)?;
                 for entry in &mut index.games {
                     if !entry.manifest_url.contains(':') {
-                        entry.manifest_url = base
-                            .join(&entry.manifest_url)
-                            .map_err(|_| {
-                                FusionError::new(
-                                    ErrorCode::InvalidUri,
-                                    "Cannot resolve a strict-sync manifest URL.",
-                                )
-                            })?
-                            .to_string();
+                        entry.manifest_url = super::evolution::resolve_source_relative_url(
+                            &source.url,
+                            &entry.manifest_url,
+                        )?;
                     }
                 }
                 source.index = index;
@@ -662,12 +688,10 @@ impl FusionService {
                     )
                 })?;
             if !entry.manifest_url.contains(':') {
-                entry.manifest_url = super::adapters::https_url(&source.url)?
-                    .join(&entry.manifest_url)
-                    .map_err(|_| {
-                        FusionError::new(ErrorCode::InvalidUri, "Cannot resolve manifest URL.")
-                    })?
-                    .to_string();
+                entry.manifest_url = super::evolution::resolve_source_relative_url(
+                    &source.url,
+                    &entry.manifest_url,
+                )?;
             }
             let cached = self
                 .inner
@@ -839,6 +863,12 @@ impl FusionService {
         } else {
             assembler
         };
+        #[cfg(windows)]
+        let assembler = if let Some(input) = &self.inner.input_service {
+            assembler.with_input_service(input.clone())
+        } else {
+            assembler
+        };
         if let Some(root) = external {
             assembler.with_external_workspace_root(Path::new(root))
         } else {
@@ -976,7 +1006,63 @@ impl FusionService {
             &self.registry(),
         );
         blockers.extend(report.blockers);
-        let plan = PlanBuilder::build(&manifest, &Self::plan_options(&options), &self.registry());
+        let program = crate::fusion_creator::declarative::runtime::descriptor(&manifest);
+        let build_profiles = program
+            .map(|program| {
+                program
+                    .build_profiles
+                    .iter()
+                    .map(|profile| ProgramBuildProfileSummary {
+                        id: profile.id.clone(),
+                        title: profile.title.clone(),
+                        controls_profile_ids: profile.controls_profile_ids.clone(),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let controls_profiles = program
+            .map(|program| {
+                program
+                    .controls_profiles
+                    .iter()
+                    .map(|profile| match profile {
+                        super::program_schema::ProgramControlsProfile::ApplicationDefaults {
+                            id,
+                            title,
+                        } => ProgramControlsProfileSummary {
+                            id: id.clone(),
+                            title: title.clone(),
+                            kind: "application_defaults".into(),
+                            device: None,
+                        },
+                        super::program_schema::ProgramControlsProfile::EdenParamPackageV1 {
+                            id,
+                            title,
+                            device,
+                            ..
+                        } => ProgramControlsProfileSummary {
+                            id: id.clone(),
+                            title: title.clone(),
+                            kind: "eden_param_package_v1".into(),
+                            device: Some(enum_string(device)),
+                        },
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let mut preview_plan_options = Self::plan_options(&options);
+        if let Some(program) = program {
+            if preview_plan_options.build_profile_id.is_none()
+                && preview_plan_options.controls_profile_id.is_none()
+            {
+                if let Some(build) = program.build_profiles.first() {
+                    preview_plan_options.build_profile_id = Some(build.id.clone());
+                    preview_plan_options.controls_profile_id =
+                        build.controls_profile_ids.first().cloned();
+                }
+            }
+        }
+        let plan = PlanBuilder::build(&manifest, &preview_plan_options, &self.registry());
         let selected = match plan {
             Ok(plan) => plan.selected_layers.into_iter().collect::<BTreeSet<_>>(),
             Err(error) => {
@@ -1097,6 +1183,14 @@ impl FusionService {
                 || options
                     .runtime_channel
                     .is_some_and(|channel| snapshot.plan.runtime_channel != Some(channel))
+                || options
+                    .build_profile_id
+                    .as_ref()
+                    .is_some_and(|id| snapshot.plan.build_profile_id.as_ref() != Some(id))
+                || options
+                    .controls_profile_id
+                    .as_ref()
+                    .is_some_and(|id| snapshot.plan.controls_profile_id.as_ref() != Some(id))
                 || options.enabled_addons.as_ref().is_some_and(|addons| {
                     addons
                         != &snapshot
@@ -1187,6 +1281,8 @@ impl FusionService {
             default_runtime_channel,
             external_workspace_root,
             addons,
+            build_profiles,
+            controls_profiles,
             runtime_channels,
             user_layers,
             executables,
@@ -1682,7 +1778,9 @@ impl FusionService {
                 let input = input.clone();
                 let library = self.inner.library_root.clone();
                 let audit = input.clone();
+                let cancel_blocking = cancel.clone();
                 tokio::task::spawn_blocking(move || {
+                    cancel_blocking.check()?;
                     LayerCache::open(&library)?.object(&audit).map(drop)
                 })
                 .await
@@ -1726,7 +1824,10 @@ impl FusionService {
                     let library = self.inner.library_root.clone();
                     let directory = path.is_dir();
                     let archive = *archive;
+                    let cancel_blocking = cancel.clone();
                     let input = tokio::task::spawn_blocking(move || {
+                        let check = || cancel_blocking.check();
+                        check()?;
                         let cache = LayerCache::open(&library)?;
                         if directory {
                             if archive != ArchiveFormat::Raw || layer.transport_digest.is_some() {
@@ -1735,9 +1836,15 @@ impl FusionService {
                                     "A directory import cannot satisfy an archive digest.",
                                 ));
                             }
-                            cache.prepare_directory(&path)
+                            cache.prepare_directory_checked(&path, &check)
                         } else {
-                            cache.prepare_artifact(&layer, &path, raw.as_deref(), None)
+                            cache.prepare_artifact_checked(
+                                &layer,
+                                &path,
+                                raw.as_deref(),
+                                None,
+                                &check,
+                            )
                         }
                     })
                     .await
@@ -1746,9 +1853,31 @@ impl FusionService {
                 }
                 LayerSource::Remote { mirrors, .. } => {
                     let lock = dynamic.get(id);
-                    let mirrors = lock
-                        .map(|lock| vec![lock.asset_url.clone()])
-                        .unwrap_or_else(|| mirrors.clone());
+                    let mirrors = match lock {
+                        Some(lock) => vec![lock.asset_url.clone()],
+                        None => {
+                            let origin_id = layer
+                                .source_id
+                                .as_deref()
+                                .unwrap_or(&manifest.canonical.source_id);
+                            let mut origin_url = None;
+                            let mut resolved = Vec::with_capacity(mirrors.len());
+                            for mirror in mirrors {
+                                if !mirror.contains(':') {
+                                    let base_url = match &origin_url {
+                                        Some(url) => url,
+                                        None => origin_url.insert(self.source(origin_id)?.url),
+                                    };
+                                    resolved.push(super::evolution::resolve_source_relative_url(
+                                        base_url, mirror,
+                                    )?);
+                                } else {
+                                    resolved.push(mirror.clone());
+                                }
+                            }
+                            resolved
+                        }
+                    };
                     let digest = lock
                         .map(|lock| &lock.transport_digest)
                         .or(layer.transport_digest.as_ref())
@@ -1790,15 +1919,19 @@ impl FusionService {
                     let layer = layer.clone();
                     let library = self.inner.library_root.clone();
                     let runtime_lock = lock.map(|lock| lock.snapshot_lock());
+                    let cancel_blocking = cancel.clone();
                     // The private stage moves into the blocking owner and cannot be
                     // removed while extraction still reads the acquired container.
                     let input = tokio::task::spawn_blocking(move || {
                         let _stage = stage;
-                        LayerCache::open(&library)?.prepare_artifact(
+                        let check = || cancel_blocking.check();
+                        check()?;
+                        LayerCache::open(&library)?.prepare_artifact_checked(
                             &layer,
                             &artifact,
                             raw.as_deref(),
                             runtime_lock,
+                            &check,
                         )
                     })
                     .await
@@ -2016,7 +2149,11 @@ impl FusionService {
             lease,
             Arc::new(StorageTrust(self.inner.storage.clone())),
             Some(sync),
-            SupervisorOptions::default(),
+            SupervisorOptions {
+                #[cfg(windows)]
+                input_service: self.inner.input_service.clone(),
+                ..SupervisorOptions::default()
+            },
         )
         .await?;
         let process_cancel = running.cancellation_handle();

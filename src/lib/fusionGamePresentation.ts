@@ -14,6 +14,18 @@ export function fusionLayerTitle(layer: { id: string; title?: string | null }) {
 }
 
 export function effectiveFusionOptions(state: FusionGameState, options = state.options): FusionGameOptions {
+  if (state.buildProfiles && state.buildProfiles.length > 0) {
+    const selectedBuild = state.buildProfiles.find((profile) => profile.id === options.buildProfileId) ?? state.buildProfiles[0];
+    const selectedControls = options.controlsProfileId && selectedBuild.controlsProfileIds.includes(options.controlsProfileId)
+      ? options.controlsProfileId
+      : (selectedBuild.controlsProfileIds[0] ?? null);
+    return {
+      buildProfileId: selectedBuild.id,
+      controlsProfileId: selectedControls,
+      enabledAddons: null,
+      runtimeChannel: null,
+    };
+  }
   return {
     enabledAddons: [...new Set(options.enabledAddons ?? selectableFusionAddons(state.addons).filter((addon) => addon.enabled).map((addon) => addon.id))].sort(),
     runtimeChannel: options.runtimeChannel ?? state.defaultRuntimeChannel ?? null,

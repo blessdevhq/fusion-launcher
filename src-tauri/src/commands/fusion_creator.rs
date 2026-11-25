@@ -184,16 +184,24 @@ unavailable_command!(fusion_creator_classify(CreatorJobStartRequest) -> CreatorJ
 creator_command!(fusion_creator_build(CreatorJobStartRequest) -> CreatorJobReceipt, |runner, request| {
     runner.start(CreatorJobKind::Build, request)
 });
-unavailable_command!(fusion_creator_verify(CreatorJobStartRequest) -> CreatorJobReceipt);
-unavailable_command!(fusion_creator_export(CreatorJobStartRequest) -> CreatorJobReceipt);
-unavailable_command!(fusion_creator_verify_https(CreatorJobStartRequest) -> CreatorJobReceipt);
+creator_command!(fusion_creator_verify(CreatorJobStartRequest) -> CreatorJobReceipt, |runner, request| {
+    runner.start(CreatorJobKind::Verify, request)
+});
+creator_command!(fusion_creator_export(CreatorJobStartRequest) -> CreatorJobReceipt, |runner, request| {
+    runner.start(CreatorJobKind::Export, request)
+});
+creator_command!(fusion_creator_verify_https(CreatorJobStartRequest) -> CreatorJobReceipt, |runner, request| {
+    runner.start(CreatorJobKind::VerifyHttps, request)
+});
 creator_command!(fusion_creator_job_get(CreatorJobRequest) -> CreatorJob, |runner, request| {
     runner.get(&request.job_id)
 });
 creator_command!(fusion_creator_job_cancel(CreatorJobRequest) -> CreatorJob, |runner, request| {
     runner.cancel(&request.job_id)
 });
-unavailable_command!(fusion_creator_job_resume(CreatorJobRequest) -> CreatorJobReceipt);
+creator_command!(fusion_creator_job_resume(CreatorJobRequest) -> CreatorJobReceipt, |runner, request| {
+    runner.resume(&request.job_id)
+});
 unavailable_command!(fusion_creator_release_list(CreatorProjectRequest) -> Vec<CreatorRelease>);
 unavailable_command!(fusion_creator_report_get(CreatorReportRequest) -> CreatorReport);
 unavailable_command!(fusion_input_devices() -> Vec<InputDevice>);
@@ -252,15 +260,7 @@ mod tests {
         let start: CreatorJobStartRequest =
             serde_json::from_value(fixture["jobStart"].clone()).unwrap();
         rejects!(fusion_creator_scan, start.clone());
-        rejects!(fusion_creator_classify, start.clone());
-
-        rejects!(fusion_creator_verify, start.clone());
-        rejects!(fusion_creator_export, start.clone());
-        rejects!(fusion_creator_verify_https, start);
-        let job = CreatorJobRequest {
-            job_id: "job-1".into(),
-        };
-        rejects!(fusion_creator_job_resume, job);
+        rejects!(fusion_creator_classify, start);
         rejects!(
             fusion_input_session_start,
             InputSessionStartRequest {

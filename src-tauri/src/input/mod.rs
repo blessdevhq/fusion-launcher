@@ -24,12 +24,17 @@ mod safety_tests;
 #[cfg(test)]
 mod service_tests;
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 // A worker owns this lease for its entire lifetime. The launch barrier takes
 // the same lease once its worker has stopped to exclude any new SDL owner.
 static SDL_LEASED: AtomicBool = AtomicBool::new(false);
 const REPLY_TIMEOUT: Duration = Duration::from_secs(10);
+
+#[cfg(test)]
+pub(crate) fn sdl_leased() -> bool {
+    SDL_LEASED.load(Ordering::Acquire)
+}
 
 struct Lease;
 impl Lease {

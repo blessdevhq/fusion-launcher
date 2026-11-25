@@ -8,6 +8,8 @@ import { api } from '@/lib/api';
 import { effectiveFusionOptions, formatFusionBytes, fusionHasVersionUpdate, fusionIsIntegrityError, fusionLayerTitle, fusionOperationVisible, fusionProgressRatio, fusionSettingsDiffer, fusionStructuredError, selectableFusionAddons } from '@/lib/fusionGamePresentation';
 import { fusionText } from '@/lib/fusionText';
 import { isTauriRuntime } from '@/lib/runtime';
+import { CreatorDeviceDialog } from './creator/CreatorDeviceDialog';
+import { useCreatorStore } from '@/stores/creatorStore';
 import { useFusionSourceStore, isFusionOperationTerminal } from '@/stores/fusionSourceStore';
 import { fusionErrorMessage, fusionGameKey, type FusionCatalogEntry, type FusionCrashReport, type FusionError, type FusionGameOptions, type FusionGameState, type FusionInstallInput, type FusionOperationProgress } from '@/types/fusionSource';
 
@@ -29,12 +31,21 @@ export function FusionGameDetailsModal({ game, onClose, onRefresh, onCreateBuild
   const [securityExpanded, setSecurityExpanded] = useState(false);
   const [report, setReport] = useState<FusionCrashReport | null>(null);
   const [loading, setLoading] = useState(true);
+  const [deviceOpen, setDeviceOpen] = useState(false);
+  const lastSavedBindings = useCreatorStore((store) => store.lastSavedBindings);
   const modalRef = useRef<HTMLElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
   const stateRef = useRef(state);
   stateRef.current = state;
-  const onCloseRef = useRef(onClose);
-  onCloseRef.current = onClose;
+  const handleClose = useCallback(() => {
+    const creator = useCreatorStore.getState();
+    if (creator.inputSessionId && creator.inputOwnership === 'owned') {
+      void creator.stopInputSession().catch(() => {});
+    }
+    onClose();
+  }, [onClose]);
+  const onCloseRef = useRef(handleClose);
+  onCloseRef.current = handleClose;
   const refreshRef = useRef(onRefresh);
   refreshRef.current = onRefresh;
   const operation = useFusionSourceStore((store) => store.operations[fusionGameKey(game)]);
@@ -158,6 +169,13 @@ export function FusionGameDetailsModal({ game, onClose, onRefresh, onCreateBuild
   const hasVersionUpdate = Boolean(state && fusionHasVersionUpdate(state));
   const settingsDirty = Boolean(state && fusionSettingsDiffer(state, options, input.externalWorkspaceRoot));
   const addons = state ? selectableFusionAddons(state.addons) : [];
+  const buildProfiles = state?.buildProfiles ?? [];
+  const controlsProfiles = state?.controlsProfiles ?? [];
+  const selectedBuild = buildProfiles.find((profile) => profile.id === options.buildProfileId) ?? buildProfiles[0] ?? null;
+  const allowedControls = selectedBuild
+    ? controlsProfiles.filter((profile) => selectedBuild.controlsProfileIds.includes(profile.id))
+    : controlsProfiles;
+  const selectedControls = allowedControls.find((profile) => profile.id === options.controlsProfileId) ?? allowedControls[0] ?? null;
   const progressRatio = fusionProgressRatio(activeOperation?.transfer);
   const crashReports = state?.crashReports ?? state?.crashReportIds.map((reportId) => ({ reportId, createdAt: '', exitCode: null, crashSignatureHash: null })) ?? [];
   const blockerMessage = (error: FusionError) => error.code === 'local_base_modified' ? text.localBaseModified : fusionIsIntegrityError(error) ? text.integrityRepair : error.code === 'untrusted_executable' ? text.integrityTrust : error.message;
@@ -171,7 +189,7 @@ export function FusionGameDetailsModal({ game, onClose, onRefresh, onCreateBuild
             <p className="mt-1 text-sm text-white/50">{state?.platform?.toUpperCase() ?? text.noPlatform} · {game.sourceName}</p>
             {onCreateBuild && <button type="button" data-testid="creator-context-action" onClick={onCreateBuild} className="rh-filter-chip rh-focusable mt-3">{t.creator.ui.create}</button>}
           </div>
-          <button ref={closeRef} type="button" onClick={onClose} className="rh-icon-button rh-focusable" aria-label={text.close} data-testid="fusion-game-close"><X className="h-4 w-4" /></button>
+          <button ref={closeRef} type="button" onClick={handleClose} className="rh-icon-button rh-focusable" aria-label={text.close} data-testid="fusion-game-close"><X className="h-4 w-4" /></button>
         </header>
         <div className="min-h-0 overflow-y-auto p-5">
           {loading && <p role="status" className="flex gap-2 text-sm text-white/60"><Loader2 className="h-4 w-4 animate-spin" />{text.loading}</p>}
@@ -202,6 +220,33 @@ export function FusionGameDetailsModal({ game, onClose, onRefresh, onCreateBuild
                   {state.runtimeChannels.map((channel) => <option key={channel} value={channel}>{channel === 'dynamic' ? text.dynamic : text.pinned}</option>)}
                 </select> : <p className="text-sm text-white/50">{text.noRuntime}</p>}
               </div>
+              {buildProfiles.length > 0 && <div className="min-w-0"><label className="mb-2 block text-sm font-semibold" htmlFor="fusion-build-profile">{text.buildProfile}</label>
+                <select id="fusion-build-profile" data-testid="fusion-build-profile" disabled={disabled} value={selectedBuild?.id ?? ''} onChange={(event) => {
+                  const nextBuild = buildProfiles.find((profile) => profile.id === event.target.value) ?? buildProfiles[0];
+                  const nextControls = options.controlsProfileId && nextBuild.controlsProfileIds.includes(options.controlsProfileId)
+                    ? options.controlsProfileId
+                    : (nextBuild.controlsProfileIds[0] ?? null);
+                  setOptions({ buildProfileId: nextBuild.id, controlsProfileId: nextControls, enabledAddons: null, runtimeChannel: null });
+                }} className="rh-library-sort w-full">
+                  {buildProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.title || profile.id}</option>)}
+                </select>
+              </div>}
+              {allowedControls.length > 0 && <div className="min-w-0"><label className="mb-2 block text-sm font-semibold" htmlFor="fusion-controls-profile">{text.controlsProfile}</label>
+                <select id="fusion-controls-profile" data-testid="fusion-controls-profile" disabled={disabled} value={selectedControls?.id ?? ''} onChange={(event) => {
+                  setOptions({
+                    buildProfileId: selectedBuild?.id ?? null,
+                    controlsProfileId: event.target.value,
+                    enabledAddons: null,
+                    runtimeChannel: null,
+                  });
+                }} className="rh-library-sort w-full">
+                  {allowedControls.map((profile) => <option key={profile.id} value={profile.id}>{profile.title || profile.id}</option>)}
+                </select>
+                {selectedControls?.device === 'sdl_gamecontroller' && <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <button type="button" data-testid="fusion-configure-controller" disabled={disabled} onClick={() => setDeviceOpen(true)} className="rh-mini-action rh-focusable">{text.configureController}</button>
+                  {lastSavedBindings?.controlsProfileId === selectedControls.id && <span className="text-xs text-fusion-accent">{text.controllerSaved}</span>}
+                </div>}
+              </div>}
               <details className="text-xs text-white/60 sm:col-span-2"><summary className="rh-focusable cursor-pointer rounded-sm">{text.externalRoot}</summary><input data-testid="fusion-workspace-root" aria-label={text.externalRoot} value={input.externalWorkspaceRoot ?? ''} placeholder={state.installed ? text.workspaceManaged : ''} onChange={(event) => setInput({ ...input, externalWorkspaceRoot: event.target.value || null })} className="mt-3 w-full rounded-sm border border-fusion-line bg-fusion-bg p-2 text-sm text-white disabled:text-white/60" readOnly={state.installed} disabled={disabled} />{state.installed && <p className="mt-2 leading-relaxed">{text.workspaceLocked}</p>}</details>
               <div className="sm:col-span-2">{state.installed ? <button type="button" data-testid="fusion-options-apply" className="rh-mini-action rh-focusable" disabled={disabled || blocked || !settingsDirty} onClick={() => void install()}>{settingsDirty ? text.apply : text.optionsApplied}</button> : <p className="text-xs text-white/50">{text.optionsOnInstall}</p>}</div>
             </div>
@@ -235,13 +280,20 @@ export function FusionGameDetailsModal({ game, onClose, onRefresh, onCreateBuild
           </>}
         </div>
         <footer className="shrink-0 border-t border-fusion-line p-5"><div className="flex flex-wrap gap-2">
-          <button type="button" disabled={disabled || !state?.ready || securityAttention} onClick={() => void run(() => api.fusionGameLaunch(game.sourceId, game.gameId))} className="rh-primary-action rh-focusable" data-testid="fusion-game-launch"><Play className="h-4 w-4" />{text.launch}</button>
+          <button type="button" disabled={disabled || !state?.ready || securityAttention} onClick={() => void run(async () => {
+            const creator = useCreatorStore.getState();
+            if (creator.inputSessionId && creator.inputOwnership === 'owned') {
+              await creator.releaseInputForLaunch();
+            }
+            return api.fusionGameLaunch(game.sourceId, game.gameId);
+          })} className="rh-primary-action rh-focusable" data-testid="fusion-game-launch"><Play className="h-4 w-4" />{text.launch}</button>
           <button type="button" disabled={disabled || loading || !state || blocked} onClick={() => void install()} className={`${hasVersionUpdate || repairRequired ? 'rh-primary-action' : 'rh-mini-action'} rh-focusable`} data-testid="fusion-game-install"><Download className="h-4 w-4" />{state?.installed ? hasVersionUpdate || repairRequired ? text.update : text.rebuild : text.install}</button>
           <button type="button" disabled={disabled || !state?.rollbackAvailable} onClick={() => void run(() => api.fusionGameRollback(game.sourceId, game.gameId), { adoptDraft: true })} className="rh-mini-action rh-focusable" data-testid="fusion-game-rollback"><RotateCcw className="h-4 w-4" />{text.rollback}</button>
           {running && <button type="button" disabled={cancelPending} onClick={() => void cancel()} className="rh-mini-action rh-focusable" data-testid="fusion-game-cancel">{text.cancel}</button>}
           <button type="button" disabled={disabled || !state?.installed} className="rh-mini-action rh-mini-action-danger rh-focusable" onClick={() => { if (window.confirm(text.removeConfirm)) void run(() => api.fusionGameRemove(game.sourceId, game.gameId), { adoptDraft: true }); }} data-testid="fusion-game-remove">{text.remove}</button>
         </div><p className="mt-3 text-xs text-white/40">{text.rollbackNote}</p></footer>
       </section>
+      {deviceOpen && selectedControls && <CreatorDeviceDialog controlsProfileId={selectedControls.id} keepSessionOnSave onClose={() => setDeviceOpen(false)} />}
     </div>
   );
 }

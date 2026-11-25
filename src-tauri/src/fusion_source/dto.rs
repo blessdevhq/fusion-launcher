@@ -171,6 +171,23 @@ pub struct ExecutableTrustState {
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ProgramBuildProfileSummary {
+    pub id: String,
+    pub title: String,
+    pub controls_profile_ids: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProgramControlsProfileSummary {
+    pub id: String,
+    pub title: String,
+    pub kind: String,
+    pub device: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct FusionGameState {
     pub source_id: String,
     pub game_id: String,
@@ -188,6 +205,10 @@ pub struct FusionGameState {
     pub default_runtime_channel: Option<RuntimeChannel>,
     pub external_workspace_root: Option<String>,
     pub addons: Vec<AddonState>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub build_profiles: Vec<ProgramBuildProfileSummary>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub controls_profiles: Vec<ProgramControlsProfileSummary>,
     pub runtime_channels: Vec<RuntimeChannel>,
     pub user_layers: Vec<UserLayerRequirement>,
     pub executables: Vec<ExecutableTrustState>,

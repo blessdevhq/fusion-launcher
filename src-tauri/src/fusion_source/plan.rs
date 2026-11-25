@@ -257,6 +257,23 @@ impl PlanBuilder {
                 "Creator 1.1 installation and profile selection are unavailable in wave zero.",
             ));
         }
+        Self::build_validated(manifest, options, registry)
+    }
+
+    pub(crate) fn build_lowered(
+        manifest: &CanonicalGameManifest,
+        options: &PlanOptions,
+        registry: &CapabilityRegistry,
+    ) -> Result<ExecutionPlan, FusionError> {
+        SchemaUpcaster::validate_canonical(manifest)?;
+        Self::build_validated(manifest, options, registry)
+    }
+
+    fn build_validated(
+        manifest: &CanonicalGameManifest,
+        options: &PlanOptions,
+        registry: &CapabilityRegistry,
+    ) -> Result<ExecutionPlan, FusionError> {
         let negotiation = CapabilityNegotiator::negotiate(manifest, registry);
         if let Some(blocker) = negotiation.blockers.first() {
             return Err(blocker.clone());
@@ -928,6 +945,10 @@ fn patch_capability(format: PatchFormat) -> &'static str {
 }
 
 fn mirror_capability(mirror: &str) -> String {
+    // Safe source-relative mirrors inherit HTTPS transport from the declaring source.
+    if !mirror.contains(':') {
+        return "resolver.https.v1".to_owned();
+    }
     // The URI has already been validated; this only identifies an adapter.
     let scheme = mirror
         .split(':')

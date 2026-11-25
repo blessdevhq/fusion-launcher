@@ -1,7 +1,7 @@
 //! Host-local release bundles. A receipt is committed with the immutable release row
 //! and the ReleaseBuilt checkpoint; an orphaned CAS object is not a release.
 use super::{digest, encode, io, valid_hash, CreatorRelease, FusionError};
-use crate::fusion_source::cas::{verify_open_digest, CasFile, CasObject, CasStore};
+use crate::fusion_source::cas::{verify_open_digest_checked, CasFile, CasObject, CasStore};
 use crate::fusion_source::errors::ErrorCode;
 use crate::fusion_source::fs_safety;
 use crate::fusion_source::schema::{DigestAlgorithm, DigestSpec};
@@ -59,18 +59,27 @@ impl ReleaseContent {
     }
 
     pub fn open_artifact(&self, artifact_id: &str) -> Result<File, FusionError> {
+        self.open_artifact_checked(artifact_id, &|| Ok(()))
+    }
+
+    pub(crate) fn open_artifact_checked(
+        &self,
+        artifact_id: &str,
+        check: &dyn Fn() -> Result<(), FusionError>,
+    ) -> Result<File, FusionError> {
         let hash = self
             .release
             .artifact_hashes
             .get(artifact_id)
             .ok_or_else(integrity)?;
         let mut file = fs_safety::open_read(&self.object.root.join(artifact_path(artifact_id)?))?;
-        verify_open_digest(
+        verify_open_digest_checked(
             &mut file,
             &DigestSpec {
                 algorithm: DigestAlgorithm::Blake3,
                 value: hash.clone(),
             },
+            check,
         )?;
         file.rewind().map_err(|_| io())?;
         Ok(file)
@@ -121,16 +130,17 @@ impl Receipt {
         root: &Path,
         stage: &Path,
         release: &CreatorRelease,
+        check: &dyn Fn() -> Result<(), FusionError>,
     ) -> Result<Vec<u8>, FusionError> {
         let expected = expected(release)?;
         let _stage = fs_safety::guard(stage)?;
-        let files = fs_safety::list_plain_files(stage)?;
+        let files = fs_safety::list_plain_files_checked(stage, check)?;
         if files.len() != expected.len()
             || files.iter().any(|(name, _)| !expected.contains_key(name))
         {
             return Err(integrity());
         }
-        let object = CasStore::open(root)?.import_directory(stage)?;
+        let object = CasStore::open(root)?.import_directory_checked(stage, check)?;
         manifest(&object, &expected)?;
         encode(&Self {
             release_id: release.release_id.clone(),
@@ -143,6 +153,7 @@ impl Receipt {
         root: &Path,
         release: CreatorRelease,
         bytes: &[u8],
+        check: &dyn Fn() -> Result<(), FusionError>,
     ) -> Result<ReleaseContent, FusionError> {
         let receipt: Self = serde_json::from_slice(bytes).map_err(|_| integrity())?;
         if receipt.release_id != release.release_id
@@ -152,7 +163,7 @@ impl Receipt {
             return Err(integrity());
         }
         let expected = expected(&release)?;
-        let object = CasStore::open(root)?.verify(&receipt.bundle_blake3)?;
+        let object = CasStore::open(root)?.verify_checked(&receipt.bundle_blake3, check)?;
         let manifest = manifest(&object, &expected)?;
         Ok(ReleaseContent {
             release,

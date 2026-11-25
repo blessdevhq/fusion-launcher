@@ -18,3 +18,5 @@ mod review_tests;
 
 #[cfg(all(test, windows))]
 mod native_tests;
+#[cfg(all(test, windows))]
+mod runtime_sdl_tests;

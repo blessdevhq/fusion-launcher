@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use super::canonical::CanonicalLayer;
-use super::cas::{verify_digest, CasObject, CasStore};
+use super::cas::{verify_digest_checked, CasObject, CasStore};
 use super::errors::{ErrorCode, FusionError};
 use super::fs_safety;
 use super::schema::{ArchiveFormat, CriticalFileSpec, DigestSpec, LayerKind, LayerSource};
@@ -92,6 +92,18 @@ impl LayerCache {
         raw_relative: Option<&str>,
         runtime_lock: Option<ResolvedRuntimeLock>,
     ) -> Result<LayerInput, FusionError> {
+        self.prepare_artifact_checked(layer, artifact, raw_relative, runtime_lock, &|| Ok(()))
+    }
+
+    pub(crate) fn prepare_artifact_checked(
+        &self,
+        layer: &CanonicalLayer,
+        artifact: &Path,
+        raw_relative: Option<&str>,
+        runtime_lock: Option<ResolvedRuntimeLock>,
+        check: &dyn Fn() -> Result<(), FusionError>,
+    ) -> Result<LayerInput, FusionError> {
+        check()?;
         let _source_parent = fs_safety::guard(artifact.parent().ok_or_else(|| {
             FusionError::new(
                 ErrorCode::InvalidPath,
@@ -116,7 +128,7 @@ impl LayerCache {
             ));
         }
         if let Some(expected) = expected {
-            verify_digest(artifact, expected)?;
+            verify_digest_checked(artifact, expected, check)?;
         }
         let format = match &layer.source {
             LayerSource::Remote { archive, .. } | LayerSource::UserProvided { archive, .. } => {
@@ -140,7 +152,7 @@ impl LayerCache {
                     )
                 })?
             };
-            self.cas.import_file(artifact, name)?
+            self.cas.import_file_checked(artifact, name, check)?
         } else {
             let parent = self.cas.root().join("staging");
             let _parent = fs_safety::guard(&parent)?;
@@ -148,8 +160,8 @@ impl LayerCache {
             fs::create_dir(&stage)
                 .map_err(|error| fs_safety::io_error("Create extraction staging", &stage, error))?;
             let result = (|| {
-                ArchiveTransformer::default().extract(artifact, format, &stage)?;
-                self.cas.import_directory(&stage)
+                ArchiveTransformer::default().extract_checked(artifact, format, &stage, check)?;
+                self.cas.import_directory_checked(&stage, check)
             })();
             let cleanup = fs_safety::safe_remove_tree(&stage);
             match (result, cleanup) {
@@ -164,7 +176,15 @@ impl LayerCache {
     }
 
     pub fn prepare_directory(&self, source: &Path) -> Result<LayerInput, FusionError> {
-        let object = self.cas.import_directory(source)?;
+        self.prepare_directory_checked(source, &|| Ok(()))
+    }
+
+    pub(crate) fn prepare_directory_checked(
+        &self,
+        source: &Path,
+        check: &dyn Fn() -> Result<(), FusionError>,
+    ) -> Result<LayerInput, FusionError> {
+        let object = self.cas.import_directory_checked(source, check)?;
         Ok(LayerInput::Cas {
             digest: object.digest,
             runtime_lock: None,

@@ -34,6 +34,54 @@ const HELPER: &str = "fusion_source::packer_tests::packer_native_process_fixture
 mod program;
 
 #[test]
+fn cancelling_packer_copy_keeps_the_previous_signed_index() {
+    let fixture = Fixture::new(false);
+    let root = fixture.temporary.path();
+    let key = root.join("signing.pem");
+    super::signatures::keygen(&key).unwrap();
+    let engine = PackerEngine::new();
+    let recipe = fixture.typed_recipe();
+    engine
+        .build_with_signing_key(&recipe, root, &fixture.dist, Some(&key))
+        .unwrap();
+    let index = fixture.dist.join("source-index.json");
+    let previous = fs::read(&index).unwrap();
+    let payload = vec![0x33; 1024 * 1024];
+    let changed = root.join("base/data/content.bin");
+    fs::write(&changed, &payload).unwrap();
+    let artifacts = fixture.dist.join("artifacts");
+    let interrupted = std::cell::Cell::new(false);
+    let error = engine
+        .build_checked(&recipe, root, &fixture.dist, Some(&key), &|| {
+            if fs::read_dir(&artifacts).unwrap().any(|entry| {
+                entry
+                    .unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(".artifact-")
+            }) && interrupted.replace(true)
+            {
+                return Err(FusionError::new(
+                    ErrorCode::Cancelled,
+                    "test cancellation during copy",
+                ));
+            }
+            Ok(())
+        })
+        .unwrap_err();
+    assert_eq!(error.code, ErrorCode::Cancelled);
+    assert!(interrupted.get());
+    assert_eq!(fs::read(index).unwrap(), previous);
+    assert!(!fs::read_dir(&artifacts).unwrap().any(|entry| entry
+        .unwrap()
+        .file_name()
+        .to_string_lossy()
+        .starts_with(".artifact-")));
+    assert_eq!(fs::read(changed).unwrap(), payload);
+    assert!(engine.verify(&fixture.dist).unwrap().signature_verified);
+}
+
+#[test]
 fn verify_audit_pins_raw_inventory_to_the_indexed_manifest() {
     let fixture = Fixture::new(false);
     fixture.build().unwrap();

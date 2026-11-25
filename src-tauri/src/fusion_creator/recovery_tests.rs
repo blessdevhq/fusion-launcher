@@ -804,7 +804,9 @@ async fn killed_child_recovers_and_resumes_each_of_the_five_durable_boundaries()
             .iter()
             .find(|summary| summary.project_id == receipt.project_id)
             .unwrap();
-        assert_eq!(current.verification_status, CreatorReportStatus::Passed);
+        // This synthetic 5-boundary fixture only emits StructureIntegrity without CleanInstall,
+        // so project verification_status must remain NotTested rather than claiming Passed.
+        assert_eq!(current.verification_status, CreatorReportStatus::NotTested);
         let saved_release: Vec<u8> = store
             .conn
             .query_row(

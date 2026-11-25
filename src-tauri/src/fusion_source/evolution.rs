@@ -154,7 +154,7 @@ impl SchemaUpcaster {
             if game.manifest_url.contains(':') || game.manifest_url.starts_with("//") {
                 validate_https(&game.manifest_url, "games.manifest_url")?;
             } else {
-                validate_relative_path(&game.manifest_url, false, false, "games.manifest_url")?;
+                validate_relative_source_url(&game.manifest_url, "games.manifest_url")?;
             }
             validate_hash(&game.manifest_blake3, "games.manifest_blake3")?;
             game.manifest_blake3.make_ascii_lowercase();
@@ -185,14 +185,19 @@ impl SchemaUpcaster {
             .map(|reference| qualified_id(source_id, reference))
             .transpose()?;
         let mut stack = Vec::new();
-        let mut manifest = resolve_inheritance(&key, &root, parents, &mut stack)?;
+        let (mut manifest, layer_sources) = resolve_inheritance(&key, &root, parents, &mut stack)?;
         normalize_manifest(&mut manifest);
         validate_game_shape(&manifest)?;
         let layer_order = validate_resolved_manifest(&manifest)?;
         let layers = manifest
             .layers
             .into_iter()
-            .map(|layer| (layer.id.clone(), CanonicalLayer::from(layer)))
+            .map(|layer| {
+                let id = layer.id.clone();
+                let mut canonical = CanonicalLayer::from(layer);
+                canonical.source_id = layer_sources.get(&id).cloned();
+                (id, canonical)
+            })
             .collect();
         Ok(CanonicalGameManifest {
             schema_version: manifest.schema_version,
@@ -244,7 +249,7 @@ fn resolve_inheritance(
     manifest: &GameManifest,
     parents: &BTreeMap<QualifiedGameId, GameManifest>,
     stack: &mut Vec<QualifiedGameId>,
-) -> Result<GameManifest, FusionError> {
+) -> Result<(GameManifest, BTreeMap<String, String>), FusionError> {
     if let Some(start) = stack.iter().position(|id| id == key) {
         let mut cycle: Vec<String> = stack[start..].iter().map(ToString::to_string).collect();
         cycle.push(key.to_string());
@@ -300,10 +305,18 @@ fn resolve_inheritance(
                 "A 1.0 manifest cannot extend a 1.1 manifest.",
             ));
         }
-        let base = resolve_inheritance(&parent_key, parent, parents, stack)?;
-        merge_manifest(base, manifest.clone())?
+        let (base, mut sources) = resolve_inheritance(&parent_key, parent, parents, stack)?;
+        for layer in &manifest.layers {
+            sources.insert(layer.id.clone(), key.source_id.clone());
+        }
+        (merge_manifest(base, manifest.clone())?, sources)
     } else {
-        manifest.clone()
+        let sources = manifest
+            .layers
+            .iter()
+            .map(|layer| (layer.id.clone(), key.source_id.clone()))
+            .collect();
+        (manifest.clone(), sources)
     };
     stack.pop();
     Ok(result)
@@ -433,10 +446,11 @@ fn validate_game_shape(manifest: &GameManifest) -> Result<(), FusionError> {
     }
     validate_capabilities(&manifest.capabilities, &manifest.fallback)?;
     let mut layer_ids = BTreeSet::new();
+    let allow_relative = manifest.schema_version == "1.1";
     for layer in &manifest.layers {
         validate_id(&layer.id, "layers.id")?;
         unique(&mut layer_ids, &layer.id, "layers.id")?;
-        validate_layer(layer)?;
+        validate_layer(layer, allow_relative)?;
     }
     let mut template_ids = BTreeSet::new();
     for template in &manifest.config_templates {
@@ -494,7 +508,7 @@ fn validate_game_shape(manifest: &GameManifest) -> Result<(), FusionError> {
     Ok(())
 }
 
-fn validate_layer(layer: &LayerSpec) -> Result<(), FusionError> {
+fn validate_layer(layer: &LayerSpec, allow_relative_mirrors: bool) -> Result<(), FusionError> {
     if let Some(title) = &layer.title {
         nonempty(title, "layers.title")?;
     }
@@ -540,7 +554,7 @@ fn validate_layer(layer: &LayerSpec) -> Result<(), FusionError> {
                 .with_detail("layer_id", &layer.id));
             }
             for mirror in mirrors {
-                validate_mirror(mirror)?;
+                validate_mirror(mirror, allow_relative_mirrors)?;
             }
         }
         LayerSource::UserProvided { .. } => {}
@@ -1169,7 +1183,71 @@ fn validate_hash(value: &str, field: &str) -> Result<(), FusionError> {
     Ok(())
 }
 
-fn validate_mirror(value: &str) -> Result<(), FusionError> {
+pub(crate) fn validate_relative_source_url(value: &str, field: &str) -> Result<(), FusionError> {
+    if value.is_empty()
+        || value.starts_with('/')
+        || value.ends_with('/')
+        || value.contains([':', '\\', '#', '%', '?'])
+        || value.contains("//")
+        || value.chars().any(|c| c.is_whitespace() || c.is_control())
+    {
+        return Err(field_error(
+            ErrorCode::InvalidUri,
+            field,
+            "Relative URL must use clean forward-slash segments without scheme, query, fragment, encoding or whitespace.",
+        ));
+    }
+    validate_relative_path(value, false, false, field)
+}
+
+pub(crate) fn resolve_source_relative_url(
+    source_index_url: &str,
+    relative: &str,
+) -> Result<String, FusionError> {
+    validate_relative_source_url(relative, "mirrors")?;
+    let mut base = super::adapters::https_url(source_index_url)?;
+    base.set_query(None);
+    base.set_fragment(None);
+    let root_dir = base.join("./").map_err(|_| {
+        field_error(
+            ErrorCode::InvalidUri,
+            "sourceUrl",
+            "Cannot resolve source root URL.",
+        )
+    })?;
+    let resolved = root_dir.join(relative).map_err(|_| {
+        field_error(
+            ErrorCode::InvalidUri,
+            "mirrors",
+            "Cannot resolve relative source mirror.",
+        )
+    })?;
+    let text = resolved.as_str();
+    if !text.starts_with(root_dir.as_str())
+        || resolved.query().is_some()
+        || resolved.fragment().is_some()
+    {
+        return Err(field_error(
+            ErrorCode::InvalidUri,
+            "mirrors",
+            "Resolved mirror escaped its declaring Source root.",
+        ));
+    }
+    super::adapters::https_url(text)?;
+    Ok(resolved.to_string())
+}
+
+fn validate_mirror(value: &str, allow_relative: bool) -> Result<(), FusionError> {
+    if value.chars().any(|c| c.is_whitespace() || c.is_control()) {
+        return Err(field_error(
+            ErrorCode::InvalidUri,
+            "mirrors",
+            "URL contains whitespace or control characters.",
+        ));
+    }
+    if allow_relative && !value.contains(':') && !value.starts_with("//") {
+        return validate_relative_source_url(value, "mirrors");
+    }
     let uri = Url::parse(value)
         .map_err(|e| field_error(ErrorCode::InvalidUri, "mirrors", &e.to_string()))?;
     match uri.scheme() {

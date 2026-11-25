@@ -1,6 +1,9 @@
 //! Application-owned Creator service; closing a webview does not own/cancel jobs.
 use super::build::ManagedDirectoryBuild;
+use super::export::ManagedReleaseExport;
 use super::jobs::{JobRunner, ProgressSink};
+use super::verify::ManagedReleaseVerify;
+use super::verify_https::ManagedReleaseVerifyHttps;
 use super::CreatorJobKind;
 use crate::fusion_source::errors::FusionError;
 use crate::storage::RepositoryStore;
@@ -27,16 +30,30 @@ impl CreatorBridge {
     }
 }
 
-fn production_runner(
+pub(in crate::fusion_creator) fn production_runner(
     store: Arc<Mutex<RepositoryStore>>,
     root: &Path,
     sink: ProgressSink,
 ) -> Result<JobRunner, FusionError> {
     let runner = JobRunner::new(store, root, sink)?;
     runner.register(CreatorJobKind::Build, Arc::new(ManagedDirectoryBuild))?;
+    runner.register(CreatorJobKind::Verify, Arc::new(ManagedReleaseVerify))?;
+    runner.register(CreatorJobKind::Export, Arc::new(ManagedReleaseExport))?;
+    runner.register(
+        CreatorJobKind::VerifyHttps,
+        Arc::new(ManagedReleaseVerifyHttps),
+    )?;
     Ok(runner)
 }
 
 #[cfg(test)]
 #[path = "build_tests.rs"]
 mod build_tests;
+
+#[cfg(test)]
+#[path = "export_https_tests.rs"]
+mod export_https_tests;
+
+#[cfg(all(test, windows))]
+#[path = "universal_portable_tests.rs"]
+mod universal_portable_tests;

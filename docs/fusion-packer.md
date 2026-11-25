@@ -289,3 +289,11 @@ Run the round-trip and complete Rust suites with:
 cargo test --manifest-path src-tauri/Cargo.toml fusion_source::packer
 cargo test --manifest-path src-tauri/Cargo.toml
 ```
+
+## ProgramDescriptor 1.1 authoring and portable exports
+
+When a game entry in a recipe supplies `program_descriptor` (`schema_version: "1.0"`), `fusion-packer` emits `GameManifest` `"schema_version": "1.1"` and binds its exact bytes into the signed `SourceIndex` (`schema_version: "1.0"`):
+
+- **Mandatory signing & standalone managed inputs:** inline `program_descriptor` builds require an Ed25519 signing key outside both the input folders and publication output. Creator builds support standalone, redistributable `managed` directory layers with an empty `source_root`, packed deterministically into CAS-normalized ZIPs.
+- **Portable Source-relative links:** new Creator `Build` releases sign Source-relative `artifacts/<blake3>.zip` layer mirrors directly at build time so identical signed index, manifest, and archive bytes pass local `Verify`, export cleanly without re-signing, and install from any HTTPS origin with an empty cache.
+- **Immutable legacy releases:** previously built local-only releases using `https://offline.fusion.invalid/...` remain valid for local `Verify` against their saved release receipt, and are never rewritten or re-signed on `Export`. Build a new release revision to obtain portable HTTPS links.

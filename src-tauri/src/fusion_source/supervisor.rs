@@ -142,13 +142,25 @@ fn lock_logs(logs: &Mutex<BoundedLogRingBuffer>) -> MutexGuard<'_, BoundedLogRin
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Default)]
 pub struct SupervisorOptions {
     pub logs: LogLimits,
     pub deduplication_policy: DeduplicationPolicy,
     /// Optional additional redaction runs before the mandatory core sanitizer.
     /// It can never replace OS/workspace/local-base/environment redaction.
     pub telemetry: Option<TelemetrySanitizer>,
+    #[cfg(windows)]
+    pub(crate) input_service: Option<crate::input::service::InputServiceHandle>,
+}
+
+impl std::fmt::Debug for SupervisorOptions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SupervisorOptions")
+            .field("logs", &self.logs)
+            .field("deduplication_policy", &self.deduplication_policy)
+            .field("telemetry", &self.telemetry)
+            .finish()
+    }
 }
 
 /// This outcome remains inside the core. Only the sanitized report is an IPC DTO.
@@ -434,31 +446,43 @@ fn run_group(
                 &snapshot.workspace_root,
             )?;
         }
-        for (spec, command) in specs.iter().zip(&commands) {
-            if cancel.load(Ordering::Acquire) {
-                break;
+        let logs_limit = options.logs;
+        let mut spawn_all = || -> Result<(), FusionError> {
+            for (spec, command) in specs.iter().zip(&commands) {
+                if cancel.load(Ordering::Acquire) {
+                    break;
+                }
+                let mut process = group.job.spawn(command)?;
+                // Publish the process handle before any reader-thread allocation:
+                // an allocation/spawn error still goes through OwnedGroup::drop.
+                let stdout = process.stdout.take().expect("stdout pipe");
+                let stderr = process.stderr.take().expect("stderr pipe");
+                group.processes.push((spec.id.clone(), process));
+                group.readers.push(reader(
+                    stdout,
+                    spec.id.clone(),
+                    LogStream::Stdout,
+                    Arc::clone(logs),
+                    logs_limit,
+                )?);
+                group.readers.push(reader(
+                    stderr,
+                    spec.id.clone(),
+                    LogStream::Stderr,
+                    Arc::clone(logs),
+                    logs_limit,
+                )?);
             }
-            let mut process = group.job.spawn(command)?;
-            // Publish the process handle before any reader-thread allocation:
-            // an allocation/spawn error still goes through OwnedGroup::drop.
-            let stdout = process.stdout.take().expect("stdout pipe");
-            let stderr = process.stderr.take().expect("stderr pipe");
-            group.processes.push((spec.id.clone(), process));
-            group.readers.push(reader(
-                stdout,
-                spec.id.clone(),
-                LogStream::Stdout,
-                Arc::clone(logs),
-                options.logs,
-            )?);
-            group.readers.push(reader(
-                stderr,
-                spec.id.clone(),
-                LogStream::Stderr,
-                Arc::clone(logs),
-                options.logs,
-            )?);
+            Ok(())
+        };
+        #[cfg(windows)]
+        if let Some(input) = &options.input_service {
+            input.as_ref().with_released_for_launch(spawn_all)?;
+        } else {
+            spawn_all()?;
         }
+        #[cfg(not(windows))]
+        spawn_all()?;
         let primary = specs
             .iter()
             .find(|spec| spec.role == ProcessRole::Primary)

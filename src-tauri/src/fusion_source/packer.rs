@@ -20,7 +20,7 @@ use crate::fusion_creator::projection::{
 
 use super::canonical::{CanonicalGameManifest, CanonicalLayer, QualifiedGameId};
 use super::capabilities::{CapabilityNegotiator, CapabilityRegistry};
-use super::cas::{hash_file, CasFile, CasObject};
+use super::cas::{hash_file, hash_file_checked, CasFile, CasObject};
 use super::config_templates::{ConfigTemplateEngine, TemplateContext};
 use super::creator_schema::{ComponentOrigin, CreatorExtension};
 use super::errors::{ErrorCode, FusionError};
@@ -364,7 +364,9 @@ impl PackerEngine {
         let scratch = Scratch::new()?;
         let cache = LayerCache::open(&scratch.0)?;
         let (inspection, _) =
-            inspect_with_cache(&cache, &absolute(file)?, options, LayerKind::Base)?;
+            inspect_with_cache(&cache, &absolute(file)?, options, LayerKind::Base, &|| {
+                Ok(())
+            })?;
         Ok(inspection)
     }
 
@@ -384,7 +386,19 @@ impl PackerEngine {
         out: &Path,
         signing_key: Option<&Path>,
     ) -> Result<BuildReport, FusionError> {
+        self.build_checked(recipe, recipe_dir, out, signing_key, &|| Ok(()))
+    }
+
+    pub(crate) fn build_checked(
+        &self,
+        recipe: &PackerRecipe,
+        recipe_dir: &Path,
+        out: &Path,
+        signing_key: Option<&Path>,
+        check: &dyn Fn() -> Result<(), FusionError>,
+    ) -> Result<BuildReport, FusionError> {
         use base64::Engine;
+        check()?;
         if signing_key.is_none()
             && recipe
                 .games
@@ -510,6 +524,7 @@ impl PackerEngine {
             let mut layers = Vec::new();
             let mut bindings = Vec::new();
             for layer in &game.layers {
+                check()?;
                 let mut spec = layer_spec(layer);
                 let program = game.program_descriptor.as_ref();
                 if let Some(program) = program {
@@ -584,15 +599,15 @@ impl PackerEngine {
                                 "Authoring staging cannot be inside a layer input directory.",
                             ));
                         }
-                        let object = cache.object(&cache.prepare_directory(&input)?)?;
+                        let object = cache.cas().import_directory_checked(&input, check)?;
                         reject_signing_key_payload(signing_digest, &object.files)?;
                         match format {
-                            ArchiveFormat::Zip => write_deterministic_zip(&object, &staged)?,
+                            ArchiveFormat::Zip => write_deterministic_zip(&object, &staged, check)?,
                             ArchiveFormat::Raw => {
                                 if object.files.len() != 1 { return Err(FusionError::new(ErrorCode::InvalidManifest, "A raw directory layer must contain exactly one file.")); }
                                 let file = &object.files[0];
                                 raw_path.get_or_insert_with(|| file.path.clone());
-                                fs_safety::copy_file(&object.root.join(fs_safety::validate_relative_path(&file.path)?), &staged)?;
+                                fs_safety::copy_file_checked(&object.root.join(fs_safety::validate_relative_path(&file.path)?), &staged, check)?;
                             }
                             ArchiveFormat::SevenZip => return Err(FusionError::new(ErrorCode::ArchiveInvalid, "Directory authoring supports zip or raw; supply a prebuilt 7z file.")),
                         }
@@ -600,7 +615,7 @@ impl PackerEngine {
                         if format == ArchiveFormat::Raw && raw_path.is_none() {
                             raw_path = Some(file_name(&input)?);
                         }
-                        fs_safety::copy_file(&input, &staged)?;
+                        fs_safety::copy_file_checked(&input, &staged, check)?;
                     }
                     let options = ArtifactInspectionOptions {
                         archive: Some(format),
@@ -614,7 +629,7 @@ impl PackerEngine {
                         attestation: layer.attestation.clone(),
                     };
                     let (inspection, object) =
-                        inspect_with_cache(&cache, &staged, &options, layer.kind)?;
+                        inspect_with_cache(&cache, &staged, &options, layer.kind, check)?;
                     reject_signing_key_payload(signing_digest, &object.files)?;
                     let filename = format!(
                         "{}.{}",
@@ -622,7 +637,12 @@ impl PackerEngine {
                         archive_extension(format)
                     );
                     let relative = format!("artifacts/{filename}");
-                    let mirrors = artifact_mirrors(layer, recipe.base_url.as_deref(), &filename)?;
+                    let mirrors = artifact_mirrors(
+                        layer,
+                        recipe.base_url.as_deref(),
+                        &filename,
+                        program.is_some(),
+                    )?;
                     spec.source = LayerSource::Remote {
                         mirrors,
                         archive: format,
@@ -826,6 +846,7 @@ impl PackerEngine {
                                 &out.join(fs_safety::validate_relative_path(&binding.path)?),
                                 &options,
                                 layer.kind,
+                                check,
                             )?;
                             physical.insert(
                                 (canonical.id.clone(), binding.layer_id.clone()),
@@ -922,18 +943,20 @@ impl PackerEngine {
                 .map_err(|e| FusionError::new(ErrorCode::InvalidJson, e.to_string()))?,
         )?;
         for item in publication {
+            check()?;
             match item {
                 PendingFile::Bytes(relative, bytes) => {
                     publish_immutable_bytes(&out, &relative, &bytes)?
                 }
                 PendingFile::Copy(relative, source) => {
-                    publish_immutable_copy(&out, &relative, &source)?
+                    publish_immutable_copy(&out, &relative, &source, check)?
                 }
                 PendingFile::Game { .. } => unreachable!(),
             }
         }
         // Commit immutable bindings before replacing convenience aliases. This
         // also preserves a previous legacy index that still referenced an alias.
+        check()?;
         fs_safety::atomic_write(&index_path, &index_bytes)?;
         for (relative, bytes) in aliases {
             fs_safety::atomic_write(&out.join(relative), &bytes)?;
@@ -946,6 +969,15 @@ impl PackerEngine {
     }
 
     pub(crate) fn verify_audit(&self, source_dir: &Path) -> Result<VerifyAudit, FusionError> {
+        self.verify_audit_checked(source_dir, &|| Ok(()))
+    }
+
+    pub(crate) fn verify_audit_checked(
+        &self,
+        source_dir: &Path,
+        check: &dyn Fn() -> Result<(), FusionError>,
+    ) -> Result<VerifyAudit, FusionError> {
+        check()?;
         let root = absolute(source_dir)?;
         let _root = fs_safety::guard(&root)?;
         let text = read_text(&root.join("source-index.json"))?;
@@ -965,6 +997,7 @@ impl PackerEngine {
         };
         let mut inventory_digests = BTreeMap::new();
         for entry in &index.games {
+            check()?;
             let relative = inventory_relative(&entry.id, &entry.manifest_blake3);
             let bytes = read_bytes(&root.join(&relative))?;
             let inventory: ManifestInventory = parse_json(utf8(&bytes)?)?;
@@ -989,6 +1022,7 @@ impl PackerEngine {
         }
         for entry in &index.games {
             let manifest_path = indexed_manifest_path(&root, entry)?;
+            check()?;
             let bytes = read_bytes(&manifest_path)?;
             verify_raw_manifest(&bytes, &entry.manifest_blake3)?;
             let relative = inventory_relative(&entry.id, &entry.manifest_blake3);
@@ -1061,7 +1095,8 @@ impl PackerEngine {
                     },
                     ..Default::default()
                 };
-                let (inspection, object) = inspect_with_cache(&cache, &path, &options, layer.kind)?;
+                let (inspection, object) =
+                    inspect_with_cache(&cache, &path, &options, layer.kind, check)?;
                 if layer.transport_digest.as_ref() != Some(&inspection.transport_digest)
                     || layer.size_bytes != Some(inspection.size_bytes)
                 {
@@ -1403,6 +1438,7 @@ fn inspect_with_cache(
     file: &Path,
     options: &ArtifactInspectionOptions,
     kind: LayerKind,
+    check: &dyn Fn() -> Result<(), FusionError>,
 ) -> Result<(ArtifactInspection, CasObject), FusionError> {
     let _parent = fs_safety::guard(
         file.parent()
@@ -1415,7 +1451,7 @@ fn inspect_with_cache(
         .len();
     let transport_digest = DigestSpec {
         algorithm: DigestAlgorithm::Blake3,
-        value: hash_file(file, DigestAlgorithm::Blake3)?,
+        value: hash_file_checked(file, DigestAlgorithm::Blake3, check)?,
     };
     let archive = options.archive.unwrap_or_else(|| infer_archive(file));
     let raw_path = if archive == ArchiveFormat::Raw {
@@ -1462,11 +1498,12 @@ fn inspect_with_cache(
     };
     // Reuse the exact LayerCache extractor and CAS preflight; there is no second
     // ZIP/7z extraction implementation in the authoring engine.
-    let object = cache.object(&cache.prepare_artifact(
+    let object = cache.object(&cache.prepare_artifact_checked(
         &CanonicalLayer::from(spec),
         file,
         raw_path.as_deref(),
         None,
+        check,
     )?)?;
     let critical_files = critical_specs(
         &object.files,
@@ -1696,7 +1733,11 @@ fn validate_provider_attestation(
     Ok(())
 }
 
-fn write_deterministic_zip(object: &CasObject, target: &Path) -> Result<(), FusionError> {
+fn write_deterministic_zip(
+    object: &CasObject,
+    target: &Path,
+    check: &dyn Fn() -> Result<(), FusionError>,
+) -> Result<(), FusionError> {
     let _parent = fs_safety::guard(
         target
             .parent()
@@ -1723,7 +1764,7 @@ fn write_deterministic_zip(object: &CasObject, target: &Path) -> Result<(), Fusi
                 .root
                 .join(fs_safety::validate_relative_path(&entry.path)?),
         )?;
-        std::io::copy(&mut input, &mut zip).map_err(|e| io_error("Stream ZIP file", target, e))?;
+        fs_safety::stream_copy_checked(&mut input, &mut zip, target, check)?;
     }
     zip.finish()
         .and_then(|file| {
@@ -2092,6 +2133,7 @@ fn artifact_mirrors(
     layer: &PackerLayerRecipe,
     source_base: Option<&str>,
     filename: &str,
+    allow_relative: bool,
 ) -> Result<Vec<String>, FusionError> {
     let mut mirrors: Vec<String> = layer
         .mirrors
@@ -2108,7 +2150,11 @@ fn artifact_mirrors(
         )?);
     }
     for mirror in &mirrors {
-        require_https(mirror)?;
+        if allow_relative && !mirror.contains(':') && !mirror.starts_with("//") {
+            super::evolution::validate_relative_source_url(mirror, "mirrors")?;
+        } else {
+            require_https(mirror)?;
+        }
     }
     Ok(mirrors)
 }
@@ -2374,14 +2420,19 @@ fn publish_immutable_bytes(root: &Path, relative: &str, bytes: &[u8]) -> Result<
     }
     fs_safety::atomic_write(&target, bytes)
 }
-fn publish_immutable_copy(root: &Path, relative: &str, source: &Path) -> Result<(), FusionError> {
+fn publish_immutable_copy(
+    root: &Path,
+    relative: &str,
+    source: &Path,
+    check: &dyn Fn() -> Result<(), FusionError>,
+) -> Result<(), FusionError> {
     let target = root.join(fs_safety::validate_relative_path(relative)?);
     if target
         .try_exists()
         .map_err(|e| io_error("Inspect artifact publication", &target, e))?
     {
-        if hash_file(&target, DigestAlgorithm::Blake3)?
-            != hash_file(source, DigestAlgorithm::Blake3)?
+        if hash_file_checked(&target, DigestAlgorithm::Blake3, check)?
+            != hash_file_checked(source, DigestAlgorithm::Blake3, check)?
         {
             return Err(FusionError::new(
                 ErrorCode::TransportDigestMismatch,
@@ -2395,10 +2446,11 @@ fn publish_immutable_copy(root: &Path, relative: &str, source: &Path) -> Result<
         .ok_or_else(|| invalid_path("Artifact has no parent."))?;
     let _parent = fs_safety::ensure_directory(parent)?;
     let temporary = parent.join(fs_safety::unique_name(".artifact"));
-    fs_safety::copy_file(source, &temporary)?;
+    fs_safety::copy_file_checked(source, &temporary, check)?;
     // The repository writer lock serializes this no-replace publication.
-    let result =
-        fs::rename(&temporary, &target).map_err(|e| io_error("Publish artifact", &target, e));
+    let result = check().and_then(|_| {
+        fs::rename(&temporary, &target).map_err(|e| io_error("Publish artifact", &target, e))
+    });
     if result.is_err() {
         let _ = fs_safety::unlink_file(&temporary);
     }

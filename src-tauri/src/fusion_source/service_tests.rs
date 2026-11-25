@@ -171,6 +171,7 @@ struct MemoryTransport {
     documents: Mutex<BTreeMap<String, Vec<u8>>>,
     calls: Mutex<Vec<String>>,
     stalled: Mutex<Option<String>>,
+    operation_token: Mutex<Option<Cancellation>>,
 }
 impl MemoryTransport {
     fn set(&self, url: &str, value: Vec<u8>) {
@@ -187,6 +188,7 @@ impl ArtifactTransport for MemoryTransport {
         cancel: &Cancellation,
     ) -> Result<TransferReceipt, FusionError> {
         self.calls.lock().unwrap().push(url.into());
+        *self.operation_token.lock().unwrap() = Some(cancel.clone());
         let stalled = self
             .stalled
             .lock()
@@ -224,10 +226,24 @@ impl ArtifactTransport for MemoryTransport {
     }
 }
 #[derive(Default)]
-struct Events(Mutex<Vec<OperationProgress>>);
+struct Events(
+    Mutex<Vec<OperationProgress>>,
+    Mutex<Option<Arc<MemoryTransport>>>,
+);
 impl ProgressSink for Events {
     fn emit(&self, event: &OperationProgress) {
         self.0.lock().unwrap().push(event.clone());
+        if event.phase == "transform" && event.layer_id.as_deref() == Some("runtime") {
+            if let Some(transport) = self.1.lock().unwrap().take() {
+                transport
+                    .operation_token
+                    .lock()
+                    .unwrap()
+                    .as_ref()
+                    .unwrap()
+                    .cancel();
+            }
+        }
     }
 }
 
@@ -589,6 +605,48 @@ async fn corrupted_update_preserves_active_snapshot_and_offline_launch_readiness
 }
 
 #[tokio::test]
+async fn cancel_at_remote_zip_transform_never_imports_runtime_into_cas() {
+    let f = fixture();
+    let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    zip.start_file("main.exe", zip::write::SimpleFileOptions::default())
+        .unwrap();
+    zip.write_all(RUNTIME_ONE).unwrap();
+    let zip = zip.finish().unwrap().into_inner();
+    let archive = "https://example.com/source/runtime.zip";
+    let mut wire = document("1", RUNTIME_ONE);
+    wire["layers"][1]["source"] = json!({"kind":"remote","mirrors":[archive],"archive":"zip"});
+    wire["layers"][1]["transport_digest"] = json!({"algorithm":"blake3","value":hash(&zip)});
+    f.transport.set(archive, zip);
+    f.transport.set(INDEX, index(&wire));
+    f.transport
+        .set(MANIFEST, serde_json::to_vec(&wire).unwrap());
+    f.service.source_add(INDEX).await.unwrap();
+    *f.events.1.lock().unwrap() = Some(f.transport.clone());
+    let mut request = f.request.clone();
+    request.user_files.remove("runtime");
+    assert_eq!(
+        f.service
+            .game_install(&f.game, request)
+            .await
+            .unwrap_err()
+            .code,
+        ErrorCode::Cancelled
+    );
+    assert!(
+        f.events.1.lock().unwrap().is_none(),
+        "cancellation at the transform boundary did not run"
+    );
+    assert!(f.storage.get_active_snapshot(&f.game).unwrap().is_none());
+    let cas = f.service.library_root().join(".fusion-source/cas");
+    assert_eq!(
+        fs::read_dir(cas.join("objects")).unwrap().count(),
+        1,
+        "only the preceding base layer may be imported"
+    );
+    assert_eq!(fs::read_dir(cas.join("staging")).unwrap().count(), 0);
+}
+
+#[tokio::test]
 async fn cancel_stalled_transport_releases_operation_and_cannot_activate() {
     let f = fixture();
     f.service.source_add(INDEX).await.unwrap();
@@ -886,4 +944,301 @@ async fn update_repairs_a_missing_writable_injector_without_losing_saves_or_earl
         b"save after last launch"
     );
     assert!(f.service.game_get_state(&f.game).await.unwrap().ready);
+}
+
+#[tokio::test]
+async fn cross_source_inheritance_resolves_relative_mirrors_from_declaring_source_root() {
+    let f = fixture();
+    let parent_url = "https://parent.example/root-a/source-index.json";
+    let child_url = "https://child.example/root-b/source-index.json";
+    let parent_runtime = b"parent-runtime-bytes";
+    let child_addon = b"child-addon-bytes";
+
+    let descriptor = |id: &str, title: &str| {
+        json!({
+            "program_descriptor": {
+                "document_type": "program_descriptor",
+                "schema_version": "1.0",
+                "identity": {
+                    "id": id,
+                    "title": title,
+                    "version": "1.0",
+                    "os": "windows",
+                    "architecture": "x86_64"
+                },
+                "executor": {"id": "fusion.declarative", "version": "1.0"},
+                "components": [
+                    {
+                        "id": "program",
+                        "layer_id": "runtime",
+                        "origin": {"kind": "managed", "artifact_ref": "program", "redistribution_allowed": true},
+                        "source_root": "",
+                        "mount_path": "runtime"
+                    },
+                    {
+                        "id": "addon",
+                        "layer_id": "addon",
+                        "origin": {"kind": "managed", "artifact_ref": "addon", "redistribution_allowed": true},
+                        "source_root": "",
+                        "mount_path": "addons"
+                    }
+                ],
+                "required_files": [
+                    {"path": "runtime/main.exe", "role": "main_executable"}
+                ],
+                "projection_rules": [],
+                "directories": [],
+                "entrypoint": {
+                    "executable": "runtime/main.exe",
+                    "working_directory": "runtime",
+                    "arguments": [],
+                    "environment_paths": []
+                },
+                "configs": [],
+                "persistence": [],
+                "build_profiles": [{
+                    "id": "full",
+                    "title": "Full",
+                    "layer_ids": ["runtime", "addon"],
+                    "controls_profile_ids": ["native"],
+                    "settings": []
+                }],
+                "controls_profiles": [{
+                    "id": "native",
+                    "title": "Native",
+                    "kind": "application_defaults"
+                }]
+            }
+        })
+    };
+
+    let parent_doc = json!({
+        "schema_version": "1.1",
+        "id": "parent-game",
+        "title": "Parent 1.1",
+        "version": "1.0",
+        "capabilities": {"required": [], "optional": []},
+        "layers": [{
+            "id": "runtime",
+            "kind": "runtime",
+            "mount_path": "runtime",
+            "source": {"kind": "remote", "mirrors": ["artifacts/parent-main.exe"], "archive": "raw"},
+            "transport_digest": {"algorithm": "blake3", "value": hash(parent_runtime)},
+            "size_bytes": parent_runtime.len(),
+            "critical_files": [{"path": "main.exe", "blake3": hash(parent_runtime), "role": "main_executable"}],
+            "default_enabled": true
+        }],
+        "launch": {
+            "id": "program",
+            "executable": "runtime/main.exe",
+            "args": [],
+            "env": {},
+            "depends_on": [],
+            "role": "primary"
+        },
+        "persistence": {"saves_paths": []}
+    });
+    let parent_raw = serde_json::to_vec(&parent_doc).unwrap();
+    let parent_index = json!({
+        "schema_version": "1.0",
+        "source_info": {"id": "source-a", "name": "Source A"},
+        "games": [{
+            "id": "parent-game",
+            "title": "Parent 1.1",
+            "version": "1.0",
+            "manifest_url": "manifests/nested/parent.json",
+            "manifest_blake3": hash(&parent_raw)
+        }]
+    });
+
+    let child_doc = json!({
+        "schema_version": "1.1",
+        "id": "child-game",
+        "title": "Child 1.1",
+        "version": "1.0",
+        "extends": "source-a::parent-game",
+        "creator": descriptor("child-game", "Child 1.1"),
+        "layers": [{
+            "id": "addon",
+            "kind": "addon",
+            "mount_path": "addons",
+            "depends_on": ["runtime"],
+            "source": {"kind": "remote", "mirrors": ["artifacts/child-extra.bin"], "archive": "raw"},
+            "transport_digest": {"algorithm": "blake3", "value": hash(child_addon)},
+            "size_bytes": child_addon.len(),
+            "default_enabled": true
+        }]
+    });
+    let child_raw = serde_json::to_vec(&child_doc).unwrap();
+    let child_index = json!({
+        "schema_version": "1.0",
+        "source_info": {"id": "source-b", "name": "Source B"},
+        "games": [{
+            "id": "child-game",
+            "title": "Child 1.1",
+            "version": "1.0",
+            "manifest_url": "manifests/nested/child.json",
+            "manifest_blake3": hash(&child_raw)
+        }]
+    });
+
+    f.transport
+        .set(parent_url, serde_json::to_vec(&parent_index).unwrap());
+    f.transport.set(
+        "https://parent.example/root-a/manifests/nested/parent.json",
+        parent_raw,
+    );
+    f.transport.set(
+        "https://parent.example/root-a/artifacts/parent-main.exe",
+        parent_runtime.to_vec(),
+    );
+    f.transport
+        .set(child_url, serde_json::to_vec(&child_index).unwrap());
+    f.transport.set(
+        "https://child.example/root-b/manifests/nested/child.json",
+        child_raw,
+    );
+    f.transport.set(
+        "https://child.example/root-b/artifacts/child-extra.bin",
+        child_addon.to_vec(),
+    );
+
+    f.service.source_add(parent_url).await.unwrap();
+    f.service.source_add(child_url).await.unwrap();
+    let game = QualifiedGameId {
+        source_id: "source-b".into(),
+        game_id: "child-game".into(),
+    };
+    f.service
+        .game_set_options(
+            &game,
+            GameOptions {
+                build_profile_id: Some("full".into()),
+                controls_profile_id: Some("native".into()),
+                ..GameOptions::default()
+            },
+        )
+        .await
+        .unwrap();
+    let status = f
+        .service
+        .game_install(
+            &game,
+            InstallRequest {
+                raw_paths: BTreeMap::from([
+                    ("runtime".into(), "main.exe".into()),
+                    ("addon".into(), "extra.bin".into()),
+                ]),
+                ..InstallRequest::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(status.status, "completed");
+
+    // 1.1 child extending a 1.0 parent with an absolute mirror also resolves cleanly.
+    let mut legacy_parent = parent_doc;
+    legacy_parent["schema_version"] = json!("1.0");
+    legacy_parent["id"] = json!("parent-10");
+    legacy_parent["layers"][0]["source"]["mirrors"] =
+        json!(["https://parent.example/cdn/parent-10.exe"]);
+    let legacy_raw = serde_json::to_vec(&legacy_parent).unwrap();
+    let child11_raw = serde_json::to_vec(&json!({
+        "schema_version": "1.1",
+        "id": "child-from-10",
+        "title": "Child from 1.0",
+        "version": "1.0",
+        "extends": "source-a::parent-10",
+        "creator": descriptor("child-from-10", "Child from 1.0"),
+        "layers": [{
+            "id": "addon",
+            "kind": "addon",
+            "mount_path": "addons",
+            "depends_on": ["runtime"],
+            "source": {"kind": "remote", "mirrors": ["artifacts/child-from-10.bin"], "archive": "raw"},
+            "transport_digest": {"algorithm": "blake3", "value": hash(child_addon)},
+            "size_bytes": child_addon.len(),
+            "default_enabled": true
+        }]
+    }))
+    .unwrap();
+    f.transport.set("https://parent.example/root-a/source-index.json", serde_json::to_vec(&json!({
+        "schema_version": "1.0",
+        "source_info": {"id": "source-a", "name": "Source A"},
+        "games": [{"id": "parent-10", "title": "Parent 1.0", "version": "1.0", "manifest_url": "manifests/nested/p10.json", "manifest_blake3": hash(&legacy_raw)}]
+    })).unwrap());
+    f.transport.set(
+        "https://parent.example/root-a/manifests/nested/p10.json",
+        legacy_raw,
+    );
+    f.transport.set(
+        "https://parent.example/cdn/parent-10.exe",
+        parent_runtime.to_vec(),
+    );
+    f.service.source_refresh("source-a").await.unwrap();
+    f.transport.set(child_url, serde_json::to_vec(&json!({
+        "schema_version": "1.0",
+        "source_info": {"id": "source-b", "name": "Source B"},
+        "games": [{"id": "child-from-10", "title": "Child from 1.0", "version": "1.0", "manifest_url": "manifests/nested/c10.json", "manifest_blake3": hash(&child11_raw)}]
+    })).unwrap());
+    f.transport.set(
+        "https://child.example/root-b/manifests/nested/c10.json",
+        child11_raw,
+    );
+    f.transport.set(
+        "https://child.example/root-b/artifacts/child-from-10.bin",
+        child_addon.to_vec(),
+    );
+    f.service.source_refresh("source-b").await.unwrap();
+    let game2 = QualifiedGameId {
+        source_id: "source-b".into(),
+        game_id: "child-from-10".into(),
+    };
+    f.service
+        .game_set_options(
+            &game2,
+            GameOptions {
+                build_profile_id: Some("full".into()),
+                controls_profile_id: Some("native".into()),
+                ..GameOptions::default()
+            },
+        )
+        .await
+        .unwrap();
+    let status2 = f
+        .service
+        .game_install(
+            &game2,
+            InstallRequest {
+                raw_paths: BTreeMap::from([
+                    ("runtime".into(), "main.exe".into()),
+                    ("addon".into(), "extra.bin".into()),
+                ]),
+                ..InstallRequest::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(status2.status, "completed");
+
+    let calls = f.transport.calls.lock().unwrap().clone();
+    for expected in [
+        "https://parent.example/root-a/artifacts/parent-main.exe",
+        "https://child.example/root-b/artifacts/child-extra.bin",
+        "https://parent.example/cdn/parent-10.exe",
+        "https://child.example/root-b/artifacts/child-from-10.bin",
+    ] {
+        assert!(
+            calls.contains(&expected.to_owned()),
+            "missing expected {expected} in calls: {calls:?}"
+        );
+    }
+    assert!(
+        !calls
+            .iter()
+            .any(|url| url.contains("/manifests/nested/artifacts/"))
+            && !calls
+                .contains(&"https://child.example/root-b/artifacts/parent-main.exe".to_owned()),
+        "relative mirror resolved from wrong base: {calls:?}"
+    );
 }

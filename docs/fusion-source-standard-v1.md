@@ -418,3 +418,12 @@ sources. Missing/invalid signatures and key or identity replacement return
 `invalid_source_signature` before catalog changes. Key rotation is unsupported.
 Sources without public keys retain unsigned operation; a source which previously
 declared a metadata-only public key must publish a valid signature to refresh.
+
+## Stage 6: GameManifest 1.1, Source-relative mirrors and ProgramDescriptor 1.0
+
+`GameManifest` `"schema_version": "1.1"` extends the Source wire format for Creator-authored portable packages without changing `"1.0"`, Ed25519 signature verification (`FusionSourceIndex.v1` canonical signing), TOFU key pinning, or HTTPS TLS rules:
+
+- **Safe Source-relative mirrors (`1.1` only):** a `1.1` manifest layer (or child manifest inheriting a layer across Sources) may declare relative mirror references under `artifacts/<relative-path>` (`\` is rejected, traversal/empty segments/`?`/`#`/`%` and non-empty query/fragment/userinfo are rejected). `GameManifest` `"1.0"` continues to reject relative mirrors.
+- **Declaring-source-root resolution:** relative mirrors resolve strictly against the HTTP(S) or local base root of the Source that **declared** that layer — including cross-Source `extends` chains with `1.0` or `1.1` parents — never against the manifest directory or a child Source root.
+- **`ProgramDescriptor` `"1.0"`:** `creator.program_descriptor` inside `GameManifest` `1.1` describes bounded portable components (`managed`, `external`, `user_provided`), projection rules, INI (`empty_ini`) and XML attribute (`xml_root`) configs, isolated latest-wins persistence (`preserve_latest` / `export: never`), finite `build_profiles`, and `controls_profiles` (`application_defaults` and closed host capability `eden_param_package_v1`).
+- **Host-side boundary & SDL release barrier:** `ProgramDescriptor` environment path overrides require explicit local `EnvironmentApproval` bound to the exact descriptor BLAKE3 digest and approved variable names (Source signatures never grant env or execution trust). On Windows, `InputService` owns the single process-global `sdl2` worker (`bindings_save` stores physical GUID/port/mapping locally outside portable exports) and enforces `with_released_for_launch` (`handlesClosed` + `SDL_WasInit(0) == 0`) before any `ProcessSupervisor` child process spawn.

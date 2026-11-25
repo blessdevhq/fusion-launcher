@@ -2,12 +2,17 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { readFileSync } from 'node:fs';
 import { createCreatorStore } from './creatorStore.ts';
-import type { CreatorApi, FusionInputApi, CreatorJob, CreatorJobProgress, CreatorProjectOpenResponse, InputReleaseReceipt, InputState } from '../types/fusionCreator.ts';
+import type { CreatorApi, FusionInputApi, CreatorJob, CreatorJobProgress, CreatorProjectOpenResponse, CreatorRelease, CreatorReport, InputReleaseReceipt, InputState } from '../types/fusionCreator.ts';
 
 const fixtures = JSON.parse(readFileSync(new URL('../../fixtures/creator/contracts.json', import.meta.url), 'utf8'));
 const opened: CreatorProjectOpenResponse = { project: fixtures.project, privateBindings: fixtures.projectBindings, missingInputs: fixtures.projectMissingInputs };
 const progress = (overrides: Partial<CreatorJobProgress> = {}): CreatorJobProgress => ({ ...fixtures.job, ...overrides });
 const job = (overrides: Partial<CreatorJobProgress> = {}): CreatorJob => ({ progress: progress(overrides), checkpoints: [], reportIds: [] });
+const releaseFixture = (overrides: Partial<CreatorRelease> = {}): CreatorRelease => ({
+  releaseId: 'release-1', projectId: opened.project.project_id, projectRevision: 1,
+  manifestBlake3: 'b'.repeat(64), artifactHashes: { program: 'c'.repeat(64) }, reportIds: [], ...overrides
+});
+const reportFixture = (overrides: Partial<CreatorReport> = {}): CreatorReport => ({ ...fixtures.report, ...overrides });
 
 const unavailable = { code: 'action_unavailable', message: 'Not implemented', details: { command: 'fusion_creator_project_list' } };
 function apiWith(overrides: Partial<CreatorApi> = {}): CreatorApi {
@@ -472,4 +477,230 @@ test('disconnection is nonterminal, but stopping and stopped cannot reactivate',
   assert.equal(store.getState().mergeInputState({ ...fixtures.input, sequence: 3, status: 'active' }), true);
   assert.equal(store.getState().mergeInputState({ ...fixtures.input, sequence: 4, status: 'failed' }), true);
   assert.equal(store.getState().mergeInputState({ ...fixtures.input, sequence: 5, status: 'active' }), false);
+});
+
+const flushMicrotasks = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+test('openProject hydrates releases and reports while ignoring stale project responses after switch', async () => {
+  const staleReleases = deferred<CreatorRelease[]>();
+  const staleReport = deferred<CreatorReport>();
+  const store = createCreatorStore({ creatorApi: apiWith({
+    projectOpen: async ({ projectId }) => projectId === 'other'
+      ? { ...opened, project: { ...opened.project, project_id: 'other', revision: 1 }, privateBindings: null }
+      : opened,
+    releaseList: async ({ projectId }) => projectId === opened.project.project_id
+      ? staleReleases.promise
+      : [releaseFixture({ releaseId: 'rel-other', projectId: 'other', reportIds: ['rep-other'] })],
+    reportGet: async ({ reportId }) => reportId === 'rep-old'
+      ? staleReport.promise
+      : reportFixture({ reportId: 'rep-other', releaseId: 'rel-other', kind: 'clean_install', status: 'passed' })
+  }) });
+  await store.getState().openProject(opened.project.project_id);
+  const strayReport = store.getState().loadReport('rep-old').catch(() => null);
+  await store.getState().openProject('other');
+  await flushMicrotasks();
+  assert.equal(store.getState().selectedReleaseId, 'rel-other');
+  assert.equal(store.getState().reports['rep-other']?.report?.status, 'passed');
+  staleReleases.resolve([releaseFixture({ releaseId: 'rel-old', reportIds: ['rep-old'] })]);
+  staleReport.resolve(reportFixture({ reportId: 'rep-old', releaseId: 'rel-old', status: 'passed' }));
+  await strayReport;
+  await flushMicrotasks();
+  assert.equal(store.getState().releases.length, 1);
+  assert.equal(store.getState().releases[0].releaseId, 'rel-other');
+  assert.equal(store.getState().reports['rep-old'], undefined);
+});
+
+test('verify startJob reads snapshot, applies monotonic live progress, refreshes reports and cancels cleanly', async () => {
+  const receipt = { jobId: 'job-v1', projectId: opened.project.project_id, projectRevision: 1 };
+  const request = { ...fixtures.jobStart, releaseId: 'release-1', targetDirectory: null };
+  let reportsForRelease: string[] = [];
+  let projectsRefreshCount = 0;
+  let jobReads = 0;
+  const store = createCreatorStore({ creatorApi: apiWith({
+    projectList: async () => { projectsRefreshCount++; return [fixtures.projectSummary]; },
+    projectOpen: async () => opened,
+    releaseList: async () => [releaseFixture({ releaseId: 'release-1', reportIds: reportsForRelease })],
+    reportGet: async ({ reportId }) => reportFixture({ reportId, releaseId: 'release-1', kind: 'structure_integrity', status: 'passed' }),
+    verify: async (value) => { assert.deepEqual(value, request); return receipt; },
+    jobGet: async () => {
+      jobReads++;
+      if (jobReads === 1) return job({ jobId: receipt.jobId, kind: 'verify', sequence: 2, status: 'running', phase: 'structure_integrity', releaseId: 'release-1' });
+      reportsForRelease = ['rep-struct'];
+      return {
+        progress: progress({ jobId: receipt.jobId, kind: 'verify', sequence: 4, status: 'running', phase: 'clean_install', completedUnits: 1, totalUnits: 2, checkpointId: 'cp-1', releaseId: 'release-1' }),
+        checkpoints: [{ checkpointId: 'cp-1', jobId: receipt.jobId, boundary: 'verification_completed', stamp: fixtures.resumeStamp, resultBlake3: 'a'.repeat(64), artifactId: null }],
+        reportIds: ['rep-struct']
+      };
+    },
+    jobCancel: async ({ jobId }) => {
+      assert.equal(jobId, receipt.jobId);
+      return job({ jobId, kind: 'verify', sequence: 5, status: 'cancelling', phase: 'cancelling', releaseId: 'release-1' });
+    }
+  }) });
+  await store.getState().openProject(opened.project.project_id);
+  await store.getState().startJob('verify', request);
+  assert.equal(store.getState().jobs[receipt.jobId].progress?.status, 'running');
+  assert.equal(store.getState().mergeJobProgress(progress({
+    jobId: receipt.jobId, kind: 'verify', sequence: 4, status: 'running',
+    phase: 'clean_install', completedUnits: 1, totalUnits: 2, checkpointId: 'cp-1', releaseId: 'release-1'
+  })), true);
+  assert.equal(store.getState().mergeJobProgress(progress({ jobId: receipt.jobId, kind: 'verify', sequence: 3 })), false);
+  await flushMicrotasks();
+  assert.equal(store.getState().reports['rep-struct']?.report?.kind, 'structure_integrity');
+  assert.equal(store.getState().releases[0].reportIds[0], 'rep-struct');
+  assert.ok(projectsRefreshCount >= 1);
+  await store.getState().cancelJob(receipt.jobId);
+  assert.equal(store.getState().jobs[receipt.jobId].progress?.status, 'cancelling');
+});
+
+test('late verify receipt after project switch stays inactive and reopening back restores ownership', async () => {
+  const pending = deferred<{ jobId: string; projectId: string; projectRevision: number }>();
+  const store = createCreatorStore({ creatorApi: apiWith({
+    projectOpen: async ({ projectId }) => projectId === 'other'
+      ? { ...opened, project: { ...opened.project, project_id: 'other', revision: 1 }, privateBindings: null }
+      : opened,
+    verify: () => pending.promise,
+    jobGet: async ({ jobId }) => job({ jobId, kind: 'verify', sequence: 2, status: 'completed', releaseId: 'release-1' }),
+    releaseList: async () => []
+  }) });
+  await store.getState().openProject(opened.project.project_id);
+  const starting = store.getState().startJob('verify', { ...fixtures.jobStart, releaseId: 'release-1', targetDirectory: null });
+  await store.getState().openProject('other');
+  pending.resolve({ jobId: 'job-vlate', projectId: opened.project.project_id, projectRevision: 1 });
+  await starting;
+  assert.equal(store.getState().selectedJobId, null);
+  assert.equal(store.getState().jobs['job-vlate'].acceptingEvents, false);
+  await store.getState().openProject(opened.project.project_id);
+  await flushMicrotasks();
+  assert.equal(store.getState().jobs['job-vlate'].acceptingEvents, true);
+  assert.equal(store.getState().jobs['job-vlate'].progress?.status, 'completed');
+});
+
+test('resumeJob resumes interrupted verify with checkpoint and rejects zero-checkpoint jobs', async () => {
+  const checkpoint = { checkpointId: 'cp-1', jobId: 'job-int', boundary: 'verification_completed', stamp: fixtures.resumeStamp, resultBlake3: 'a'.repeat(64), artifactId: null };
+  let resumed = false;
+  const store = createCreatorStore({ creatorApi: apiWith({
+    projectOpen: async () => opened,
+    releaseList: async () => [releaseFixture({ releaseId: 'release-1', reportIds: resumed ? ['rep-struct', 'rep-clean'] : ['rep-struct'] })],
+    reportGet: async ({ reportId }) => reportFixture({ reportId, releaseId: 'release-1', kind: reportId === 'rep-struct' ? 'structure_integrity' : 'clean_install', status: 'passed' }),
+    jobGet: async ({ jobId }) => jobId === 'job-zero'
+      ? { progress: progress({ jobId, kind: 'verify', sequence: 1, status: 'interrupted', releaseId: 'release-1' }), checkpoints: [], reportIds: [] }
+      : {
+          progress: progress({ jobId, kind: 'verify', sequence: resumed ? 4 : 2, status: resumed ? 'completed' : 'interrupted', releaseId: 'release-1' }),
+          checkpoints: [checkpoint],
+          reportIds: resumed ? ['rep-struct', 'rep-clean'] : ['rep-struct']
+        },
+    jobResume: async ({ jobId }) => {
+      assert.equal(jobId, 'job-int');
+      resumed = true;
+      return { jobId, projectId: opened.project.project_id, projectRevision: 1 };
+    }
+  }) });
+  await store.getState().openProject(opened.project.project_id);
+  await store.getState().reopenJob('job-zero');
+  await assert.rejects(store.getState().resumeJob('job-zero'), { code: 'invalid_response' });
+  await store.getState().reopenJob('job-int');
+  await store.getState().resumeJob('job-int');
+  await flushMicrotasks();
+  assert.equal(store.getState().jobs['job-int'].progress?.status, 'completed');
+  assert.equal(store.getState().reports['rep-clean']?.report?.status, 'passed');
+});
+
+test('failed verify retry creates distinct job and keeps separate failure and retry reports', async () => {
+  let attempt = 0;
+  const store = createCreatorStore({ creatorApi: apiWith({
+    projectOpen: async () => opened,
+    releaseList: async () => [releaseFixture({ releaseId: 'release-1', reportIds: attempt === 1 ? ['rep-fail'] : ['rep-fail', 'rep-struct-2', 'rep-clean-2'] })],
+    reportGet: async ({ reportId }) => reportId === 'rep-fail'
+      ? reportFixture({ reportId, releaseId: 'release-1', kind: 'clean_install', status: 'failed' })
+      : reportFixture({ reportId, releaseId: 'release-1', kind: reportId === 'rep-struct-2' ? 'structure_integrity' : 'clean_install', status: 'passed' }),
+    verify: async () => ({ jobId: `job-try-${++attempt}`, projectId: opened.project.project_id, projectRevision: 1 }),
+    jobGet: async ({ jobId }) => jobId === 'job-try-1'
+      ? {
+          progress: progress({ jobId, kind: 'verify', sequence: 3, status: 'failed', releaseId: 'release-1', error: { code: 'integrity_violation', message: 'Tampered', details: { passedStages: ['structure_integrity'] } } }),
+          checkpoints: [],
+          reportIds: ['rep-fail']
+        }
+      : {
+          progress: progress({ jobId, kind: 'verify', sequence: 3, status: 'completed', releaseId: 'release-1' }),
+          checkpoints: [{ checkpointId: 'cp-2', jobId, boundary: 'verification_completed', stamp: fixtures.resumeStamp, resultBlake3: 'a'.repeat(64), artifactId: null }],
+          reportIds: ['rep-struct-2', 'rep-clean-2']
+        }
+  }) });
+  await store.getState().openProject(opened.project.project_id);
+  const req = { ...fixtures.jobStart, releaseId: 'release-1', targetDirectory: null };
+  await store.getState().startJob('verify', req);
+  await store.getState().startJob('verify', req);
+  await flushMicrotasks();
+  assert.equal(store.getState().jobs['job-try-1'].progress?.status, 'failed');
+  assert.equal(store.getState().jobs['job-try-2'].progress?.status, 'completed');
+  assert.equal(store.getState().reports['rep-fail']?.report?.status, 'failed');
+  assert.equal(store.getState().reports['rep-clean-2']?.report?.status, 'passed');
+});
+
+test('export and verifyHttps read snapshots eagerly and hydrate https_acquisition reports', async () => {
+  const exportReq = { ...fixtures.jobStart, releaseId: 'release-1', targetDirectory: 'D:/exports/game', sourceUrl: null };
+  const httpsReq = { ...fixtures.jobStart, releaseId: 'release-1', targetDirectory: null, sourceUrl: 'https://example.org/source-index.json' };
+  let httpsFinished = false;
+  const store = createCreatorStore({ creatorApi: apiWith({
+    projectOpen: async () => opened,
+    releaseList: async () => [releaseFixture({ releaseId: 'release-1', reportIds: httpsFinished ? ['rep-https'] : [] })],
+    reportGet: async ({ reportId }) => reportFixture({
+      reportId, releaseId: 'release-1', kind: 'https_acquisition', status: 'passed',
+      environment: { os: 'windows', source_url: httpsReq.sourceUrl }
+    }),
+    export: async (req) => { assert.deepEqual(req, exportReq); return { jobId: 'job-exp', projectId: opened.project.project_id, projectRevision: 1 }; },
+    verifyHttps: async (req) => { assert.deepEqual(req, httpsReq); httpsFinished = true; return { jobId: 'job-https', projectId: opened.project.project_id, projectRevision: 1 }; },
+    jobGet: async ({ jobId }) => jobId === 'job-exp'
+      ? {
+          progress: progress({ jobId, kind: 'export', sequence: 2, status: 'completed', releaseId: 'release-1', checkpointId: 'cp-exp' }),
+          checkpoints: [{ checkpointId: 'cp-exp', jobId, boundary: 'export_completed', stamp: fixtures.resumeStamp, resultBlake3: 'a'.repeat(64), artifactId: null }],
+          reportIds: []
+        }
+      : {
+          progress: progress({ jobId, kind: 'verify_https', sequence: 2, status: 'completed', releaseId: 'release-1', checkpointId: 'cp-https' }),
+          checkpoints: [{ checkpointId: 'cp-https', jobId, boundary: 'verification_completed', stamp: fixtures.resumeStamp, resultBlake3: 'a'.repeat(64), artifactId: null }],
+          reportIds: ['rep-https']
+        }
+  }) });
+  await store.getState().openProject(opened.project.project_id);
+  await store.getState().startJob('export', exportReq);
+  assert.equal(store.getState().jobs['job-exp'].progress?.status, 'completed');
+  await store.getState().startJob('verify_https', httpsReq);
+  await flushMicrotasks();
+  assert.equal(store.getState().jobs['job-https'].progress?.status, 'completed');
+  assert.equal(store.getState().reports['rep-https']?.report?.kind, 'https_acquisition');
+  assert.equal(store.getState().reports['rep-https']?.report?.status, 'passed');
+});
+
+test('saveInputBindings persists lastSavedBindings on match and records structured errors on rejection', async () => {
+  let rejectSave = false;
+  const store = createCreatorStore({
+    fusionInputApi: inputWith({
+      sessionStart: async () => ({ sessionId: 'session-1' }),
+      sessionGet: async () => ({ sessionId: 'session-1', sequence: 1, deviceId: 'device-1', status: 'active', buttons: {}, axes: {}, error: null }),
+      bindingsSave: async (req) => {
+        if (rejectSave) throw { code: 'action_unavailable', message: 'Controller changed.', details: {} };
+        return { sessionId: req.sessionId, controlsProfileId: req.controlsProfileId };
+      }
+    })
+  });
+  const req = {
+    sessionId: 'session-1',
+    controlsProfileId: 'sdl-p0',
+    bindings: { a: { kind: 'controller_button' as const, button: 'b' } },
+    deadzones: { leftx: 0.15 },
+    rawBindings: {}
+  };
+  await assert.rejects(store.getState().saveInputBindings(req), { code: 'invalid_response' });
+  await store.getState().startInputSession('device-1');
+  const receipt = await store.getState().saveInputBindings(req);
+  assert.deepEqual(receipt, { sessionId: 'session-1', controlsProfileId: 'sdl-p0' });
+  assert.equal(store.getState().inputSaveStatus, 'ready');
+  assert.deepEqual(store.getState().lastSavedBindings, receipt);
+
+  rejectSave = true;
+  await assert.rejects(store.getState().saveInputBindings(req));
+  assert.equal(store.getState().inputSaveStatus, 'unavailable');
+  assert.equal(store.getState().inputSaveError?.code, 'action_unavailable');
 });

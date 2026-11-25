@@ -190,6 +190,12 @@ async function assertStages(page, locale) {
     await step.click();
     if (stage === 'base') {
       await expect(placeholder).toBeHidden();
+    } else if (stage === 'verification') {
+      await expect(placeholder).toBeHidden();
+      await assertUnavailable(page.getByTestId('creator-verify-unavailable'), locale, `Creator ${labels[locale][index]} stage`);
+    } else if (stage === 'release') {
+      await expect(placeholder).toBeHidden();
+      await assertUnavailable(page.getByTestId('creator-release-unavailable'), locale, `Creator ${labels[locale][index]} stage`);
     } else {
       await assertUnavailable(placeholder, locale, `Creator ${labels[locale][index]} stage`);
     }

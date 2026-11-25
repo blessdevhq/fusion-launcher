@@ -79,6 +79,8 @@ pub enum CasAccess {
 pub struct CanonicalLayer {
     pub id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
@@ -103,6 +105,7 @@ impl From<LayerSpec> for CanonicalLayer {
     fn from(layer: LayerSpec) -> Self {
         Self {
             id: layer.id,
+            source_id: None,
             title: layer.title,
             description: layer.description,
             kind: layer.kind,

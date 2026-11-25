@@ -11,6 +11,8 @@ import { sourceTrustLabel } from '@/lib/sourceTrust';
 import type { RepositoryPreview } from '@/types/repository';
 import { shortHash, trustBadgeClass } from './utils';
 
+const isLocalDirectoryInput = (value: string) => /^[A-Za-z]:[\\/]/.test(value);
+
 // Unified "Add a source" card. Accepts a community/personal repository URL, a
 // repository JSON, or a game manifest (URL or pasted JSON); the backend
 // (`preview_source` / `add_source`) auto-detects the format and registers it as a
@@ -38,9 +40,14 @@ export function AddSourceCard({ onAdded }: { onAdded: () => Promise<void> }) {
     setNotice(null);
     setPreview(null);
     try {
-      setPreview(localDirectory
-        ? { kind: 'fusion_source', source: await api.fusionSourcePreviewLocal(localDirectory) }
-        : await api.previewAnySource(trimmed));
+      const dir = localDirectory ?? (isLocalDirectoryInput(trimmed) ? trimmed : null);
+      if (dir) {
+        const source = await api.fusionSourcePreviewLocal(dir);
+        setLocalDirectory(dir);
+        setPreview({ kind: 'fusion_source', source });
+      } else {
+        setPreview(await api.previewAnySource(trimmed));
+      }
     } catch (caught) {
       setError(fusionErrorMessage(caught));
     } finally {

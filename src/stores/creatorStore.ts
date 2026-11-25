@@ -1,15 +1,25 @@
 import { create } from 'zustand';
 import { z } from 'zod';
 import { creatorApi, fusionInputApi } from '../lib/creatorApi.ts';
-import { creatorJobProgressSchema, creatorPrivateBindingsSaveResponseSchema, creatorProjectOpenResponseSchema, creatorProjectListResponseSchema, inputStateSchema } from '../types/fusionCreator.ts';
+import { canResumeInterruptedJob, currentRevisionReleases } from '../lib/creatorUi.ts';
+import {
+  creatorJobProgressSchema, creatorPrivateBindingsSaveResponseSchema, creatorProjectOpenResponseSchema,
+  creatorProjectListResponseSchema, creatorReleaseListResponseSchema, creatorReportSchema, inputStateSchema
+} from '../types/fusionCreator.ts';
 import type { CreatorApi, FusionInputApi, CreatorProjectSummary, CreatorProjectOpenResponse,
   CreatorJob, CreatorJobProgress, CreatorJobReceipt, CreatorJobKind, CreatorJobStartRequest, CreatorPrivateBindings,
-  InputDevice, InputState, InputSessionReceipt, InputReleaseReceipt } from '../types/fusionCreator.ts';
+  CreatorRelease, CreatorReport, InputDevice, InputState, InputSessionReceipt, InputReleaseReceipt,
+  InputBindingsReceipt, InputBindingsSaveRequest } from '../types/fusionCreator.ts';
 import type { FusionError } from '../types/fusionSource.ts';
 
 export type CreatorLoadStatus = 'idle' | 'loading' | 'ready' | 'unavailable' | 'error';
 export type InputOwnership = 'none' | 'starting' | 'owned' | 'releasing' | 'uncertain' | 'released';
 export interface CreatorStoreDependencies { creatorApi: CreatorApi; fusionInputApi: FusionInputApi }
+export interface CreatorReportEntry {
+  status: CreatorLoadStatus;
+  report: CreatorReport | null;
+  error: FusionError | null;
+}
 export interface CreatorJobEntry {
   receipt: CreatorJobReceipt;
   kind: CreatorJobKind | null;
@@ -30,11 +40,20 @@ export interface CreatorState {
   projectError: FusionError | null;
   openProject(projectId: string): Promise<CreatorProjectOpenResponse>;
   savePrivateBindings(opened: CreatorProjectOpenResponse, bindings: CreatorPrivateBindings): Promise<void>;
+  releases: CreatorRelease[];
+  releasesStatus: CreatorLoadStatus;
+  releasesError: FusionError | null;
+  selectedReleaseId: string | null;
+  reports: Record<string, CreatorReportEntry>;
+  loadReleases(projectId: string): Promise<CreatorRelease[]>;
+  selectRelease(releaseId: string | null): void;
+  loadReport(reportId: string): Promise<CreatorReport>;
   jobs: Record<string, CreatorJobEntry>;
   selectedJobId: string | null;
   jobError: FusionError | null;
   startJob(kind: CreatorJobKind, request: CreatorJobStartRequest): Promise<CreatorJobReceipt>;
   cancelJob(jobId: string): Promise<void>;
+  resumeJob(jobId: string): Promise<CreatorJobReceipt>;
   reopenJob(jobId: string, select?: boolean): Promise<CreatorJob>;
   refreshKnownJobs(): void;
   mergeJobProgress(progress: CreatorJobProgress): boolean;
@@ -50,10 +69,14 @@ export interface CreatorState {
   inputStatus: CreatorLoadStatus;
   inputError: FusionError | null;
   inputAcceptingEvents: boolean;
+  inputSaveStatus: CreatorLoadStatus;
+  inputSaveError: FusionError | null;
+  lastSavedBindings: InputBindingsReceipt | null;
   loadInputDevices(): Promise<void>;
   startInputSession(deviceId: string): Promise<InputSessionReceipt>;
   refreshInputSession(): Promise<InputState>;
   mergeInputState(state: InputState): boolean;
+  saveInputBindings(request: InputBindingsSaveRequest): Promise<InputBindingsReceipt>;
   stopInputSession(): Promise<InputReleaseReceipt>;
   releaseInputForLaunch(): Promise<InputReleaseReceipt>;
 }
@@ -67,6 +90,10 @@ export function creatorError(error: unknown): FusionError {
 }
 const errorStatus = (error: FusionError): CreatorLoadStatus => error.code === 'action_unavailable' ? 'unavailable' : 'error';
 const invalid = (message: string): FusionError => ({ code: 'invalid_response', message, details: {} });
+const inputBindingsReceiptSchema = z.object({
+  sessionId: inputStateSchema.shape.sessionId,
+  controlsProfileId: inputStateSchema.shape.sessionId
+}).strict();
 const inputDevicesSchema: z.ZodType<InputDevice[]> = z.array(z.object({
   deviceId: inputStateSchema.shape.sessionId, name: z.string(), connected: z.boolean(), mappingKnown: z.boolean()
 }).strict()).refine((devices) => new Set(devices.map((device) => device.deviceId)).size === devices.length,
@@ -99,8 +126,10 @@ export function createCreatorStore(dependencies: Partial<CreatorStoreDependencie
   const input = dependencies.fusionInputApi ?? fusionInputApi;
   let listGeneration = 0;
   let projectGeneration = 0;
+  let releasesGeneration = 0;
   let savingBindings = false;
   const jobGenerations = new Map<string, number>();
+  const reportGenerations = new Map<string, number>();
   const pendingJobs = new Map<string, CreatorJobProgress[]>();
   let devicesGeneration = 0;
   let inputGeneration = 0;
@@ -115,6 +144,57 @@ export function createCreatorStore(dependencies: Partial<CreatorStoreDependencie
     return response;
   }
   return create<CreatorState>((set, get) => {
+    const refreshProjectsSilently = () => {
+      const generation = listGeneration;
+      void api.projectList().then((raw) => {
+        const parsed = creatorProjectListResponseSchema.safeParse(raw);
+        if (parsed.success && generation === listGeneration) {
+          set({ projects: parsed.data, projectsStatus: 'ready', projectsError: null });
+        }
+      }).catch(() => {});
+    };
+    const refreshReports = (reportIds: readonly string[]) => {
+      for (const reportId of reportIds) {
+        const existing = get().reports[reportId];
+        if (!existing || (existing.status !== 'loading' && !existing.report)) {
+          void get().loadReport(reportId).catch(() => {});
+        }
+      }
+    };
+    const refreshVerificationArtifacts = (projectId: string, revision: number, reportIds?: readonly string[]) => {
+      if (reportIds && reportIds.length > 0) refreshReports(reportIds);
+      const active = get().currentProject?.project;
+      if (active?.project_id === projectId && active.revision === revision) {
+        void get().loadReleases(projectId).catch(() => {});
+      }
+      refreshProjectsSilently();
+    };
+    const syncJobSnapshot = (jobId: string) => {
+      const projGen = projectGeneration;
+      const jobGen = jobGenerations.get(jobId);
+      void api.jobGet({ jobId }).then((snapshot) => {
+        const progress = creatorJobProgressSchema.safeParse(snapshot?.progress);
+        if (!progress.success) return;
+        const entry = ownJob(get().jobs, jobId);
+        if (!entry || projectGeneration !== projGen || jobGenerations.get(jobId) !== jobGen
+          || !sameIdentity(entry.receipt, progress.data) || (entry.kind !== null && entry.kind !== progress.data.kind)
+          || !currentOwns(get().currentProject, progress.data)) return;
+        const hadNewReports = snapshot.reportIds.length > (entry.job?.reportIds.length ?? 0);
+        set((state) => {
+          const currentEntry = state.jobs[jobId];
+          if (!currentEntry || !sameIdentity(currentEntry.receipt, progress.data)) return state;
+          const next = canAdvance(currentEntry.progress, progress.data) ? withProgress(currentEntry, progress.data) : currentEntry;
+          return {
+            jobs: {
+              ...state.jobs,
+              [jobId]: { ...next, job: { ...snapshot, progress: next.progress ?? progress.data } }
+            }
+          };
+        });
+        if (hadNewReports) refreshVerificationArtifacts(progress.data.projectId, progress.data.projectRevision, snapshot.reportIds);
+        else if (snapshot.reportIds.length > 0) refreshReports(snapshot.reportIds);
+      }).catch(() => {});
+    };
     const releaseInput = async (forLaunch: boolean): Promise<InputReleaseReceipt> => {
       const { inputSessionId: sessionId, inputOwnership } = get();
       if (!sessionId || inputOwnership === 'starting' || inputOwnership === 'releasing') throw invalid('Input release requires an owned session and no other release in flight.');
@@ -136,10 +216,12 @@ export function createCreatorStore(dependencies: Partial<CreatorStoreDependencie
     return {
     projects: [], projectsStatus: 'idle', projectsError: null,
     currentProject: null, projectStatus: 'idle', projectError: null,
+    releases: [], releasesStatus: 'idle', releasesError: null, selectedReleaseId: null, reports: {},
     jobs: {}, selectedJobId: null, jobError: null,
     inputDevices: [], inputDevicesStatus: 'idle', inputDevicesError: null,
     inputSessionId: null, inputDeviceId: null, inputState: null, inputHistory: [],
     inputOwnership: 'none', inputHandlesClosed: false, inputStatus: 'idle', inputError: null, inputAcceptingEvents: false,
+    inputSaveStatus: 'idle', inputSaveError: null, lastSavedBindings: null,
     async loadProjects() {
       const generation = ++listGeneration;
       set({ projectsStatus: 'loading', projectsError: null });
@@ -156,21 +238,94 @@ export function createCreatorStore(dependencies: Partial<CreatorStoreDependencie
     },
     async openProject(projectId) {
       const generation = ++projectGeneration;
+      ++releasesGeneration;
       pendingJobs.clear();
       for (const [id, previous] of jobGenerations) jobGenerations.set(id, previous + 1);
-      set((state) => ({ currentProject: null, projectStatus: 'loading', projectError: null, selectedJobId: null,
-        jobs: Object.fromEntries(Object.entries(state.jobs).map(([id, entry]) => [id, { ...entry, acceptingEvents: false }])) }));
+      reportGenerations.clear();
+      set((state) => ({
+        currentProject: null, projectStatus: 'loading', projectError: null,
+        releases: [], releasesStatus: 'idle', releasesError: null, selectedReleaseId: null, reports: {},
+        selectedJobId: null,
+        jobs: Object.fromEntries(Object.entries(state.jobs).map(([id, entry]) => [id, { ...entry, acceptingEvents: false }]))
+      }));
       try {
         const response = await readProject(projectId);
         if (generation === projectGeneration) {
           set({ currentProject: response, projectStatus: 'ready' });
           get().refreshKnownJobs();
+          void get().loadReleases(response.project.project_id).catch(() => {});
         }
         return response;
       } catch (error) {
         if (generation === projectGeneration) {
           const failure = creatorError(error);
           set({ projectStatus: errorStatus(failure), projectError: failure });
+        }
+        throw error;
+      }
+    },
+    async loadReleases(projectId) {
+      const generation = ++releasesGeneration;
+      const projGen = projectGeneration;
+      set({ releasesStatus: 'loading', releasesError: null });
+      try {
+        const releases = creatorReleaseListResponseSchema.parse(await api.releaseList({ projectId }));
+        if (releases.some(release => release.projectId !== projectId)) {
+          throw invalid('Release list contains entries from a different project.');
+        }
+        const current = get().currentProject;
+        if (generation === releasesGeneration && projGen === projectGeneration && current?.project.project_id === projectId) {
+          const revReleases = currentRevisionReleases(releases, current.project);
+          const selectedJobReleaseId = get().selectedJobId ? get().jobs[get().selectedJobId!]?.progress?.releaseId : null;
+          const previousSelected = get().selectedReleaseId;
+          const nextSelected = revReleases.some(r => r.releaseId === previousSelected)
+            ? previousSelected
+            : (revReleases.find(r => r.releaseId === selectedJobReleaseId)?.releaseId
+              ?? revReleases[revReleases.length - 1]?.releaseId ?? null);
+          set({ releases, releasesStatus: 'ready', releasesError: null, selectedReleaseId: nextSelected });
+          for (const release of revReleases) refreshReports(release.reportIds);
+        }
+        return releases;
+      } catch (error) {
+        if (generation === releasesGeneration && projGen === projectGeneration && get().currentProject?.project.project_id === projectId) {
+          const failure = creatorError(error);
+          set({ releasesStatus: errorStatus(failure), releasesError: failure });
+        }
+        throw error;
+      }
+    },
+    selectRelease(releaseId) {
+      set({ selectedReleaseId: releaseId });
+    },
+    async loadReport(reportId) {
+      const current = get().currentProject;
+      const expectedProjectId = current?.project.project_id ?? null;
+      const expectedRevision = current?.project.revision ?? null;
+      const generation = (reportGenerations.get(reportId) ?? 0) + 1;
+      reportGenerations.set(reportId, generation);
+      const projGen = projectGeneration;
+      set(state => ({
+        reports: { ...state.reports, [reportId]: { status: 'loading', report: state.reports[reportId]?.report ?? null, error: null } }
+      }));
+      try {
+        const report = creatorReportSchema.parse(await api.reportGet({ reportId }));
+        if (report.reportId !== reportId) throw invalid('Report identity differs from the request.');
+        if (reportGenerations.get(reportId) === generation
+          && projectGeneration === projGen
+          && expectedProjectId !== null
+          && get().currentProject?.project.project_id === expectedProjectId
+          && get().currentProject?.project.revision === expectedRevision) {
+          set(state => ({
+            reports: { ...state.reports, [reportId]: { status: 'ready', report, error: null } }
+          }));
+        }
+        return report;
+      } catch (error) {
+        if (reportGenerations.get(reportId) === generation && projectGeneration === projGen) {
+          const failure = creatorError(error);
+          set(state => ({
+            reports: { ...state.reports, [reportId]: { status: errorStatus(failure), report: state.reports[reportId]?.report ?? null, error: failure } }
+          }));
         }
         throw error;
       }
@@ -213,14 +368,15 @@ export function createCreatorStore(dependencies: Partial<CreatorStoreDependencie
         if (existing && (!sameIdentity(existing.receipt, receipt) || (existing.kind !== null && existing.kind !== kind))) throw invalid('Job ID already belongs to another job.');
         const current = currentOwns(get().currentProject, receipt);
         const ownsSelection = current && generation === projectGeneration;
+        const eagerSnapshot = kind === 'build' || kind === 'verify' || kind === 'export' || kind === 'verify_https';
         // Keep a valid receipt even if the project was changed while awaiting IPC.
         set(state => ({
-          jobs: { ...state.jobs, [receipt.jobId]: existing ?? { ...emptyJob(receipt), kind, status: 'ready', acceptingEvents: ownsSelection && kind !== 'build' } },
+          jobs: { ...state.jobs, [receipt.jobId]: existing ?? { ...emptyJob(receipt), kind, status: 'ready', acceptingEvents: ownsSelection && !eagerSnapshot } },
           ...(ownsSelection ? { selectedJobId: receipt.jobId, jobError: null } : {})
         }));
         // A fast worker can finish before the receipt is delivered. Read durable state
         // instead of relying on a future event; a read failure isn't a failed start.
-        if (current && (kind === 'build' || !ownsSelection)) await get().reopenJob(receipt.jobId, ownsSelection).catch(() => {});
+        if (current && (eagerSnapshot || !ownsSelection)) await get().reopenJob(receipt.jobId, ownsSelection).catch(() => {});
         return receipt;
       } catch (error) {
         if (generation === projectGeneration) set({ jobError: creatorError(error) });
@@ -239,6 +395,32 @@ export function createCreatorStore(dependencies: Partial<CreatorStoreDependencie
         throw invalid('Cancel response differs from the requested job.');
       }
       if (generation === projectGeneration) get().mergeJobProgress(parsed.data);
+    },
+    async resumeJob(jobId) {
+      const generation = projectGeneration;
+      try {
+        const entry = ownJob(get().jobs, jobId);
+        const current = get().currentProject;
+        if (!current || !entry || !currentOwns(current, entry.receipt) || !canResumeInterruptedJob(entry)) {
+          throw invalid('Interrupted job cannot be resumed for the current project revision.');
+        }
+        const receipt = await api.jobResume({ jobId });
+        if (!sameIdentity(entry.receipt, receipt)) throw invalid('Resumed job receipt differs from the requested job identity.');
+        const stillCurrent = currentOwns(get().currentProject, receipt);
+        const ownsSelection = stillCurrent && generation === projectGeneration;
+        set(state => {
+          const latest = ownJob(state.jobs, receipt.jobId) ?? entry;
+          return {
+            jobs: { ...state.jobs, [receipt.jobId]: { ...latest, acceptingEvents: false } },
+            ...(ownsSelection ? { selectedJobId: receipt.jobId, jobError: null } : {})
+          };
+        });
+        if (stillCurrent) await get().reopenJob(receipt.jobId, ownsSelection).catch(() => {});
+        return receipt;
+      } catch (error) {
+        if (generation === projectGeneration) set({ jobError: creatorError(error) });
+        throw error;
+      }
     },
     refreshKnownJobs() {
       const { currentProject, jobs } = get();
@@ -265,18 +447,33 @@ export function createCreatorStore(dependencies: Partial<CreatorStoreDependencie
           throw invalid('Reopened job differs from its requested identity or known kind.');
         }
         if (jobGenerations.get(jobId) === generation) {
+          let replayedProgress = progress;
           set((state) => {
             const entry = state.jobs[jobId];
             let advanced = canAdvance(entry.progress, progress) ? withProgress(entry, progress) : entry;
-            if (advanced !== entry || !entry.job) {
+            if (advanced !== entry || !entry.job
+              || snapshot.progress.sequence >= entry.job.progress.sequence
+              || snapshot.reportIds.length > entry.job.reportIds.length
+              || snapshot.checkpoints.length > entry.job.checkpoints.length) {
               advanced = { ...advanced, job: { ...snapshot, progress: advanced.progress ?? progress } };
             }
             for (const event of pending) {
               if (canAdvance(advanced.progress, event)) advanced = withProgress(advanced, event);
             }
+            replayedProgress = advanced.progress ?? progress;
             pendingJobs.delete(jobId);
             return { jobs: { ...state.jobs, [jobId]: { ...advanced, status: 'ready', acceptingEvents: true } } };
           });
+          if ((replayedProgress.kind === 'build' || replayedProgress.kind === 'verify'
+            || replayedProgress.kind === 'export' || replayedProgress.kind === 'verify_https')
+            && (snapshot.reportIds.length > 0 || snapshot.checkpoints.length > 0
+              || replayedProgress.releaseId !== null || terminalJob(replayedProgress))) {
+            refreshVerificationArtifacts(current.project.project_id, current.project.revision, snapshot.reportIds);
+            if ((replayedProgress.kind === 'verify' || replayedProgress.kind === 'verify_https')
+              && replayedProgress.sequence > progress.sequence) {
+              syncJobSnapshot(jobId);
+            }
+          }
         }
         return snapshot;
       } catch (error) {
@@ -301,7 +498,18 @@ export function createCreatorStore(dependencies: Partial<CreatorStoreDependencie
         return false; // Buffered, not applied until the snapshot has validated ownership.
       }
       if (!entry.acceptingEvents || !canAdvance(entry.progress, progress)) return false;
+      const previous = entry.progress;
       set((state) => ({ jobs: { ...state.jobs, [progress.jobId]: withProgress(entry, progress) } }));
+      if (progress.kind === 'build' || progress.kind === 'verify'
+        || progress.kind === 'export' || progress.kind === 'verify_https') {
+        const progressedArtifact = progress.checkpointId !== previous?.checkpointId
+          || (progress.releaseId !== null && progress.releaseId !== previous?.releaseId)
+          || terminalJob(progress);
+        if (progressedArtifact) {
+          refreshVerificationArtifacts(progress.projectId, progress.projectRevision);
+          if (progress.kind === 'verify' || progress.kind === 'verify_https') syncJobSnapshot(progress.jobId);
+        }
+      }
       return true;
     },
     async loadInputDevices() {
@@ -387,6 +595,25 @@ export function createCreatorStore(dependencies: Partial<CreatorStoreDependencie
       if (!state.inputAcceptingEvents || !canAdvanceInput(state.inputState, incoming)) return false;
       set({ inputState: incoming, inputHistory: rememberInput(state.inputHistory, incoming) });
       return true;
+    },
+    async saveInputBindings(request) {
+      const { inputSessionId, inputOwnership } = get();
+      if (!inputSessionId || inputOwnership !== 'owned' || request.sessionId !== inputSessionId) {
+        throw invalid('Saving controller bindings requires an owned active input session.');
+      }
+      set({ inputSaveStatus: 'loading', inputSaveError: null });
+      try {
+        const parsed = inputBindingsReceiptSchema.safeParse(await input.bindingsSave(request));
+        if (!parsed.success || parsed.data.sessionId !== request.sessionId || parsed.data.controlsProfileId !== request.controlsProfileId) {
+          throw invalid('Input bindings receipt differs from the active session or profile.');
+        }
+        set({ inputSaveStatus: 'ready', inputSaveError: null, lastSavedBindings: parsed.data });
+        return parsed.data;
+      } catch (error) {
+        const failure = creatorError(error);
+        set({ inputSaveStatus: errorStatus(failure), inputSaveError: failure });
+        throw error;
+      }
     },
     stopInputSession: () => releaseInput(false),
     releaseInputForLaunch: () => releaseInput(true)

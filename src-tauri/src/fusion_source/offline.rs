@@ -32,6 +32,8 @@ pub struct OfflineTransport {
     base_url: String,
 }
 
+pub(crate) const CREATOR_SOURCE_ROOT: &str = "https://offline.fusion.invalid/creator/";
+
 impl OfflineTransport {
     pub fn open(root: &Path, source_id: &str) -> Result<Self, FusionError> {
         fs_safety::validate_relative_path(source_id)?;
@@ -43,6 +45,15 @@ impl OfflineTransport {
         Ok(Self {
             root,
             base_url: format!("https://offline.fusion.invalid/{source_id}/"),
+        })
+    }
+
+    pub(crate) fn open_creator(root: &Path) -> Result<Self, FusionError> {
+        let root = std::path::absolute(root).map_err(|e| failure(e.to_string()))?;
+        fs_safety::guard(&root)?;
+        Ok(Self {
+            root,
+            base_url: CREATOR_SOURCE_ROOT.to_owned(),
         })
     }
 

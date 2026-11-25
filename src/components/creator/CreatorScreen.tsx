@@ -4,10 +4,12 @@ import { useEffect, useState } from 'react';
 import { useI18n } from '@/components/I18nProvider';
 import { ScreenHeader } from '@/components/dashboard/shared';
 import { CreatorDeviceDialog } from './CreatorDeviceDialog';
-import { creatorStages, creatorStageHasContent, type CreatorStage } from '@/lib/creatorUi';
+import { canResumeInterruptedJob, creatorStages, creatorStageHasContent, type CreatorStage } from '@/lib/creatorUi';
 import { useCreatorStore } from '@/stores/creatorStore';
 import { CreatorStatus } from './CreatorStatus';
 import { CreatorSignedBuild } from './CreatorSignedBuild';
+import { CreatorVerifyPanel } from './CreatorVerifyPanel';
+import { CreatorReleasePanel } from './CreatorReleasePanel';
 
 export function CreatorScreen({ contextTitle, onFocus }: { contextTitle: string | null; onFocus: (id: string) => void }) {
   const { t, locale } = useI18n();
@@ -38,7 +40,7 @@ export function CreatorScreen({ contextTitle, onFocus }: { contextTitle: string 
     {!creatorStageHasContent(stage) ? <div data-testid="creator-stage-unavailable" data-state="unavailable" role="status" className="border-t border-fusion-line py-5 text-sm text-[var(--rh-muted)]">
       <h2 className="mb-2 text-lg font-semibold text-[var(--rh-text)]">{t.creator.ui.stages[stage]} · {t.creator.common.unavailable}</h2>
       <p>{stage === 'release' ? t.creator.ui.releaseUnavailable : t.creator.ui.descriptorUnavailable}</p>
-    </div> : <>
+    </div> : stage === 'verification' ? <CreatorVerifyPanel onSelectStage={setStage} /> : stage === 'release' ? <CreatorReleasePanel onSelectStage={setStage} /> : <>
       <section className="border-t border-fusion-line py-4" aria-labelledby="creator-projects-title">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
           <h2 id="creator-projects-title" className="text-lg font-semibold">{t.creator.ui.projects}</h2>
@@ -84,9 +86,15 @@ export function CreatorScreen({ contextTitle, onFocus }: { contextTitle: string 
             {entry.progress.totalUnits !== null && entry.progress.totalUnits > 0 && <progress className="mt-2 w-full accent-fusion-accent" max={entry.progress.totalUnits} value={Math.min(entry.progress.completedUnits, entry.progress.totalUnits)} />}
             {entry.progress.error && <CreatorStatus status={entry.progress.error.code === 'action_unavailable' ? 'unavailable' : 'error'} error={entry.progress.error} />}
             {entry.progress.releaseId && <p className="mt-1 break-all text-xs" data-testid="creator-job-release">{t.creator.ui.signedBuild.releaseId}: {entry.progress.releaseId}</p>}
-            {entry.acceptingEvents && state.currentProject?.project.project_id === entry.receipt.projectId && state.currentProject.project.revision === entry.receipt.projectRevision
-              && (entry.progress.status === 'queued' || entry.progress.status === 'running') && <button type="button" className="rh-filter-chip rh-focusable mt-2"
-                data-focus-id={`creator:cancel-${entry.receipt.jobId}`} onClick={() => void state.cancelJob(entry.receipt.jobId).catch(() => {})}>{t.creator.ui.cancel}</button>}
+            {entry.job && entry.job.reportIds.length > 0 && <p className="mt-1 break-all font-mono text-xs text-[var(--rh-muted)]" data-testid="creator-job-reports">{t.creator.ui.verify.reportId}: {entry.job.reportIds.join(', ')}</p>}
+            <div className="mt-2 flex flex-wrap gap-2">
+              {entry.acceptingEvents && state.currentProject?.project.project_id === entry.receipt.projectId && state.currentProject.project.revision === entry.receipt.projectRevision
+                && (entry.progress.status === 'queued' || entry.progress.status === 'running') && <button type="button" className="rh-filter-chip rh-focusable"
+                  data-focus-id={`creator:cancel-${entry.receipt.jobId}`} onClick={() => void state.cancelJob(entry.receipt.jobId).catch(() => {})}>{t.creator.ui.cancel}</button>}
+              {state.currentProject?.project.project_id === entry.receipt.projectId && state.currentProject.project.revision === entry.receipt.projectRevision
+                && canResumeInterruptedJob(entry) && <button type="button" className="rh-filter-chip rh-focusable"
+                  data-focus-id={`creator:resume-${entry.receipt.jobId}`} onClick={() => void state.resumeJob(entry.receipt.jobId).catch(() => {})}>{t.creator.ui.resume}</button>}
+            </div>
             <details className="mt-2 text-xs text-[var(--rh-muted)]"><summary className="rh-focusable cursor-pointer">{t.creator.ui.jobs} ({entry.history.length})</summary>
               <ol className="mt-2 space-y-2">{entry.history.map((event) => <li key={event.sequence} className="break-words">#{event.sequence} · {t.creator.ui.statuses[event.status]} · {event.phase} · {event.completedUnits}{event.totalUnits === null ? '' : ` / ${event.totalUnits}`}</li>)}</ol>
             </details>

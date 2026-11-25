@@ -52,6 +52,23 @@ pub fn render_config(
     Ok(output)
 }
 
+pub(crate) fn apply_ini_assignments(
+    existing: &str,
+    assignments: BTreeMap<(String, String), String>,
+) -> Result<String, FusionError> {
+    if existing.len() > 2 * 1024 * 1024 || assignments.is_empty() {
+        if existing.len() > 2 * 1024 * 1024 {
+            return Err(invalid("Oversized rendered config."));
+        }
+        return Ok(existing.to_owned());
+    }
+    let output = render_ini(existing, assignments)?;
+    if output.len() > 2 * 1024 * 1024 {
+        return Err(invalid("Oversized rendered config."));
+    }
+    Ok(output)
+}
+
 fn validate_settings<'a>(
     config: &ProgramConfig,
     settings: &'a [ProgramSetting],

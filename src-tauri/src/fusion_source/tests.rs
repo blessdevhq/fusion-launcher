@@ -1657,3 +1657,70 @@ fn every_final_critical_file_requires_exact_digest_trust_before_process_start() 
         }
     }
 }
+
+#[test]
+fn manifest_1_0_rejects_relative_mirrors_while_1_1_enforces_url_and_path_bounds() {
+    let mut legacy = value(SWITCH);
+    assert_eq!(legacy["schema_version"], json!("1.0"));
+    legacy["layers"][3]["source"]["mirrors"] = json!(["artifacts/runtime.zip"]);
+    assert_eq!(assert_invalid(&legacy).code, ErrorCode::InvalidUri);
+
+    let mut modern = value(SWITCH);
+    modern["schema_version"] = json!("1.1");
+    modern["layers"][3]["source"]["mirrors"] = json!(["artifacts/runtime.zip"]);
+    let parsed = canonical_json(&modern).unwrap();
+    assert_eq!(parsed.schema_version, "1.1");
+    assert_eq!(parsed.layers["runtime"].source_id.as_deref(), Some(SOURCE));
+
+    for bad in [
+        "",
+        "/artifacts/runtime.zip",
+        "artifacts/runtime.zip/",
+        "artifacts//runtime.zip",
+        "artifacts\\runtime.zip",
+        "artifacts/runtime.zip#frag",
+        "artifacts/runtime%201.zip",
+        "artifacts/runtime.zip?v=1",
+        "artifacts/runtime.zip ",
+        "artifacts/../secret.zip",
+        "artifacts/CON.zip",
+        "artifacts/NUL",
+        "//evil.example/runtime.zip",
+        "http://example.org/runtime.zip",
+    ] {
+        let mut candidate = modern.clone();
+        candidate["layers"][3]["source"]["mirrors"] = json!([bad]);
+        let code = assert_invalid(&candidate).code;
+        assert!(
+            matches!(code, ErrorCode::InvalidUri | ErrorCode::InvalidPath),
+            "rejected value {bad:?} returned unexpected code {code:?}"
+        );
+    }
+}
+
+#[test]
+fn child_1_1_rejects_1_0_parent_with_illegal_relative_mirror() {
+    let mut parent: GameManifest = serde_json::from_value(value(SWITCH)).unwrap();
+    parent.schema_version = "1.0".into();
+    parent.id = "parent-base".into();
+    if let LayerSource::Remote { mirrors, .. } = &mut parent.layers[3].source {
+        *mirrors = vec!["artifacts/parent.zip".into()];
+    }
+    let child = json!({
+        "schema_version": "1.1",
+        "id": "child-mod",
+        "title": "Child Mod",
+        "version": "1.0",
+        "extends": "source-a::parent-base"
+    });
+    let parents = BTreeMap::from([(
+        QualifiedGameId {
+            source_id: "source-a".into(),
+            game_id: "parent-base".into(),
+        },
+        parent,
+    )]);
+    let err =
+        SchemaUpcaster::upcast_game_manifest("source-b", &child.to_string(), &parents).unwrap_err();
+    assert_eq!(err.code, ErrorCode::InvalidUri);
+}

@@ -9,7 +9,8 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use crate::fusion_creator::declarative::{
-    candidate as program_candidate, runtime as program_runtime, state::ProgramPersistenceStore,
+    candidate as program_candidate, capabilities::eden_param_package::EdenLocalSdlBinding,
+    runtime as program_runtime, state::ProgramPersistenceStore,
 };
 use serde::{Deserialize, Serialize};
 
@@ -21,6 +22,7 @@ use super::canonical::{CanonicalGameManifest, QualifiedGameId};
 use super::capabilities::{CapabilityRegistry, CapabilitySelection};
 use super::cas::{hash_file, CasStore};
 use super::config_templates::{ConfigTemplateEngine, TemplateContext};
+use super::creator_schema::InputDeviceKind;
 use super::errors::{ErrorCode, FusionError};
 use super::evolution::SchemaUpcaster;
 use super::fs_safety::{self, DirectoryGuard, FileIdentity};
@@ -32,6 +34,7 @@ use super::plan::{
     EnvStep, ExecutionPlan, FetchStep, PlanBuilder, PlanOptions, PlanStep, TransformStep,
     WorkspaceLocation,
 };
+use super::program_schema::{ProgramControlsProfile, ProgramDescriptor};
 use super::schema::{DigestAlgorithm, LayerSource, LocalPlacementPolicy, RuntimeChannel};
 use super::transforms::{PatchReceipt, PatchToolRegistry};
 
@@ -294,7 +297,6 @@ impl Default for WorkspaceBuildOptions {
     }
 }
 
-#[derive(Debug)]
 pub struct WorkspaceAssembler {
     library_root: PathBuf,
     game: QualifiedGameId,
@@ -303,6 +305,25 @@ pub struct WorkspaceAssembler {
     cas: CasStore,
     patch_tools: PatchToolRegistry,
     program_environment_approval: Option<program_runtime::EnvironmentApproval>,
+    #[cfg(windows)]
+    input_service: Option<crate::input::service::InputServiceHandle>,
+}
+
+impl std::fmt::Debug for WorkspaceAssembler {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WorkspaceAssembler")
+            .field("library_root", &self.library_root)
+            .field("game", &self.game)
+            .field("control_root", &self.control_root)
+            .field("external_root", &self.external_root)
+            .field("cas", &self.cas)
+            .field("patch_tools", &self.patch_tools)
+            .field(
+                "program_environment_approval",
+                &self.program_environment_approval,
+            )
+            .finish()
+    }
 }
 
 impl WorkspaceAssembler {
@@ -330,6 +351,8 @@ impl WorkspaceAssembler {
             cas: CasStore::open(library_root)?,
             patch_tools: PatchToolRegistry::default(),
             program_environment_approval: None,
+            #[cfg(windows)]
+            input_service: None,
         })
     }
 
@@ -360,6 +383,56 @@ impl WorkspaceAssembler {
         self
     }
 
+    #[cfg(windows)]
+    pub(crate) fn with_input_service(
+        mut self,
+        input: crate::input::service::InputServiceHandle,
+    ) -> Self {
+        self.input_service = Some(input);
+        self
+    }
+
+    fn resolve_local_sdl(
+        &self,
+        program: &ProgramDescriptor,
+        build_profile_id: Option<&str>,
+        controls_profile_id: Option<&str>,
+    ) -> Result<Option<EdenLocalSdlBinding>, FusionError> {
+        let resolved_id = controls_profile_id.or_else(|| {
+            build_profile_id
+                .and_then(|bid| program.build_profiles.iter().find(|b| b.id == bid))
+                .and_then(|b| b.controls_profile_ids.first().map(String::as_str))
+        });
+        let Some(profile) =
+            resolved_id.and_then(|id| program.controls_profiles.iter().find(|p| p.id() == id))
+        else {
+            return Ok(None);
+        };
+        let ProgramControlsProfile::EdenParamPackageV1 {
+            id,
+            device: InputDeviceKind::SdlGamecontroller,
+            ..
+        } = profile
+        else {
+            return Ok(None);
+        };
+        #[cfg(windows)]
+        {
+            Ok(self
+                .input_service
+                .as_ref()
+                .map(|service| service.as_ref().private_binding_view(id))
+                .transpose()?
+                .as_ref()
+                .map(EdenLocalSdlBinding::from))
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = id;
+            Ok(None)
+        }
+    }
+
     pub fn assemble(
         &self,
         manifest: &CanonicalGameManifest,
@@ -388,7 +461,8 @@ impl WorkspaceAssembler {
                 self.program_environment_approval.as_ref(),
             )?;
         }
-        let projected_layers = self.project_layers(manifest, plan, inputs)?;
+        let projected_layers =
+            self.project_layers(manifest, plan, inputs, options.cancellation.as_ref())?;
         let previous_state = self.state()?;
         let previous = previous_state
             .active
@@ -589,11 +663,19 @@ impl WorkspaceAssembler {
             }
         }
         let bindings = if let Some(program) = program_runtime::descriptor(manifest) {
-            program_candidate::prepare(
+            let build_id = plan.build_profile_id.as_deref().ok_or_else(|| {
+                FusionError::new(ErrorCode::InvalidManifest, "Program profile is absent.")
+            })?;
+            let local_sdl = self.resolve_local_sdl(
                 program,
-                plan.build_profile_id.as_deref().ok_or_else(|| {
-                    FusionError::new(ErrorCode::InvalidManifest, "Program profile is absent.")
-                })?,
+                Some(build_id),
+                plan.controls_profile_id.as_deref(),
+            )?;
+            program_candidate::prepare_with_controls(
+                program,
+                build_id,
+                plan.controls_profile_id.as_deref(),
+                local_sdl.as_ref(),
                 &root,
                 &program_state(&self.library_root, &self.game)?,
             )?;
@@ -948,11 +1030,19 @@ impl WorkspaceAssembler {
             // Only rollback's inactive target may be rehydrated/rendered here.
             if !reconcile {
                 let state = program_state(&self.library_root, &self.game)?;
-                program_candidate::prepare(
+                let build_id = snapshot.plan.build_profile_id.as_deref().ok_or_else(|| {
+                    FusionError::new(ErrorCode::InvalidManifest, "Program profile is absent.")
+                })?;
+                let local_sdl = self.resolve_local_sdl(
                     program,
-                    snapshot.plan.build_profile_id.as_deref().ok_or_else(|| {
-                        FusionError::new(ErrorCode::InvalidManifest, "Program profile is absent.")
-                    })?,
+                    Some(build_id),
+                    snapshot.plan.controls_profile_id.as_deref(),
+                )?;
+                program_candidate::prepare_with_controls(
+                    program,
+                    build_id,
+                    snapshot.plan.controls_profile_id.as_deref(),
+                    local_sdl.as_ref(),
                     &snapshot.workspace_root,
                     &state,
                 )?;
@@ -1082,15 +1172,20 @@ impl WorkspaceAssembler {
         manifest: &CanonicalGameManifest,
         plan: &ExecutionPlan,
         inputs: &BTreeMap<String, LayerInput>,
+        cancel: Option<&super::adapters::Cancellation>,
     ) -> Result<BTreeMap<String, BTreeSet<String>>, FusionError> {
         if program_runtime::descriptor(manifest).is_some() {
-            let compiled = program_candidate::verify_inputs(manifest, inputs, &self.cas)?;
-            let projection = compiled
-                .projections
-                .get(plan.build_profile_id.as_deref().unwrap_or_default())
-                .ok_or_else(|| {
-                    FusionError::new(ErrorCode::InvalidManifest, "Program profile is absent.")
-                })?;
+            let build_profile_id = plan.build_profile_id.as_deref().ok_or_else(|| {
+                FusionError::new(ErrorCode::InvalidManifest, "Program profile is absent.")
+            })?;
+            let check = || cancel.map_or(Ok(()), super::adapters::Cancellation::check);
+            let projection = program_candidate::verify_selected_inputs_checked(
+                manifest,
+                build_profile_id,
+                inputs,
+                &self.cas,
+                &check,
+            )?;
             let mut projected: BTreeMap<String, BTreeSet<String>> = plan
                 .selected_layers
                 .iter()
@@ -1501,7 +1596,9 @@ fn validate_plan_contract(
         }) = step
         {
             for uri in mirrors {
-                if let Some((scheme, _)) = uri.split_once(':') {
+                if !uri.contains(':') {
+                    features.insert("resolver.https.v1".to_owned());
+                } else if let Some((scheme, _)) = uri.split_once(':') {
                     features.insert(format!("resolver.{}.v1", scheme.to_lowercase()));
                 }
             }

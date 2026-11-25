@@ -6,7 +6,7 @@ use crate::fusion_source::creator_schema::ComponentOrigin;
 use crate::fusion_source::errors::{ErrorCode, FusionError};
 use crate::fusion_source::packer::{PackerEngine, PackerRecipe};
 use crate::fusion_source::program_schema::{
-    CreatorProgramProject, ProgramComponent, ProgramControlsProfile,
+    CreatorProgramProject, ProgramComponent, ProgramControlsProfile, ProgramDescriptor,
 };
 use crate::fusion_source::schema::{DigestAlgorithm, SourceIndex};
 use crate::fusion_source::{fs_safety, signatures};
@@ -17,9 +17,8 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
-const LOCAL_SOURCE_ROOT: &str = "https://offline.fusion.invalid/creator/";
-const INDEX_ID: &str = "source-index.json";
-const INVENTORY_ID: &str = "artifact-inventory.json";
+pub(super) const INDEX_ID: &str = "source-index.json";
+pub(super) const INVENTORY_ID: &str = "artifact-inventory.json";
 
 pub(super) struct ManagedDirectoryBuild;
 
@@ -32,6 +31,32 @@ pub(super) fn supported_component(component: &ProgramComponent) -> bool {
                 ..
             }
         )
+}
+
+pub(super) fn supported_controls(profile: &ProgramControlsProfile) -> bool {
+    matches!(
+        profile,
+        ProgramControlsProfile::ApplicationDefaults { .. }
+            | ProgramControlsProfile::EdenParamPackageV1 { .. }
+    )
+}
+
+pub(super) fn insert_capability_hashes(
+    descriptor: &ProgramDescriptor,
+    hashes: &mut BTreeMap<String, String>,
+) -> Result<(), FusionError> {
+    if descriptor
+        .controls_profiles
+        .iter()
+        .any(|profile| matches!(profile, ProgramControlsProfile::EdenParamPackageV1 { .. }))
+    {
+        hashes.insert(
+            "capability:eden_param_package_v1".into(),
+            crate::fusion_creator::declarative::capabilities::ProgramCapabilityRegistry
+                .require("eden_param_package_v1", "1.0")?,
+        );
+    }
+    Ok(())
 }
 
 fn validate_request(request: &CreatorJobStartRequest) -> Result<(), FusionError> {
@@ -76,11 +101,18 @@ fn implementation_digest() -> &'static str {
             include_bytes!("declarative/compiler.rs"),
             include_bytes!("declarative/runtime.rs"),
             include_bytes!("declarative/capabilities.rs"),
+            include_bytes!("declarative/capabilities/eden_param_package.rs"),
             include_bytes!("declarative/codecs.rs"),
+            include_bytes!("../input/eden.rs"),
+            include_bytes!("../input/service.rs"),
             include_bytes!("projection.rs"),
             include_bytes!("../fusion_source/packer.rs"),
+            include_bytes!("../fusion_source/evolution.rs"),
             include_bytes!("../fusion_source/plan.rs"),
             include_bytes!("../fusion_source/cas.rs"),
+            include_bytes!("../fusion_source/fs_safety.rs"),
+            include_bytes!("../fusion_source/layers.rs"),
+            include_bytes!("../fusion_source/transforms.rs"),
             include_bytes!("../fusion_source/signatures.rs"),
             include_bytes!("../../Cargo.lock"),
         ] {
@@ -112,7 +144,7 @@ impl<'a> Inputs<'a> {
             .program_descriptor
             .controls_profiles
             .iter()
-            .any(|profile| !matches!(profile, ProgramControlsProfile::ApplicationDefaults { .. }))
+            .any(|profile| !supported_controls(profile))
         {
             return Err(unavailable("Build does not support this controls writer."));
         }
@@ -165,7 +197,6 @@ impl<'a> Inputs<'a> {
             .collect();
         serde_json::from_value(serde_json::json!({
             "source_info": { "id":project.source_id, "name":project.title, "public_key":public_key },
-            "base_url":LOCAL_SOURCE_ROOT,
             "games":[{
                 "id":project.game_id, "title":project.title, "version":project.game_version,
                 "layers":layers, "program_descriptor":project.program_descriptor
@@ -210,6 +241,19 @@ impl JobHandler for ManagedDirectoryBuild {
         project: &CreatorProgramProject,
         bindings: Option<&SavedPrivateBindings>,
     ) -> Result<BTreeMap<String, String>, FusionError> {
+        self.input_hashes_checked(project, bindings, None, &|| Ok(()))
+    }
+    fn deferred_input_audit(&self) -> bool {
+        true
+    }
+    fn input_hashes_checked(
+        &self,
+        project: &CreatorProgramProject,
+        bindings: Option<&SavedPrivateBindings>,
+        _release: Option<&super::jobs::ReleaseContent>,
+        check: &dyn Fn() -> Result<(), FusionError>,
+    ) -> Result<BTreeMap<String, String>, FusionError> {
+        check()?;
         let inputs = Inputs::resolve(project, bindings)?;
         let (_, signer_digest) = public_identity(inputs.key)?;
         let mut hashes = BTreeMap::from([
@@ -219,8 +263,9 @@ impl JobHandler for ManagedDirectoryBuild {
                 implementation_digest().into(),
             ),
         ]);
+        insert_capability_hashes(&project.program_descriptor, &mut hashes)?;
         for (component, path) in inputs.paths {
-            let actual = directory_digest(path)
+            let actual = directory_digest(path, check)
                 .map_err(|error| redact(error).with_detail("componentId", &component.id))?;
             hashes.insert(format!("component:{}", component.id), actual);
         }
@@ -249,9 +294,15 @@ impl JobHandler for ManagedDirectoryBuild {
         let scratch = PrivateStage::new(context.workspace(), "build")?;
         let publication = scratch.path.join("source");
         let packer = PackerEngine::new();
-        let built = context.blocking_library(|_| {
+        let built = context.with_work_checks(|check| {
             packer
-                .build_with_signing_key(&recipe, &scratch.path, &publication, Some(inputs.key))
+                .build_checked(
+                    &recipe,
+                    &scratch.path,
+                    &publication,
+                    Some(inputs.key),
+                    check,
+                )
                 .map_err(redact)
         })?;
         if built.artifacts.len() != inputs.paths.len()
@@ -273,8 +324,11 @@ impl JobHandler for ManagedDirectoryBuild {
             }
         }
         context.progress("auditing", 0, None)?;
-        let audit =
-            context.blocking_library(|_| packer.verify_audit(&publication).map_err(redact))?;
+        let audit = context.with_work_checks(|check| {
+            packer
+                .verify_audit_checked(&publication, check)
+                .map_err(redact)
+        })?;
         let verified = &audit.report;
         if !verified.signature_verified
             || verified.source_id != project.source_id
@@ -340,8 +394,14 @@ impl JobHandler for ManagedDirectoryBuild {
                 return Err(integrity());
             }
             if let Entry::Vacant(entry) = artifact_hashes.entry(id) {
-                fs_safety::copy_file(&artifact.path, &artifacts_dir.join(entry.key()))
-                    .map_err(redact)?;
+                context.with_work_checks(|check| {
+                    fs_safety::copy_file_checked(
+                        &artifact.path,
+                        &artifacts_dir.join(entry.key()),
+                        check,
+                    )
+                    .map_err(redact)
+                })?;
                 // checkpoint_release audits the copied bytes against this expected hash.
                 entry.insert(hash.clone());
             }

@@ -207,7 +207,6 @@ pub fn build_program_plan(
     let mut lowered = execution_manifest(manifest)?;
     crate::fusion_source::external::lower_plan_layers(&mut lowered)?;
     lowered.creator = None;
-    lowered.schema_version = "1.0".into();
     let selected: BTreeSet<_> = profile.layer_ids.iter().cloned().collect();
     lowered.layers.retain(|id, _| selected.contains(id));
     lowered.layer_order.retain(|id| selected.contains(id));
@@ -217,7 +216,7 @@ pub fn build_program_plan(
         .filter(|layer| layer.optional)
         .map(|layer| layer.id.clone())
         .collect();
-    let mut plan = PlanBuilder::build(
+    let mut plan = PlanBuilder::build_lowered(
         &lowered,
         &PlanOptions {
             enabled_addons: Some(addons),

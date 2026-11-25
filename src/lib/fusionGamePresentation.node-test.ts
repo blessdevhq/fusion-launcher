@@ -99,3 +99,44 @@ describe('Fusion operation and integrity presentation', () => {
     assert.equal(fusionText('ru').verifiedFiles(11), 'Проверено и одобрено: 11 исполняемых файлов');
   });
 });
+
+describe('Fusion program 1.1 profile presentation', () => {
+  it('selects compatible build and controls profiles with null legacy fields', () => {
+    const base = {
+      sourceId: 'source', gameId: 'eden', title: 'Eden', version: '0.2.1', platform: null,
+      installed: false, activeVersion: null, ready: false, updateAvailable: false,
+      activeSnapshotId: null, rollbackAvailable: false,
+      options: { buildProfileId: null, controlsProfileId: 'incompatible', enabledAddons: [], runtimeChannel: 'pinned' as const },
+      appliedOptions: null, defaultRuntimeChannel: null, externalWorkspaceRoot: null,
+      addons: [], runtimeChannels: [], userLayers: [], executables: [], blockers: [], warnings: [],
+      operation: null, crashReportIds: [], crashReports: [],
+      buildProfiles: [
+        { id: 'vulkan', title: 'Vulkan', controlsProfileIds: ['sdl-p0', 'kb-p0'] },
+        { id: 'gl', title: 'OpenGL', controlsProfileIds: ['kb-p0'] }
+      ],
+      controlsProfiles: [
+        { id: 'sdl-p0', title: 'SDL P0', kind: 'eden_param_package_v1', device: 'sdl_gamecontroller' },
+        { id: 'kb-p0', title: 'Keyboard P0', kind: 'eden_param_package_v1', device: 'keyboard_mouse' }
+      ]
+    };
+    assert.deepEqual(effectiveFusionOptions(base), {
+      buildProfileId: 'vulkan',
+      controlsProfileId: 'sdl-p0',
+      enabledAddons: null,
+      runtimeChannel: null,
+    });
+    assert.deepEqual(effectiveFusionOptions(base, { buildProfileId: 'gl', controlsProfileId: 'sdl-p0', enabledAddons: null, runtimeChannel: null }), {
+      buildProfileId: 'gl',
+      controlsProfileId: 'kb-p0',
+      enabledAddons: null,
+      runtimeChannel: null,
+    });
+    const installed = {
+      ...base,
+      installed: true,
+      appliedOptions: { buildProfileId: 'vulkan', controlsProfileId: 'sdl-p0', enabledAddons: null, runtimeChannel: null },
+    };
+    assert.equal(fusionSettingsDiffer(installed, installed.appliedOptions, null), false);
+    assert.equal(fusionSettingsDiffer(installed, { buildProfileId: 'vulkan', controlsProfileId: 'kb-p0', enabledAddons: null, runtimeChannel: null }, null), true);
+  });
+});

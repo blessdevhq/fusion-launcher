@@ -105,6 +105,7 @@ export interface CreatorJob {
 }
 export type CreatorReportKind = 'structure_integrity' | 'clean_install' | 'observed_launch' | 'manual_scenario' | 'https_acquisition';
 export const creatorReportStatusSchema = z.enum(['passed', 'failed', 'not_tested']);
+export type CreatorReportStatus = z.infer<typeof creatorReportStatusSchema>;
 export const creatorReportSchema = z.object({
   reportId: id, releaseId: id, releaseBlake3: hash, projectRevision: revision,
   kind: z.enum(['structure_integrity', 'clean_install', 'observed_launch', 'manual_scenario', 'https_acquisition']),
@@ -113,10 +114,12 @@ export const creatorReportSchema = z.object({
   diagnostics: z.array(fusionErrorSchema)
 }).strict();
 export type CreatorReport = z.infer<typeof creatorReportSchema>;
-export interface CreatorRelease {
-  releaseId: string; projectId: string; projectRevision: number; manifestBlake3: string;
-  artifactHashes: Record<string, string>; reportIds: string[];
-}
+export const creatorReleaseSchema = z.object({
+  releaseId: id, projectId: id, projectRevision: revision, manifestBlake3: hash,
+  artifactHashes: preservingJsonRecord(hash), reportIds: z.array(id)
+}).strict();
+export const creatorReleaseListResponseSchema = z.array(creatorReleaseSchema);
+export type CreatorRelease = z.infer<typeof creatorReleaseSchema>;
 /** Local IPC/storage only. Never part of a portable project, release or Source export. */
 export const creatorPrivateBindingsSchema = z.object({
   projectId: id, componentPaths: preservingJsonRecord(z.string()), signingKeyRef: z.string().nullable()
