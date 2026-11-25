@@ -1,0 +1,33 @@
+{
+  "artifacts": [
+    {
+      "attestation": null,
+      "cas_digest": "00438ceb4cfc96b8f50f38c43595f64bb808433961ff6c2ce8bfc41f7d10ea09",
+      "layer_id": "addon-60fps",
+      "path": "artifacts/2cfc428c9556b6554316f609c41a900f22992026990a4ed993ee9a0ef7067e0d.zip",
+      "raw_path": null
+    },
+    {
+      "attestation": null,
+      "cas_digest": "84adcc22afd4e75235e45c3536be26dcd7273a0bb98aacd9dae899bdfe40bdc4",
+      "layer_id": "addon-crash-test",
+      "path": "artifacts/786bb7ce7223796d346492f749bbcb3a291cfa315675313cee6fc7d20d1fb7cc.zip",
+      "raw_path": null
+    },
+    {
+      "attestation": null,
+      "cas_digest": "3a0cd679c591f0086208dc6776f419718d191dd43b2d37c9fcd7c865499dab65",
+      "layer_id": "base",
+      "path": "artifacts/99539494e31ed5e0a5cd2140afea285cd2a035660018dae4b8a796afd60cafe8.zip",
+      "raw_path": null
+    },
+    {
+      "attestation": null,
+      "cas_digest": "4f940a265ba29b9410ca312c009d04bbd53e9d5713ad3e88d8f749ecab8bbc18",
+      "layer_id": "runtime",
+      "path": "artifacts/e71f3bdfa28cb48208b6a000b4ced022856a3b1a1f45d850b9830816124aff08.zip",
+      "raw_path": null
+    }
+  ],
+  "parents": []
+}
