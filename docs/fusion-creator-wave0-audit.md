@@ -7,7 +7,7 @@ This audit distinguishes existing code from planned v1 work. File references des
 
 The requested `creator-base` did not exist in local branches, remote-tracking refs or `git ls-remote --heads origin creator-base creator/*`. The original `wip/lifecycle-network` worktree contained required uncommitted source changes. Creating a worktree at its old HEAD would omit them.
 
-After the user's approval to act autonomously, an isolated worktree was created and a snapshot committed as `287dc37`. It includes tracked changes plus their untracked source/test dependencies, the desktop harness sources and the revised plan. It excludes `live-source/` (including private keys and payload), `docs/totk-codex/` local evidence and `tools/cloudflared/`. The original worktree/index were not staged, reset, switched or committed. `docs/fusion-creator-v1-plan.md` is the preserved revised plan; the old original plan is not authoritative.
+After the user's approval to act autonomously, an isolated worktree was created and a snapshot committed as `287dc37`. It includes tracked changes plus their untracked source/test dependencies, the desktop harness sources and the revised plan. It excludes `live-source/` (including private keys and payload), local private evidence and `tools/cloudflared/`. The original worktree/index were not staged, reset, switched or committed. `docs/fusion-creator-v1-plan.md` is the preserved revised plan; the old original plan is not authoritative.
 
 ## Fact check
 

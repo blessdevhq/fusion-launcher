@@ -173,6 +173,17 @@ Reconciliation streams the latest file into the persistent slot atomically.
 Save backups complete before new binary activation. Binary rollback retains
 current save data and never restores an old save backup implicitly.
 
+For an installed game, **Local save backups → Create local backup** copies the
+game's managed saves on demand. Close the game before creating a copy. Fusion
+holds the same workspace lease used for launch and update, reads the active
+save bindings and lists the copy only after it is complete. The action does not
+overwrite live saves, switch the installed version or upload files. It does not
+restore backups.
+
+Creating a backup does not require the installed game payloads in the content
+cache. Fusion still checks the active snapshot's ownership and save bindings;
+launch and update keep their existing payload checks.
+
 Built-in JSON and TOML templates place path/string variables inside double-quoted
 strings, with escaping applied for the target syntax. Numeric display values and
 `ADDON_ENABLED:<id>` flags may be bare typed values or quoted strings. TOML uses

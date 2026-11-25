@@ -1,100 +1,62 @@
-# Fusion Launcher
+# Fusion (Fusion Launcher)
 
 [English version](README.md)
 
 ![Fusion Launcher key visual](public/fusion/hero-key-visual.png)
 
-**Статус:** публичный MVP preview для Windows; свежий Fusion-branded installer
-готовится к публикации.
+**Статус:** активное preview для Windows (`v0.4.0`), переход к открытому стандарту **Fusion Source v1.0**.
 **Репозиторий:** [blessdevhq/fusion-launcher](https://github.com/blessdevhq/fusion-launcher)
 
-Fusion Launcher - source-driven Windows-лаунчер для ретро-библиотек игр на
-ПК. Он соединяет просмотр source libraries и отслеживание установки с guided
-portable-emulator setup: подключаешь источник, устанавливаешь контент, который
-тебе разрешено использовать, закрываешь требования эмулятора и запускаешь всё
-из одного desktop-приложения.
+**Fusion** (распространяется на Windows как **Fusion Launcher**) — это открытая платформа для упаковки, распространения, установки, обновления и запуска **слоёных сборок, модпаков, фанатских PC-портов, рекомпиляций, переводов и портативных инструментальных/AI-сборок** на базе открытого стандарта **Fusion Source v1.0**.
 
-Fusion Launcher не хостит, не курирует и не распространяет коммерческие игры,
-BIOS, firmware, keys или third-party payloads. Пользователь сам отвечает за
-источники и контент, которые подключает.
+Проект построен на Next.js 15, Tauri 2, Rust и локальном хранилище SQLite.
 
-Проект построен на Next.js, Tauri 2, Rust и локальном хранилище.
+## Режимы работы на одном открытом ядре (`fusion-source-core`)
 
-## Возможности
+Fusion Launcher, встроенный режим автора Fusion Creator v1 и CLI работают поверх единого открытого движка на Rust (`src-tauri/src/fusion_source/`, выделяется в crate `fusion-source-core`):
 
-- Подключение community, personal или local source-library JSON каталогов из
-  GitHub Pages, HTTPS URL или локальных файлов.
-- Единый Windows desktop launcher для пользовательских ретро-каталогов игр.
-- Отслеживание direct, bundled и torrent-aware установки контента, описанного
-  подключенными источниками.
-- Валидация schema v3 каталогов с metadata, artwork, тегами, жанрами, setup
-  profiles и требованиями к установке.
-- Помощь с подготовкой поддерживаемых portable-эмуляторов и локальное хранение
-  путей к пользовательским emulator, BIOS, firmware, keys и game files.
-- Metadata и artwork из source libraries, ScreenScraper и SteamGridDB, если они
-  настроены.
-- Preflight-проверки перед запуском эмулятора.
-- First-party NES smoke-test репозиторий, diagnostics, health checks, GitHub
-  Releases update checks и Windows package smoke tests.
+- **Fusion Launcher** *(preview для Windows)*: подключение прямых HTTPS или локальных Sources, установка слоёных сборок с дедупликацией через неизменяемый BLAKE3 CAS, пошаговый `Easy Setup`, ручные снимки сохранений, хранение пользовательских данных отдельно от сменных версий сборки, явное подтверждение доверия к исполняемым файлам по точному BLAKE3-хешу и чистый откат версий.
+- **Fusion Creator v1** *(встроенный preview-режим автора)*: создание переносимых и слоёных проектов (`ProgramDescriptor 1.0`, `GameManifest 1.1` с зеркалами от корня Source), профили сборки/управления и локальная настройка SDL GameController (`CreatorDeviceDialog` с предзапусковым SDL-барьером), сборка Ed25519-подписанных выпусков, изолированная чистая проверка (`CreatorVerifyPanel`), allowlist-экспорт и проверка живого HTTPS (`CreatorReleasePanel`).
+- **Fusion Studio** *(развитие на Этапе 6)*: объединяет встроенные авторские сценарии как строгий GUI поверх выделенного `fusion-source-core` и единого CLI (`fusion init / pack / test / publish`).
 
-## Первый запуск
+**Стартовый фокус:** авторы фанатских сборок, PC-портов, рекомпиляций, переводов и модпаков поверх уже имеющихся игр пользователя (Steam, GOG, Epic или собственных дампов), при этом сам протокол и ядро изначально доменно-нейтральны и подходят также для портативного софта и AI-сборок.
 
-Самый быстрый путь на Windows - встроенная demo-настройка:
+## Ключевые возможности (Fusion Source v1.0)
 
-1. Установи Fusion Launcher.
-2. Открой приложение и выбери **Set up demo**.
-3. Fusion Launcher подключит встроенный demo-источник, подготовит поддерживаемый
-   NES emulator, установит first-party demo cartridge image и включит
-   **Play Demo**.
+- **Слоёная сборка рабочего каталога без порчи оригиналов:** неизменяемое хранилище BLAKE3 CAS, проекция неизменяемых файлов через hardlink, отдельные перезаписываемые копии (`writable_copy_paths`), шаблоны конфигов (`TOML`/`INI`/`JSON`) и поиск базовой установки в Steam, GOG, Epic или указанной папке без изменения оригинальных файлов.
+- **Zero vendor lock-in (без привязки к хостингу):** автор сам решает, где размещать файлы — статический HTTPS, GitHub Releases, зеркала, локальные папки и BitTorrent (через libtorrent sidecar) работают как равноправные транспорты без центрального монопольного каталога.
+- **Криптографическая проверка и явное доверие:** индексы Sources, подписанные Ed25519 с привязанным (pinned) публичным ключом, проверка сырых байтов манифеста по BLAKE3, явное одобрение каждого исполняемого файла по хешу (`critical_files`) и санитизированные отчёты о сбоях с просмотром перед отправкой.
+- **Изоляция пользовательских данных и атомарный откат:** сохранения и пользовательские данные живут вне версионируемых снимков сборки, сохраняются при обновлениях и не затираются при откате бинарников.
+- **Эволюция без поломки сборок:** механизм `capabilities` + `fallback` и `SchemaUpcaster` позволяют развивать протокол без ломки существующих Sources.
 
-Автоматическая portable-настройка эмуляторов доступна для NES, SNES, Nintendo
-64, Game Boy Advance, PlayStation 2 и PSP. PlayStation 1 и Nintendo Switch пока
-используют ручной выбор executable. BIOS, firmware и keys всегда остаются
-пользовательскими файлами.
-Для Nintendo Switch рекомендуемый ручной executable - Eden (`eden.exe` или
-`eden-cli.exe`); существующие пути Ryujinx и Suyu остаются fallback-вариантами.
+## Текущий статус и дорожная карта
 
-## Модель контента
+`v0.4.0` — переходная сборка: движок **Fusion Source** (`src-tauri/src/fusion_source/`, `fusion-packer`, `fusion-local`) и встроенный цикл автора **Fusion Creator v1** (`src-tauri/src/fusion_creator/`) уже работают в приложении параллельно со старым ретро-каталогом. Дальнейшее развитие идёт по 6-этапному плану:
 
-Fusion Launcher - content-neutral инфраструктура лаунчера. Он подключает
-источники, которые выбирает пользователь, скачивает файлы, описанные этими
-источниками, и запускает контент через настроенные emulator profiles.
+1. **Этап 1:** Выделение `fusion-source-core` в Cargo workspace + доменно-нейтральный контракт `v1.0` (`PackageManifest`, `package_id`, `QualifiedPackageId`, `data_paths`, опциональные метаданные).
+2. **Этап 2:** Аудит технических зависимостей Legacy и полное удаление старого ретро-движка и дублирующих экранов/сторов.
+3. **Этап 3:** Полнота ядра (`Save / Data Restore`, `Easy Setup`, надёжный цикл install / update / rollback / error recovery).
+4. **Этап 4:** Единый CLI (`fusion init`, `fusion pack`, `fusion test`, `fusion publish`) поверх `fusion-source-core`.
+5. **Этап 5:** Три эталонных открытых Source (портативный не-игровой инструмент / AI-сборка → модпак поверх Steam/GOG/Epic → фанатский PC-порт / рекомпиляция).
+6. **Этап 6:** Развитие встроенного **Fusion Creator v1** в **Fusion Studio** поверх общего выделенного ядра и единого CLI.
 
-Проект, репозиторий и официальные релизы Fusion Launcher не хостят и не
-поставляют коммерческие ROM, BIOS, firmware, keys или third-party игровые
-payloads. Пользователи и авторы source libraries отвечают за источники и
-контент, которые подключают. Fusion Launcher не аффилирован с проектами
-эмуляторов, издателями игр или производителями консолей.
+## Юридическая и контентная модель
 
-Файл `public/demo-content/fusion-launcher-smoke.nes` - first-party demo
-cartridge image для проверки лаунчера. Условия описаны в
-`public/demo-content/LICENSE.txt`.
+Fusion — нейтральная открытая инфраструктура. Проект, репозиторий и официальные релизы Fusion **не хостит**, не курирует и не распространяет коммерческие игры, ROM, **BIOS**, прошивки или ключи (файл `public/demo-content/fusion-launcher-smoke.nes` — собственный тестовый образ под лицензией `public/demo-content/LICENSE.txt`).
 
-## Source Libraries
+- **Пользователь сам отвечает** за подключаемые Sources и предоставляемые локальные файлы.
+- На уровне валидатора протокола слои типа `Bios`, `Firmware` и `Keys` обязаны быть исключительно `user_provided` и не могут распространяться как удалённые файлы источника.
+- Fusion не аффилирован с издателями игр, производителями консолей или сторонними проектами сред исполнения.
 
-Source libraries - это JSON каталоги, описывающие игры, платформы, metadata,
-artwork, setup profiles и требования к установке.
+## Документация
 
-Полезные ссылки:
+- [Fusion Source Standard v1.0](docs/fusion-source-standard-v1.md) — формат контракта, инварианты BLAKE3 CAS, согласование возможностей, изоляция данных и супервизия процессов.
+- [Руководство Fusion Creator v1](docs/fusion-creator-guide.md) — встроенный цикл автора (`Основа -> Проверка -> Выпуск`), экспорт `GameManifest 1.1`, Verify HTTPS и SDL-профили.
+- [Fusion Packer CLI](docs/fusion-packer.md) — сборка, инспекция и Ed25519-подпись Sources (`fusion-packer`).
+- [Fusion Local Host](docs/fusion-local.md) — локальный запуск Fusion Sources без сети (`fusion-local`).
+- [Чек-лист установки на Windows](docs/mvp-windows-install.md) и [Чек-лист релиза](docs/release-checklist.md).
 
-- [Source library template](docs/source-library-template.md)
-- [Repository authoring guide](docs/repository-authoring.md)
-- [Official starter source](public/source-libraries/official-starter.json) — безопасный первый запуск с first-party demo и openly licensed homebrew.
-- [Unofficial player wishlist](public/source-libraries/unofficial-player-wishlist.json) — metadata для коммерческих игр только в режиме user-provided; без downloads, ROM, BIOS, firmware, keys и publisher artwork.
-- [Rich metadata example](examples/repositories/showcase.metadata.json)
-
-Готовые URL для вставки в лаунчер:
-
-```text
-https://blessdevhq.github.io/fusion-launcher/source-libraries/official-starter.json
-https://blessdevhq.github.io/fusion-launcher/source-libraries/unofficial-player-wishlist.json
-```
-
-Starter template опубликован по адресу:
-
-```text
-https://blessdevhq.github.io/fusion-launcher/source-library-template/repository.json
-```
+*(Устаревшая документация по legacy v3 source-libraries сохраняется в `docs/` временно до удаления Legacy на Этапе 2.)*
 
 ## Разработка
 
@@ -102,7 +64,7 @@ https://blessdevhq.github.io/fusion-launcher/source-library-template/repository.
 
 - Node.js 22
 - Rust stable
-- Windows build tools для Tauri desktop builds
+- Windows build tools для сборки desktop-приложения Tauri
 
 Установка зависимостей:
 
@@ -110,51 +72,24 @@ https://blessdevhq.github.io/fusion-launcher/source-library-template/repository.
 npm ci
 ```
 
-Стандартные проверки:
+Проверки и сборка:
 
 ```powershell
-npm test
-npm run typecheck
-npm run static-check
-npm run source:template:check
-npm run rust:test
-```
-
-Полный local QA gate:
-
-```powershell
+npm run check
 npm run qa
-```
-
-Запуск web shell:
-
-```powershell
 npm run dev
-```
-
-Сборка Windows desktop app:
-
-```powershell
 npm run tauri:build
 ```
 
-Валидация source library:
+Сборка автономных CLI-инструментов Fusion Source:
 
 ```powershell
-npm run source:validate -- templates/source-library/repository.json
+cargo build --manifest-path src-tauri/Cargo.toml --bin fusion-packer --bin fusion-local
 ```
 
-## Release
+## Релиз
 
-Windows release workflow запускается на тегах `vX.Y.Z` и загружает:
-
-- NSIS installer
-- updater zip
-- updater signature
-- `latest.json` для Tauri updater
-
-Для релизной сборки нужен `TAURI_SIGNING_PRIVATE_KEY`; если ключ зашифрован,
-также нужен `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`.
+Windows release workflow запускается на тегах вида `vX.Y.Z` и собирает NSIS-установщик, updater zip/подпись и `latest.json`. Для релизных сборок требуется `TAURI_SIGNING_PRIVATE_KEY` (и `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`, если ключ зашифрован).
 
 Локальный Windows release smoke gate:
 
@@ -162,21 +97,8 @@ Windows release workflow запускается на тегах `vX.Y.Z` и за
 npm run mvp:release:windows
 ```
 
-Документация:
+## Лицензия
 
-- [MVP Windows install checklist](docs/mvp-windows-install.md)
-- [Release checklist](docs/release-checklist.md)
-- [Metadata and artwork notes](docs/metadata-artwork.md)
+Исходный код Fusion распространяется по GNU General Public License v3.0 или новее. См. [LICENSE](LICENSE).
 
-## Совместимость
-
-Новые установки используют названия, идентификаторы и файлы Fusion Launcher.
-Legacy preview app identifiers, database names и demo identifiers всё ещё
-поддерживаются как fallback для существующих preview-установок и CI.
-
-## License
-
-Исходный код Fusion Launcher распространяется по GNU General Public License v3.0
-или новее. См. [LICENSE](LICENSE).
-
-Demo smoke-test content покрыт отдельно в `public/demo-content/LICENSE.txt`.
+Тестовый демо-образ покрыт отдельно в `public/demo-content/LICENSE.txt`.

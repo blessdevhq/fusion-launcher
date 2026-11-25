@@ -37,8 +37,8 @@ portable Eden profiles** when connecting it. This host option relocates storage
 paths and registers the workspace game/update directory inside the isolated
 profile, under the same workspace lease as launch. It requires `runtime/eden.exe`
 and persistent `workspace/runtime/user`; ordinary sources leave it disabled.
-Sources cannot enable this hook through manifest fields. For the existing private
-TOTK example, select `.tmp/totk-fusion/ready/source-v2`; choose a short workspace
+Sources cannot enable this hook through manifest fields. For a private local example,
+select its ready source directory; choose a short workspace
 on F: in the game's existing workspace setting to stay within Eden's path budget.
 This does not import or modify original global Eden profiles/saves.
 
@@ -117,4 +117,4 @@ Accept the Source lifecycle independently of any particular game's full QA:
 install, change optional layers, update package configuration, preserve current
 saves, enforce digest trust, and roll back. A game's graphics quality, late-game
 mechanics and publication readiness are separate checks. A provisional personal
-TOTK recipe can exercise integration without becoming a polished public preset.
+recipe can exercise integration without becoming a polished public preset.

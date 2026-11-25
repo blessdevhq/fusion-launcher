@@ -55,7 +55,7 @@ All commands run in the integrator worktree unless stated otherwise. Shared buil
 
 - Physical SDL controller, USB/Bluetooth reconnect and OS-level release before real Eden; virtual fixtures are not hardware evidence.
 - External HTTPS full streaming acquisition with an empty cache; H's explicit local-directory source does not establish it.
-- Real Eden/TOTK gameplay and FPS presets, production input service, Creator jobs/recovery/build/verify/export; these belong to later waves. The current production actions are unavailable.
+- Real Eden gameplay and FPS presets, production input service, Creator jobs/recovery/build/verify/export; these belong to later waves. The current production actions are unavailable.
 - New v1.1 projection/profile/install behavior and privacy allowlist export are not implemented in wave zero.
 - Real cross-volume hardware acceptance; no cross-volume diagnosis was established.
 - `npm run mvp:visual` / native UI acceptance: not run for this DTO/backend/test-only delta. No UI component, CSS, visual token, baseline screenshot or i18n text changed relative to creator-base.
