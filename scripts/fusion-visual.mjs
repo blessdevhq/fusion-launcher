@@ -351,19 +351,24 @@ async function rejectManualBackup(page, error) {
 
 async function mockSaveHistoryRead(page, gameId) {
   await page.evaluate((gameId) => {
-    window.__TAURI_INTERNALS__ = { invoke: async (command, args) => {
-      delete window.__TAURI_INTERNALS__;
-      if (command !== 'fusion_game_list_save_snapshots' || args.game.sourceId !== 'fusion-preview' || args.game.gameId !== gameId) {
-        throw new Error(`Unexpected mocked backup command: ${command}`);
-      }
-      return new Promise((resolve, reject) => {
-        window.finishBackupRead = (inventory) => {
-          delete window.finishBackupRead;
-          if (inventory) resolve(inventory);
-          else reject(new Error('Test fixture: backup metadata is unavailable'));
-        };
-      });
-    } };
+    const mock = {
+      invoke: async (command, args) => {
+        queueMicrotask(() => {
+          if (window.__TAURI_INTERNALS__ === mock) delete window.__TAURI_INTERNALS__;
+        });
+        if (command !== 'fusion_game_list_save_snapshots' || args.game.sourceId !== 'fusion-preview' || args.game.gameId !== gameId) {
+          throw new Error(`Unexpected mocked backup command: ${command}`);
+        }
+        return new Promise((resolve, reject) => {
+          window.finishBackupRead = (inventory) => {
+            delete window.finishBackupRead;
+            if (inventory) resolve(inventory);
+            else reject(new Error('Test fixture: backup metadata is unavailable'));
+          };
+        });
+      },
+    };
+    window.__TAURI_INTERNALS__ = mock;
   }, gameId);
 }
 
@@ -374,9 +379,11 @@ async function finishSaveHistoryRead(page, inventory) {
 
 async function mockFailedSetupState(page) {
   await page.evaluate(() => {
-    window.__TAURI_INTERNALS__ = {
+    const mock = {
       invoke: async (command) => {
-        delete window.__TAURI_INTERNALS__;
+        queueMicrotask(() => {
+          if (window.__TAURI_INTERNALS__ === mock) delete window.__TAURI_INTERNALS__;
+        });
         if (command !== 'fusion_game_get_state') throw new Error(`Unexpected mocked command: ${command}`);
         return {
           sourceId: 'fusion-preview', gameId: 'coop-demo', title: 'Cooperative Workspace Demo', version: '1.1.0', platform: 'pc',
@@ -390,6 +397,7 @@ async function mockFailedSetupState(page) {
         };
       },
     };
+    window.__TAURI_INTERNALS__ = mock;
   });
 }
 
