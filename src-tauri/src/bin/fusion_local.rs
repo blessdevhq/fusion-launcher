@@ -64,8 +64,8 @@ async fn run() -> Result<serde_json::Value, FusionError> {
         return Err(error("Unknown command"));
     }
     let mut values = std::collections::BTreeMap::new();
-    let mut rest = args[1..].chunks_exact(2);
-    for pair in &mut rest {
+    let (pairs, remainder) = args[1..].as_chunks::<2>();
+    for [flag, value] in pairs {
         if ![
             "--source-dir",
             "--library",
@@ -76,13 +76,13 @@ async fn run() -> Result<serde_json::Value, FusionError> {
             "--trust-file",
             "--options-file",
         ]
-        .contains(&pair[0].as_str())
-            || values.insert(pair[0].as_str(), pair[1].as_str()).is_some()
+        .contains(&flag.as_str())
+            || values.insert(flag.as_str(), value.as_str()).is_some()
         {
             return Err(error("Unknown or repeated option"));
         }
     }
-    if !rest.remainder().is_empty() {
+    if !remainder.is_empty() {
         return Err(error("Option requires a value"));
     }
     let required = |key| {
